@@ -1,0 +1,1350 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>OAuth2 Dashboard</title>
+    <style>
+        :root {
+            --primary-color: #2563eb;
+            --primary-hover: #1d4ed8;
+            --success-color: #10b981;
+            --error-color: #ef4444;
+            --warning-color: #f59e0b;
+            --bg-color: #f8fafc;
+            --card-bg: #ffffff;
+            --text-primary: #1e293b;
+            --text-secondary: #64748b;
+            --border-color: #e2e8f0;
+            --shadow: 0 1px 3px 0 rgba(0, 0, 0, 0.1), 0 1px 2px 0 rgba(0, 0, 0, 0.06);
+            --shadow-lg: 0 10px 15px -3px rgba(0, 0, 0, 0.1), 0 4px 6px -2px rgba(0, 0, 0, 0.05);
+        }
+
+        * {
+            margin: 0;
+            padding: 0;
+            box-sizing: border-box;
+        }
+
+        body {
+            font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, Oxygen, Ubuntu, sans-serif;
+            background-color: var(--bg-color);
+            color: var(--text-primary);
+            line-height: 1.6;
+            min-height: 100vh;
+        }
+
+        .container {
+            max-width: 1200px;
+            margin: 0 auto;
+            padding: 2rem;
+        }
+
+        /* Header */
+        header {
+            display: flex;
+            justify-content: space-between;
+            align-items: center;
+            margin-bottom: 2rem;
+            padding-bottom: 1rem;
+            border-bottom: 1px solid var(--border-color);
+        }
+
+        .header-title {
+            display: flex;
+            align-items: center;
+            gap: 0.75rem;
+        }
+
+        .header-title h1 {
+            font-size: 1.75rem;
+            font-weight: 700;
+        }
+
+        .server-status {
+            display: flex;
+            align-items: center;
+            gap: 0.5rem;
+            padding: 0.5rem 1rem;
+            background: var(--card-bg);
+            border: 1px solid var(--border-color);
+            border-radius: 9999px;
+            font-size: 0.875rem;
+        }
+
+        .status-dot {
+            width: 10px;
+            height: 10px;
+            border-radius: 50%;
+            background-color: var(--error-color);
+            transition: background-color 0.3s;
+        }
+
+        .status-dot.online {
+            background-color: var(--success-color);
+        }
+
+        .status-dot.checking {
+            background-color: var(--warning-color);
+            animation: pulse 1s infinite;
+        }
+
+        @keyframes pulse {
+            0%, 100% { opacity: 1; }
+            50% { opacity: 0.5; }
+        }
+
+        .settings-btn {
+            background: none;
+            border: 1px solid var(--border-color);
+            border-radius: 8px;
+            padding: 0.5rem 1rem;
+            cursor: pointer;
+            font-size: 0.875rem;
+            transition: all 0.2s;
+        }
+
+        .settings-btn:hover {
+            background: var(--bg-color);
+        }
+
+        /* Global Actions */
+        .global-actions {
+            display: flex;
+            gap: 1rem;
+            margin-bottom: 2rem;
+            flex-wrap: wrap;
+        }
+
+        .btn {
+            padding: 0.625rem 1.25rem;
+            border: none;
+            border-radius: 8px;
+            font-size: 0.875rem;
+            font-weight: 500;
+            cursor: pointer;
+            transition: all 0.2s;
+            display: inline-flex;
+            align-items: center;
+            gap: 0.5rem;
+        }
+
+        .btn:disabled {
+            opacity: 0.6;
+            cursor: not-allowed;
+        }
+
+        .btn-primary {
+            background-color: var(--primary-color);
+            color: white;
+        }
+
+        .btn-primary:hover:not(:disabled) {
+            background-color: var(--primary-hover);
+        }
+
+        .btn-secondary {
+            background-color: var(--card-bg);
+            color: var(--text-primary);
+            border: 1px solid var(--border-color);
+        }
+
+        .btn-secondary:hover:not(:disabled) {
+            background-color: var(--bg-color);
+        }
+
+        .btn-danger {
+            background-color: var(--error-color);
+            color: white;
+        }
+
+        .btn-danger:hover:not(:disabled) {
+            background-color: #dc2626;
+        }
+
+        .btn-sm {
+            padding: 0.375rem 0.75rem;
+            font-size: 0.8125rem;
+        }
+
+        /* Provider Cards */
+        .providers-grid {
+            display: grid;
+            grid-template-columns: repeat(auto-fill, minmax(300px, 1fr));
+            gap: 1.5rem;
+            margin-bottom: 2rem;
+        }
+
+        .provider-card {
+            background: var(--card-bg);
+            border: 1px solid var(--border-color);
+            border-radius: 12px;
+            padding: 1.5rem;
+            box-shadow: var(--shadow);
+            transition: box-shadow 0.2s;
+        }
+
+        .provider-card:hover {
+            box-shadow: var(--shadow-lg);
+        }
+
+        .provider-header {
+            display: flex;
+            align-items: center;
+            gap: 1rem;
+            margin-bottom: 1rem;
+        }
+
+        .provider-icon {
+            width: 48px;
+            height: 48px;
+            border-radius: 12px;
+            display: flex;
+            align-items: center;
+            justify-content: center;
+            font-size: 1.5rem;
+            background: var(--bg-color);
+        }
+
+        .provider-info h3 {
+            font-size: 1.125rem;
+            font-weight: 600;
+        }
+
+        .provider-flow {
+            font-size: 0.75rem;
+            color: var(--text-secondary);
+            text-transform: uppercase;
+            letter-spacing: 0.05em;
+        }
+
+        .provider-status {
+            display: flex;
+            align-items: center;
+            gap: 0.5rem;
+            padding: 0.5rem 0.75rem;
+            border-radius: 6px;
+            font-size: 0.8125rem;
+            margin-bottom: 1rem;
+        }
+
+        .provider-status.authenticated {
+            background: #d1fae5;
+            color: #065f46;
+        }
+
+        .provider-status.not-authenticated {
+            background: #fef3c7;
+            color: #92400e;
+        }
+
+        .provider-actions {
+            display: flex;
+            flex-wrap: wrap;
+            gap: 0.5rem;
+        }
+
+        .provider-actions .btn {
+            flex: 1;
+            min-width: 120px;
+            justify-content: center;
+        }
+
+        .token-info {
+            margin-top: 1rem;
+            padding: 0.75rem;
+            background: var(--bg-color);
+            border-radius: 6px;
+            font-size: 0.75rem;
+        }
+
+        .token-info-row {
+            display: flex;
+            justify-content: space-between;
+            margin-bottom: 0.25rem;
+        }
+
+        .token-info-row:last-child {
+            margin-bottom: 0;
+        }
+
+        .token-info-label {
+            color: var(--text-secondary);
+        }
+
+        /* Activity Log */
+        .activity-log {
+            background: var(--card-bg);
+            border: 1px solid var(--border-color);
+            border-radius: 12px;
+            padding: 1.5rem;
+        }
+
+        .activity-log h2 {
+            font-size: 1.25rem;
+            font-weight: 600;
+            margin-bottom: 1rem;
+        }
+
+        .log-entries {
+            max-height: 300px;
+            overflow-y: auto;
+        }
+
+        .log-entry {
+            display: flex;
+            gap: 1rem;
+            padding: 0.75rem 0;
+            border-bottom: 1px solid var(--border-color);
+            font-size: 0.875rem;
+        }
+
+        .log-entry:last-child {
+            border-bottom: none;
+        }
+
+        .log-time {
+            color: var(--text-secondary);
+            font-size: 0.75rem;
+            min-width: 80px;
+        }
+
+        .log-message {
+            flex: 1;
+        }
+
+        .log-message.success {
+            color: var(--success-color);
+        }
+
+        .log-message.error {
+            color: var(--error-color);
+        }
+
+        .log-message.warning {
+            color: var(--warning-color);
+        }
+
+        /* Modal */
+        .modal-overlay {
+            position: fixed;
+            top: 0;
+            left: 0;
+            right: 0;
+            bottom: 0;
+            background: rgba(0, 0, 0, 0.5);
+            display: flex;
+            align-items: center;
+            justify-content: center;
+            z-index: 1000;
+            opacity: 0;
+            visibility: hidden;
+            transition: all 0.2s;
+        }
+
+        .modal-overlay.active {
+            opacity: 1;
+            visibility: visible;
+        }
+
+        .modal {
+            background: var(--card-bg);
+            border-radius: 12px;
+            padding: 1.5rem;
+            max-width: 500px;
+            width: 90%;
+            box-shadow: var(--shadow-lg);
+            transform: translateY(-20px);
+            transition: transform 0.2s;
+        }
+
+        .modal-overlay.active .modal {
+            transform: translateY(0);
+        }
+
+        .modal-header {
+            display: flex;
+            justify-content: space-between;
+            align-items: center;
+            margin-bottom: 1rem;
+        }
+
+        .modal-header h3 {
+            font-size: 1.25rem;
+            font-weight: 600;
+        }
+
+        .modal-close {
+            background: none;
+            border: none;
+            font-size: 1.5rem;
+            cursor: pointer;
+            color: var(--text-secondary);
+            padding: 0.25rem;
+            line-height: 1;
+        }
+
+        .modal-close:hover {
+            color: var(--text-primary);
+        }
+
+        .modal-body {
+            margin-bottom: 1rem;
+        }
+
+        .modal-footer {
+            display: flex;
+            justify-content: flex-end;
+            gap: 0.5rem;
+        }
+
+        /* Device Code Modal */
+        .device-code-display {
+            text-align: center;
+            padding: 1.5rem;
+            background: var(--bg-color);
+            border-radius: 8px;
+            margin-bottom: 1rem;
+        }
+
+        .user-code {
+            font-size: 2.5rem;
+            font-weight: 700;
+            letter-spacing: 0.5em;
+            color: var(--primary-color);
+            margin: 1rem 0;
+        }
+
+        .verification-link {
+            word-break: break-all;
+            color: var(--primary-color);
+            font-size: 0.875rem;
+        }
+
+        .polling-status {
+            display: flex;
+            align-items: center;
+            justify-content: center;
+            gap: 0.5rem;
+            margin-top: 1rem;
+            font-size: 0.875rem;
+            color: var(--text-secondary);
+        }
+
+        .spinner {
+            width: 16px;
+            height: 16px;
+            border: 2px solid var(--border-color);
+            border-top-color: var(--primary-color);
+            border-radius: 50%;
+            animation: spin 1s linear infinite;
+        }
+
+        @keyframes spin {
+            to { transform: rotate(360deg); }
+        }
+
+        /* Settings Modal */
+        .form-group {
+            margin-bottom: 1rem;
+        }
+
+        .form-group label {
+            display: block;
+            margin-bottom: 0.5rem;
+            font-size: 0.875rem;
+            font-weight: 500;
+        }
+
+        .form-group input {
+            width: 100%;
+            padding: 0.625rem;
+            border: 1px solid var(--border-color);
+            border-radius: 6px;
+            font-size: 0.875rem;
+        }
+
+        .form-group input:focus {
+            outline: none;
+            border-color: var(--primary-color);
+            box-shadow: 0 0 0 3px rgba(37, 99, 235, 0.1);
+        }
+
+        /* Toast Notifications */
+        .toast-container {
+            position: fixed;
+            top: 1rem;
+            right: 1rem;
+            z-index: 1001;
+            display: flex;
+            flex-direction: column;
+            gap: 0.5rem;
+        }
+
+        .toast {
+            padding: 0.75rem 1rem;
+            border-radius: 8px;
+            background: var(--card-bg);
+            box-shadow: var(--shadow-lg);
+            display: flex;
+            align-items: center;
+            gap: 0.5rem;
+            font-size: 0.875rem;
+            animation: slideIn 0.3s ease;
+            max-width: 300px;
+        }
+
+        @keyframes slideIn {
+            from {
+                transform: translateX(100%);
+                opacity: 0;
+            }
+            to {
+                transform: translateX(0);
+                opacity: 1;
+            }
+        }
+
+        .toast.success {
+            border-left: 4px solid var(--success-color);
+        }
+
+        .toast.error {
+            border-left: 4px solid var(--error-color);
+        }
+
+        .toast.warning {
+            border-left: 4px solid var(--warning-color);
+        }
+
+        /* Loading Overlay */
+        .loading-overlay {
+            position: fixed;
+            top: 0;
+            left: 0;
+            right: 0;
+            bottom: 0;
+            background: rgba(255, 255, 255, 0.8);
+            display: flex;
+            align-items: center;
+            justify-content: center;
+            z-index: 999;
+            opacity: 0;
+            visibility: hidden;
+            transition: all 0.2s;
+        }
+
+        .loading-overlay.active {
+            opacity: 1;
+            visibility: visible;
+        }
+
+        .loading-spinner {
+            width: 48px;
+            height: 48px;
+            border: 4px solid var(--border-color);
+            border-top-color: var(--primary-color);
+            border-radius: 50%;
+            animation: spin 1s linear infinite;
+        }
+
+        /* Responsive */
+        @media (max-width: 768px) {
+            .container {
+                padding: 1rem;
+            }
+
+            header {
+                flex-direction: column;
+                align-items: flex-start;
+                gap: 1rem;
+            }
+
+            .header-title h1 {
+                font-size: 1.5rem;
+            }
+
+            .providers-grid {
+                grid-template-columns: 1fr;
+            }
+
+            .global-actions {
+                flex-direction: column;
+            }
+
+            .global-actions .btn {
+                width: 100%;
+            }
+
+            .provider-actions .btn {
+                min-width: auto;
+            }
+        }
+
+        /* Empty State */
+        .empty-state {
+            text-align: center;
+            padding: 3rem;
+            color: var(--text-secondary);
+        }
+
+        .empty-state-icon {
+            font-size: 3rem;
+            margin-bottom: 1rem;
+        }
+
+        .hidden {
+            display: none !important;
+        }
+    </style>
+</head>
+<body>
+    <div class="container">
+        <!-- Header -->
+        <header>
+            <div class="header-title">
+                <span>🔐</span>
+                <h1>OAuth2 Dashboard</h1>
+            </div>
+            <div style="display: flex; gap: 1rem; align-items: center;">
+                <div class="server-status">
+                    <div class="status-dot" id="statusDot"></div>
+                    <span id="statusText">Checking...</span>
+                </div>
+                <button class="settings-btn" id="settingsBtn" aria-label="Settings">⚙️ Settings</button>
+            </div>
+        </header>
+
+        <!-- Global Actions -->
+        <div class="global-actions">
+            <button class="btn btn-primary" id="refreshBtn">
+                <span>🔄</span> Refresh Status
+            </button>
+            <button class="btn btn-danger" id="clearAllBtn">
+                <span>🗑️</span> Clear All Credentials
+            </button>
+        </div>
+
+        <!-- Provider Cards -->
+        <div class="providers-grid" id="providersGrid">
+            <!-- Provider cards will be dynamically inserted here -->
+        </div>
+
+        <!-- Activity Log -->
+        <div class="activity-log">
+            <h2>Activity Log</h2>
+            <div class="log-entries" id="logEntries">
+                <!-- Log entries will be dynamically inserted here -->
+            </div>
+        </div>
+    </div>
+
+    <!-- Device Code Modal -->
+    <div class="modal-overlay" id="deviceCodeModal">
+        <div class="modal">
+            <div class="modal-header">
+                <h3 id="deviceCodeTitle">Device Authorization</h3>
+                <button class="modal-close" id="deviceCodeClose">&times;</button>
+            </div>
+            <div class="modal-body">
+                <p>Enter this code on your device:</p>
+                <div class="device-code-display">
+                    <div class="user-code" id="userCode">ABCD-EFGH</div>
+                    <p>Or visit: <a href="#" class="verification-link" id="verificationLink" target="_blank">https://example.com/device</a></p>
+                </div>
+                <div class="polling-status" id="pollingStatus">
+                    <div class="spinner"></div>
+                    <span>Waiting for authorization...</span>
+                </div>
+            </div>
+            <div class="modal-footer">
+                <button class="btn btn-secondary" id="deviceCodeCancel">Cancel</button>
+            </div>
+        </div>
+    </div>
+
+    <!-- Settings Modal -->
+    <div class="modal-overlay" id="settingsModal">
+        <div class="modal">
+            <div class="modal-header">
+                <h3>Settings</h3>
+                <button class="modal-close" id="settingsClose">&times;</button>
+            </div>
+            <div class="modal-body">
+                <div class="form-group">
+                    <label for="apiBaseUrl">API Base URL</label>
+                    <input type="text" id="apiBaseUrl" placeholder="http://localhost:8080">
+                </div>
+            </div>
+            <div class="modal-footer">
+                <button class="btn btn-secondary" id="settingsCancel">Cancel</button>
+                <button class="btn btn-primary" id="settingsSave">Save</button>
+            </div>
+        </div>
+    </div>
+
+    <!-- Toast Container -->
+    <div class="toast-container" id="toastContainer"></div>
+
+    <!-- Loading Overlay -->
+    <div class="loading-overlay" id="loadingOverlay">
+        <div class="loading-spinner"></div>
+    </div>
+
+    <script>
+        // ============================================
+        // API Client Class
+        // ============================================
+        class OAuthAPIClient {
+            constructor(baseUrl = window.location.origin) {
+                this.baseUrl = baseUrl.replace(/\/$/, '');
+            }
+
+            setBaseUrl(baseUrl) {
+                this.baseUrl = baseUrl.replace(/\/$/, '');
+            }
+
+            async request(method, path, body = null) {
+                const url = `${this.baseUrl}${path}`;
+                const options = {
+                    method,
+                    headers: {
+                        'Content-Type': 'application/json',
+                    },
+                };
+
+                if (body) {
+                    options.body = JSON.stringify(body);
+                }
+
+                try {
+                    const response = await fetch(url, options);
+                    const data = await response.json();
+
+                    if (!response.ok) {
+                        throw new Error(data.error?.message || data.message || `HTTP ${response.status}`);
+                    }
+
+                    return data;
+                } catch (error) {
+                    if (error.name === 'SyntaxError') {
+                        throw new Error('Invalid response from server');
+                    }
+                    throw error;
+                }
+            }
+
+            async getProviders() {
+                return this.request('GET', '/api/providers');
+            }
+
+            async getCredentials() {
+                return this.request('GET', '/api/credentials');
+            }
+
+            async startAuth(provider, redirectUri = null) {
+                const body = { provider };
+                if (redirectUri) {
+                    body.redirect_uri = redirectUri;
+                }
+                return this.request('POST', '/api/auth/start', body);
+            }
+
+            async startDeviceFlow(provider) {
+                return this.request('POST', '/api/device/start', { provider });
+            }
+
+            async getDeviceStatus(pollId) {
+                return this.request('GET', `/api/device/status/${pollId}`);
+            }
+
+            async getToken(provider) {
+                return this.request('GET', `/api/token/${provider}`);
+            }
+
+            async refreshToken(provider) {
+                return this.request('POST', `/api/token/${provider}/refresh`);
+            }
+
+            async deleteToken(provider) {
+                return this.request('DELETE', `/api/token/${provider}`);
+            }
+
+            async clearAllCredentials() {
+                return this.request('DELETE', '/api/credentials');
+            }
+        }
+
+        // ============================================
+        // State Management
+        // ============================================
+        class StateManager {
+            constructor() {
+                this.state = this.loadState();
+            }
+
+            loadState() {
+                const stored = localStorage.getItem('oauth_dashboard_state');
+                return stored ? JSON.parse(stored) : {
+                    apiBaseUrl: window.location.origin,
+                    providers: {},
+                    credentials: [],
+                };
+            }
+
+            saveState() {
+                localStorage.setItem('oauth_dashboard_state', JSON.stringify(this.state));
+            }
+
+            setApiBaseUrl(url) {
+                this.state.apiBaseUrl = url;
+                this.saveState();
+            }
+
+            getApiBaseUrl() {
+                return this.state.apiBaseUrl;
+            }
+
+            updateProviderStatus(providerId, status) {
+                this.state.providers[providerId] = status;
+                this.saveState();
+            }
+
+            getProviderStatus(providerId) {
+                return this.state.providers[providerId] || null;
+            }
+
+            updateCredentials(credentials) {
+                this.state.credentials = credentials;
+                this.saveState();
+            }
+
+            getCredentials() {
+                return this.state.credentials;
+            }
+
+            clearProvider(providerId) {
+                delete this.state.providers[providerId];
+                this.saveState();
+            }
+
+            clearAll() {
+                this.state.providers = {};
+                this.state.credentials = [];
+                this.saveState();
+            }
+        }
+
+        // ============================================
+        // Dashboard Application
+        // ============================================
+        class Dashboard {
+            constructor() {
+                this.api = new OAuthAPIClient();
+                this.stateManager = new StateManager();
+                this.providers = [];
+                this.credentials = [];
+                this.pollingIntervals = new Map();
+
+                this.init();
+            }
+
+            init() {
+                // Load saved API base URL
+                const savedUrl = this.stateManager.getApiBaseUrl();
+                this.api.setBaseUrl(savedUrl);
+                document.getElementById('apiBaseUrl').value = savedUrl;
+
+                // Bind event listeners
+                this.bindEvents();
+
+                // Load initial data
+                this.loadProviders();
+                this.checkServerStatus();
+            }
+
+            bindEvents() {
+                // Refresh button
+                document.getElementById('refreshBtn').addEventListener('click', () => {
+                    this.refreshAll();
+                });
+
+                // Clear all button
+                document.getElementById('clearAllBtn').addEventListener('click', () => {
+                    this.clearAllCredentials();
+                });
+
+                // Settings button
+                document.getElementById('settingsBtn').addEventListener('click', () => {
+                    this.showSettingsModal();
+                });
+
+                // Settings modal
+                document.getElementById('settingsClose').addEventListener('click', () => {
+                    this.hideSettingsModal();
+                });
+                document.getElementById('settingsCancel').addEventListener('click', () => {
+                    this.hideSettingsModal();
+                });
+                document.getElementById('settingsSave').addEventListener('click', () => {
+                    this.saveSettings();
+                });
+
+                // Device code modal
+                document.getElementById('deviceCodeClose').addEventListener('click', () => {
+                    this.cancelDeviceFlow();
+                });
+                document.getElementById('deviceCodeCancel').addEventListener('click', () => {
+                    this.cancelDeviceFlow();
+                });
+
+                // OAuth callback message
+                window.addEventListener('message', (event) => {
+                    if (event.data.type === 'oauth_success') {
+                        this.log('OAuth authorization completed', 'success');
+                        this.refreshAll();
+                    }
+                });
+
+                // Close modals on overlay click
+                document.querySelectorAll('.modal-overlay').forEach(overlay => {
+                    overlay.addEventListener('click', (e) => {
+                        if (e.target === overlay) {
+                            overlay.classList.remove('active');
+                            if (overlay.id === 'deviceCodeModal') {
+                                this.cancelDeviceFlow();
+                            }
+                        }
+                    });
+                });
+            }
+
+            async loadProviders() {
+                try {
+                    this.showLoading();
+                    const data = await this.api.getProviders();
+                    this.providers = data.providers || [];
+                    this.renderProviders();
+                    await this.loadCredentials();
+                } catch (error) {
+                    this.log(`Failed to load providers: ${error.message}`, 'error');
+                    this.showToast('Failed to load providers', 'error');
+                } finally {
+                    this.hideLoading();
+                }
+            }
+
+            async loadCredentials() {
+                try {
+                    const data = await this.api.getCredentials();
+                    this.credentials = data.credentials || [];
+                    this.stateManager.updateCredentials(this.credentials);
+                    this.updateProviderCards();
+                } catch (error) {
+                    // Not an error if no credentials exist
+                    this.credentials = [];
+                    this.stateManager.updateCredentials([]);
+                    this.updateProviderCards();
+                }
+            }
+
+            async checkServerStatus() {
+                const statusDot = document.getElementById('statusDot');
+                const statusText = document.getElementById('statusText');
+
+                statusDot.className = 'status-dot checking';
+                statusText.textContent = 'Checking...';
+
+                try {
+                    await this.api.getProviders();
+                    statusDot.className = 'status-dot online';
+                    statusText.textContent = 'Online';
+                } catch (error) {
+                    statusDot.className = 'status-dot';
+                    statusText.textContent = 'Offline';
+                }
+            }
+
+            renderProviders() {
+                const grid = document.getElementById('providersGrid');
+                grid.innerHTML = '';
+
+                if (this.providers.length === 0) {
+                    grid.innerHTML = `
+                        <div class="empty-state" style="grid-column: 1 / -1;">
+                            <div class="empty-state-icon">📭</div>
+                            <p>No providers available</p>
+                        </div>
+                    `;
+                    return;
+                }
+
+                const providerIcons = {
+                    qwen: '🤖',
+                    gemini: '✨',
+                    iflow: '🌊',
+                    kiro: '☁️',
+                };
+
+                const flowLabels = {
+                    device_code: 'Device Code Flow',
+                    authorization_code: 'Authorization Code',
+                    external: 'External',
+                };
+
+                this.providers.forEach(provider => {
+                    const card = document.createElement('div');
+                    card.className = 'provider-card';
+                    card.id = `provider-${provider.id}`;
+                    card.dataset.providerId = provider.id;
+                    card.dataset.flow = provider.flow;
+
+                    const icon = providerIcons[provider.id] || '🔑';
+                    const flowLabel = flowLabels[provider.flow] || provider.flow;
+
+                    card.innerHTML = `
+                        <div class="provider-header">
+                            <div class="provider-icon">${icon}</div>
+                            <div class="provider-info">
+                                <h3>${provider.name}</h3>
+                                <span class="provider-flow">${flowLabel}</span>
+                            </div>
+                        </div>
+                        <div class="provider-status not-authenticated" id="status-${provider.id}">
+                            <span>○</span>
+                            <span>Not Authenticated</span>
+                        </div>
+                        <div class="provider-actions">
+                            ${provider.flow === 'authorization_code' ? `
+                                <button class="btn btn-primary" onclick="dashboard.startAuth('${provider.id}')">
+                                    🔑 Authorize
+                                </button>
+                            ` : ''}
+                            ${provider.flow === 'device_code' ? `
+                                <button class="btn btn-primary" onclick="dashboard.startDeviceFlow('${provider.id}')">
+                                    📱 Device Flow
+                                </button>
+                            ` : ''}
+                            ${provider.flow === 'external' ? `
+                                <button class="btn btn-secondary" disabled>
+                                    🔒 External
+                                </button>
+                            ` : ''}
+                        </div>
+                        <div class="token-info hidden" id="tokenInfo-${provider.id}">
+                            <div class="token-info-row">
+                                <span class="token-info-label">Token Type:</span>
+                                <span id="tokenType-${provider.id}">-</span>
+                            </div>
+                            <div class="token-info-row">
+                                <span class="token-info-label">Expires In:</span>
+                                <span id="expiresIn-${provider.id}">-</span>
+                            </div>
+                        </div>
+                        <div class="provider-actions hidden" id="authActions-${provider.id}">
+                            <button class="btn btn-secondary btn-sm" onclick="dashboard.refreshToken('${provider.id}')">
+                                🔄 Refresh
+                            </button>
+                            <button class="btn btn-danger btn-sm" onclick="dashboard.logout('${provider.id}')">
+                                🚪 Logout
+                            </button>
+                        </div>
+                    `;
+
+                    grid.appendChild(card);
+                });
+
+                this.updateProviderCards();
+            }
+
+            updateProviderCards() {
+                this.providers.forEach(provider => {
+                    const card = document.getElementById(`provider-${provider.id}`);
+                    if (!card) return;
+
+                    const cred = this.credentials.find(c => c.provider === provider.id);
+                    const statusEl = document.getElementById(`status-${provider.id}`);
+                    const tokenInfoEl = document.getElementById(`tokenInfo-${provider.id}`);
+                    const authActionsEl = document.getElementById(`authActions-${provider.id}`);
+
+                    if (cred && cred.valid) {
+                        statusEl.className = 'provider-status authenticated';
+                        statusEl.innerHTML = '<span>✓</span><span>Authenticated</span>';
+                        tokenInfoEl.classList.remove('hidden');
+                        authActionsEl.classList.remove('hidden');
+
+                        document.getElementById(`tokenType-${provider.id}`).textContent = cred.token_type || 'Bearer';
+                        document.getElementById(`expiresIn-${provider.id}`).textContent = this.formatExpiresIn(cred.expires_in);
+                    } else {
+                        statusEl.className = 'provider-status not-authenticated';
+                        statusEl.innerHTML = '<span>○</span><span>Not Authenticated</span>';
+                        tokenInfoEl.classList.add('hidden');
+                        authActionsEl.classList.add('hidden');
+                    }
+                });
+            }
+
+            formatExpiresIn(seconds) {
+                if (!seconds || seconds < 0) return 'Expired';
+                if (seconds < 60) return `${Math.floor(seconds)}s`;
+                if (seconds < 3600) return `${Math.floor(seconds / 60)}m`;
+                return `${Math.floor(seconds / 3600)}h`;
+            }
+
+            async startAuth(providerId) {
+                try {
+                    this.log(`Starting authorization for ${providerId}`, 'info');
+                    const data = await this.api.startAuth(providerId);
+
+                    // Open popup for authorization
+                    const width = 600;
+                    const height = 700;
+                    const left = (window.screen.width - width) / 2;
+                    const top = (window.screen.height - height) / 2;
+
+                    const popup = window.open(
+                        data.auth_url,
+                        'oauth',
+                        `width=${width},height=${height},left=${left},top=${top},resizable,scrollbars`
+                    );
+
+                    if (!popup) {
+                        this.showToast('Popup blocked. Please allow popups for this site.', 'warning');
+                        this.log('Popup blocked for authorization', 'warning');
+                    } else {
+                        this.log(`Opened authorization window for ${providerId}`, 'info');
+                    }
+                } catch (error) {
+                    this.log(`Authorization failed for ${providerId}: ${error.message}`, 'error');
+                    this.showToast('Failed to start authorization', 'error');
+                }
+            }
+
+            async startDeviceFlow(providerId) {
+                try {
+                    this.log(`Starting device flow for ${providerId}`, 'info');
+                    const data = await this.api.startDeviceFlow(providerId);
+
+                    // Show device code modal
+                    document.getElementById('deviceCodeTitle').textContent = `Device Authorization - ${providerId}`;
+                    document.getElementById('userCode').textContent = data.user_code;
+                    document.getElementById('verificationLink').href = data.verification_uri_complete;
+                    document.getElementById('verificationLink').textContent = data.verification_uri_complete;
+                    document.getElementById('pollingStatus').classList.remove('hidden');
+                    document.getElementById('deviceCodeModal').classList.add('active');
+
+                    // Start polling
+                    this.pollDeviceStatus(data.poll_id, providerId);
+                } catch (error) {
+                    this.log(`Device flow failed for ${providerId}: ${error.message}`, 'error');
+                    this.showToast('Failed to start device flow', 'error');
+                }
+            }
+
+            async pollDeviceStatus(pollId, providerId) {
+                const poll = async () => {
+                    try {
+                        const data = await this.api.getDeviceStatus(pollId);
+
+                        if (data.status === 'authorized') {
+                            this.log(`Device authorization completed for ${providerId}`, 'success');
+                            this.showToast('Authorization successful!', 'success');
+                            this.hideDeviceCodeModal();
+                            this.stopPolling(pollId);
+                            await this.refreshAll();
+                        } else if (data.status === 'error') {
+                            this.log(`Device authorization failed for ${providerId}: ${data.error}`, 'error');
+                            this.showToast(`Authorization failed: ${data.error}`, 'error');
+                            this.hideDeviceCodeModal();
+                            this.stopPolling(pollId);
+                        }
+                        // If pending, continue polling
+                    } catch (error) {
+                        this.log(`Polling error for ${providerId}: ${error.message}`, 'error');
+                        this.hideDeviceCodeModal();
+                        this.stopPolling(pollId);
+                    }
+                };
+
+                // Poll every 3 seconds
+                const interval = setInterval(poll, 3000);
+                this.pollingIntervals.set(pollId, interval);
+
+                // Initial poll
+                await poll();
+            }
+
+            stopPolling(pollId) {
+                const interval = this.pollingIntervals.get(pollId);
+                if (interval) {
+                    clearInterval(interval);
+                    this.pollingIntervals.delete(pollId);
+                }
+            }
+
+            cancelDeviceFlow() {
+                this.hideDeviceCodeModal();
+                this.pollingIntervals.forEach((interval, pollId) => {
+                    clearInterval(interval);
+                });
+                this.pollingIntervals.clear();
+                this.log('Device flow cancelled', 'warning');
+            }
+
+            hideDeviceCodeModal() {
+                document.getElementById('deviceCodeModal').classList.remove('active');
+            }
+
+            async refreshToken(providerId) {
+                try {
+                    this.log(`Refreshing token for ${providerId}`, 'info');
+                    this.showLoading();
+                    await this.api.refreshToken(providerId);
+                    this.log(`Token refreshed for ${providerId}`, 'success');
+                    this.showToast('Token refreshed successfully', 'success');
+                    await this.refreshAll();
+                } catch (error) {
+                    this.log(`Failed to refresh token for ${providerId}: ${error.message}`, 'error');
+                    this.showToast('Failed to refresh token', 'error');
+                } finally {
+                    this.hideLoading();
+                }
+            }
+
+            async logout(providerId) {
+                if (!confirm(`Are you sure you want to logout from ${providerId}?`)) {
+                    return;
+                }
+
+                try {
+                    this.log(`Logging out from ${providerId}`, 'info');
+                    this.showLoading();
+                    await this.api.deleteToken(providerId);
+                    this.stateManager.clearProvider(providerId);
+                    this.log(`Logged out from ${providerId}`, 'success');
+                    this.showToast('Logged out successfully', 'success');
+                    await this.refreshAll();
+                } catch (error) {
+                    this.log(`Failed to logout from ${providerId}: ${error.message}`, 'error');
+                    this.showToast('Failed to logout', 'error');
+                } finally {
+                    this.hideLoading();
+                }
+            }
+
+            async clearAllCredentials() {
+                if (!confirm('Are you sure you want to clear all credentials? This cannot be undone.')) {
+                    return;
+                }
+
+                try {
+                    this.log('Clearing all credentials', 'info');
+                    this.showLoading();
+                    const data = await this.api.clearAllCredentials();
+                    this.stateManager.clearAll();
+                    this.log(`Cleared ${data.cleared} credential files`, 'success');
+                    this.showToast(`Cleared ${data.cleared} credential files`, 'success');
+                    await this.refreshAll();
+                } catch (error) {
+                    this.log(`Failed to clear credentials: ${error.message}`, 'error');
+                    this.showToast('Failed to clear credentials', 'error');
+                } finally {
+                    this.hideLoading();
+                }
+            }
+
+            async refreshAll() {
+                await Promise.all([
+                    this.loadProviders(),
+                    this.loadCredentials(),
+                    this.checkServerStatus(),
+                ]);
+            }
+
+            showSettingsModal() {
+                document.getElementById('apiBaseUrl').value = this.stateManager.getApiBaseUrl();
+                document.getElementById('settingsModal').classList.add('active');
+            }
+
+            hideSettingsModal() {
+                document.getElementById('settingsModal').classList.remove('active');
+            }
+
+            saveSettings() {
+                const url = document.getElementById('apiBaseUrl').value.trim();
+                if (!url) {
+                    this.showToast('Please enter a valid URL', 'error');
+                    return;
+                }
+
+                this.stateManager.setApiBaseUrl(url);
+                this.api.setBaseUrl(url);
+                this.hideSettingsModal();
+                this.showToast('Settings saved', 'success');
+                this.log(`API base URL changed to ${url}`, 'info');
+                this.refreshAll();
+            }
+
+            showLoading() {
+                document.getElementById('loadingOverlay').classList.add('active');
+            }
+
+            hideLoading() {
+                document.getElementById('loadingOverlay').classList.remove('active');
+            }
+
+            log(message, type = 'info') {
+                const logEntries = document.getElementById('logEntries');
+                const entry = document.createElement('div');
+                entry.className = 'log-entry';
+
+                const time = new Date().toLocaleTimeString();
+                const messageClass = type === 'success' ? 'success' : type === 'error' ? 'error' : type === 'warning' ? 'warning' : '';
+
+                entry.innerHTML = `
+                    <div class="log-time">${time}</div>
+                    <div class="log-message ${messageClass}">${this.escapeHtml(message)}</div>
+                `;
+
+                logEntries.insertBefore(entry, logEntries.firstChild);
+
+                // Keep only last 50 entries
+                while (logEntries.children.length > 50) {
+                    logEntries.removeChild(logEntries.lastChild);
+                }
+            }
+
+            showToast(message, type = 'info') {
+                const container = document.getElementById('toastContainer');
+                const toast = document.createElement('div');
+                toast.className = `toast ${type}`;
+
+                const icon = type === 'success' ? '✓' : type === 'error' ? '✕' : type === 'warning' ? '⚠' : 'ℹ';
+
+                toast.innerHTML = `<span>${icon}</span><span>${this.escapeHtml(message)}</span>`;
+                container.appendChild(toast);
+
+                // Remove after 5 seconds
+                setTimeout(() => {
+                    toast.style.animation = 'slideIn 0.3s ease reverse';
+                    setTimeout(() => {
+                        container.removeChild(toast);
+                    }, 300);
+                }, 5000);
+            }
+
+            escapeHtml(text) {
+                const div = document.createElement('div');
+                div.textContent = text;
+                return div.innerHTML;
+            }
+        }
+
+        // Initialize dashboard
+        let dashboard;
+        document.addEventListener('DOMContentLoaded', () => {
+            dashboard = new Dashboard();
+        });
+    </script>
+</body>
+</html>

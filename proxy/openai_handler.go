@@ -52,7 +52,8 @@ func (h *OpenAIHandler) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 	}
 
 	// Determine the path by stripping known prefixes
-	path := r.URL.Path
+	originalPath := r.URL.Path
+	path := originalPath
 	prefixes := []string{"/v1", "/qwen/v1", "/gemini/v1", "/kiro/v1", "/antigravity/v1", "/iflow/v1"}
 	for _, prefix := range prefixes {
 		if strings.HasPrefix(path, prefix) {
@@ -62,7 +63,7 @@ func (h *OpenAIHandler) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 	}
 	path = strings.TrimPrefix(path, "/")
 
-	h.logger.DebugLog("[Handler] Request: %s %s (Fixed Provider: %s)", r.Method, path, h.fixedProvider)
+	h.logger.DebugLog("[Handler] Original URL.Path: %s, Stripped path: %s, Method: %s (Fixed Provider: %s)", originalPath, path, r.Method, h.fixedProvider)
 
 	switch {
 	case path == "models" && r.Method == http.MethodGet:
@@ -70,6 +71,7 @@ func (h *OpenAIHandler) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 	case path == "chat/completions" && r.Method == http.MethodPost:
 		h.handleChatCompletions(w, r)
 	default:
+		h.logger.ErrorLog("[Handler] No match found - path: '%s', method: '%s', expecting 'models' (GET) or 'chat/completions' (POST)", path, r.Method)
 		http.Error(w, fmt.Sprintf("Unsupported OpenAI-compatible endpoint: %s", path), http.StatusNotFound)
 	}
 }

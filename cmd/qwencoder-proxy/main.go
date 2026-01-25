@@ -1,176 +1,168 @@
+// Package main is the entry point for the unified qwencoder-proxy server
+// This server combines proxy functionality with OAuth REST API and dashboard
 package main
 
 import (
 	"context"
 	"flag"
 	"fmt"
-	"log"
 	"net/http"
 	"os"
-	"strings"
+	"os/signal"
+	"syscall"
 
-	"github.com/sunbankio/qwencoder-proxy/auth"
 	"github.com/sunbankio/qwencoder-proxy/config"
 	"github.com/sunbankio/qwencoder-proxy/converter"
 	"github.com/sunbankio/qwencoder-proxy/logging"
-	"github.com/sunbankio/qwencoder-proxy/proxy"
 	"github.com/sunbankio/qwencoder-proxy/provider"
 	"github.com/sunbankio/qwencoder-proxy/provider/antigravity"
 	"github.com/sunbankio/qwencoder-proxy/provider/gemini"
-	iflowProvider "github.com/sunbankio/qwencoder-proxy/provider/iflow"
+	"github.com/sunbankio/qwencoder-proxy/provider/iflow"
 	"github.com/sunbankio/qwencoder-proxy/provider/kiro"
 	"github.com/sunbankio/qwencoder-proxy/provider/qwen"
-	"github.com/sunbankio/qwencoder-proxy/qwenclient"
+	"github.com/sunbankio/qwencoder-proxy/proxy"
+	"github.com/sunbankio/qwencoder-proxy/restapi"
 )
 
 func main() {
-	// Load configuration
-	cfg := config.LoadConfig()
-
-	// Define the debug flag
-	var debugFlag bool
-	flag.BoolVar(&debugFlag, "debug", cfg.Logging.IsDebugMode, "Enable debug mode for verbose logging")
+	// Parse command-line flags
+	port := flag.String("port", "", "Server port (default: from config or 8143)")
+	callbackURL := flag.String("callback-url", "", "Callback base URL (default: http://localhost:<port>)")
+	enableCORS := flag.Bool("cors", false, "Enable CORS")
+	debug := flag.Bool("debug", false, "Enable debug logging")
 	flag.Parse()
 
-	// Set the global debug mode variable
-	logging.IsDebugMode = debugFlag
+	// Load configuration
+	cfg := config.DefaultConfig()
 
-	// Create provider factory and register providers
+	// Override with command-line flags
+	if *port != "" {
+		cfg.Server.Port = *port
+		cfg.OAuthServer.Port = *port
+	}
+	if *callbackURL != "" {
+		cfg.OAuthServer.CallbackBaseURL = *callbackURL
+	} else {
+		// Default callback URL to match server port
+		cfg.OAuthServer.CallbackBaseURL = "http://localhost:" + cfg.Server.Port
+	}
+	if *enableCORS {
+		cfg.OAuthServer.EnableCORS = true
+	}
+	if *debug {
+		cfg.Logging.IsDebugMode = true
+	}
+
+	// Initialize logger
+	logger := logging.NewLogger()
+	if cfg.Logging.IsDebugMode {
+		logger.DebugLog("Debug mode enabled")
+	}
+
+	// Initialize provider factory
 	factory := provider.NewFactory()
 
-	// Register Qwen provider (existing)
+	// Register all providers
+	registerProviders(factory)
+
+	// Populate model-to-provider mapping
+	ctx := context.Background()
+	if err := factory.PopulateModelProviders(ctx); err != nil {
+		logger.ErrorLog("Failed to populate model providers: %v", err)
+	}
+
+	// Initialize converter factory
+	convFactory := converter.NewFactory()
+
+	// Create HTTP multiplexer
+	mux := http.NewServeMux()
+
+	// Register proxy routes
+	proxy.RegisterOpenAIRoutes(mux, factory, convFactory)
+	proxy.RegisterProviderSpecificRoutes(mux, factory, convFactory)
+	if err := proxy.RegisterGeminiRoutes(mux, factory); err != nil {
+		logger.ErrorLog("Failed to register Gemini routes: %v", err)
+	}
+	if err := proxy.RegisterAnthropicRoutes(mux, factory); err != nil {
+		logger.ErrorLog("Failed to register Anthropic routes: %v", err)
+	}
+
+	// Create OAuth REST API server
+	oauthConfig := &restapi.Config{
+		Port:            cfg.OAuthServer.Port,
+		CallbackBaseURL: cfg.OAuthServer.CallbackBaseURL,
+		StateTTL:        cfg.OAuthServer.StateTTL,
+		DeviceCodeTTL:   cfg.OAuthServer.DeviceCodeTTL,
+		EnableCORS:      cfg.OAuthServer.EnableCORS,
+		AllowedOrigins:  cfg.OAuthServer.AllowedOrigins,
+	}
+	oauthServer := restapi.NewServer(oauthConfig, logger)
+
+	// Register OAuth routes
+	oauthServer.RegisterRoutes(mux)
+
+	// Apply middleware
+	var handler http.Handler = mux
+	if cfg.OAuthServer.EnableCORS {
+		handler = restapi.CORS(cfg.OAuthServer.AllowedOrigins)(handler)
+	}
+	handler = restapi.Logging(logger)(handler)
+
+	// Start server
+	addr := ":" + cfg.Server.Port
+	logger.InfoLog("Starting qwencoder-proxy on %s", addr)
+	logger.InfoLog("Dashboard available at http://localhost:%s", cfg.Server.Port)
+	logger.InfoLog("OAuth API available at http://localhost:%s/api", cfg.Server.Port)
+	logger.InfoLog("Proxy API available at http://localhost:%s/v1", cfg.Server.Port)
+
+	// Handle graceful shutdown
+	sigChan := make(chan os.Signal, 1)
+	signal.Notify(sigChan, os.Interrupt, syscall.SIGTERM)
+
+	go func() {
+		<-sigChan
+		logger.InfoLog("Shutting down...")
+		os.Exit(0)
+	}()
+
+	if err := http.ListenAndServe(addr, handler); err != nil {
+		logger.ErrorLog("Server error: %v", err)
+		os.Exit(1)
+	}
+}
+
+// registerProviders registers all available providers with the factory
+func registerProviders(factory *provider.Factory) {
+	// Register Qwen provider (no authenticator needed)
 	qwenProvider := qwen.NewProvider()
 	factory.Register(qwenProvider)
-	
-	// Register Gemini provider
-	geminiAuth := auth.NewGeminiAuthenticator(nil)
-	geminiProvider := gemini.NewProvider(geminiAuth)
+
+	// Register Gemini CLI provider
+	geminiProvider := gemini.NewProvider(nil)
 	factory.Register(geminiProvider)
 
-	// Register Kiro provider
-	kiroAuth := auth.NewKiroAuthenticator(nil)
-	kiroProvider := kiro.NewProvider(kiroAuth)
+	// Register Kiro provider (Claude-compatible)
+	kiroProvider := kiro.NewProvider(nil)
 	factory.Register(kiroProvider)
 
 	// Register Antigravity provider
-	antigravityAuth := auth.NewGeminiAuthenticator(&auth.GeminiOAuthConfig{
-		ClientID:     "1071006060591-tmhssin2h21lcre235vtolojh4g403ep.apps.googleusercontent.com",
-		ClientSecret: "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",
-		Scope:        "https://www.googleapis.com/auth/cloud-platform",
-		RedirectPort: 8086,
-		CredsDir:     ".antigravity",
-		CredsFile:    "oauth_creds.json",
-	})
-	antigravityProvider := antigravity.NewProvider(antigravityAuth)
+	antigravityProvider := antigravity.NewProvider(nil)
 	factory.Register(antigravityProvider)
 
 	// Register iFlow provider
-	iflowAuth := auth.NewIFlowAuthenticator(nil)
-	iflowProv := iflowProvider.NewProvider(iflowAuth)
-	factory.Register(iflowProv)
+	iflowProvider := iflow.NewProvider(nil)
+	factory.Register(iflowProvider)
+}
 
-	// Create converter factory
-	convFactory := converter.NewFactory()
-
-	// Populate model providers mapping at startup
-	log.Println("Populating model providers mapping...")
-	if err := factory.PopulateModelProviders(context.Background()); err != nil {
-		log.Printf("Warning: Failed to populate model providers: %v", err)
-	} else {
-		// Log the available models and their providers
-		allModels := factory.GetAllModels()
-		log.Printf("Successfully populated %d models:", len(allModels))
-		for model, providers := range allModels {
-			providerNames := make([]string, len(providers))
-			for i, p := range providers {
-				providerNames[i] = string(p)
-			}
-			log.Printf("  - %s: %v", model, providerNames)
-		}
-	}
-
-	// Register native format routes
-	proxy.RegisterGeminiRoutes(http.DefaultServeMux, factory)
-	proxy.RegisterAnthropicRoutes(http.DefaultServeMux, factory)
-
-	// Register provider-specific OpenAI-compatible routes FIRST (more specific)
-	proxy.RegisterProviderSpecificRoutes(http.DefaultServeMux, factory, convFactory)
-
-	// Register general OpenAI-compatible routes LAST (more general)
-	proxy.RegisterOpenAIRoutes(http.DefaultServeMux, factory, convFactory)
-
-	// Check for credentials on startup
-	log.Println("Checking Qwen credentials...")
-	_, _, err := qwenclient.GetValidTokenAndEndpoint()
-	if err != nil {
-		errorMsg := err.Error()
-		if strings.Contains(errorMsg, "credentials not found") || strings.Contains(errorMsg, "failed to refresh token") {
-			log.Println("Credentials not found or invalid. Initiating authentication flow...")
-			// Ensure the credentials file is removed before attempting authentication
-			credsPath := auth.GetQwenCredentialsPath()
-			if _, fileErr := os.Stat(credsPath); fileErr == nil {
-				if removeErr := os.Remove(credsPath); removeErr != nil {
-					log.Printf("Failed to remove existing credentials file %s: %v", credsPath, removeErr)
-				} else {
-					log.Printf("Successfully removed existing credentials file: %s", credsPath)
-				}
-			}
-
-			authErr := auth.AuthenticateWithOAuth()
-			if authErr != nil {
-				log.Fatalf("Authentication failed during startup: %v", authErr)
-			}
-			log.Println("Authentication successful. Starting proxy server...")
-		} else {
-			log.Fatalf("Failed to check credentials on startup: %v", err)
-		}
-	} else {
-		log.Println("Credentials found and valid. Starting proxy server...")
-	}
-
-	// Check other providers credentials on startup
-	ctx := context.Background()
-	log.Println("Checking other providers credentials validity and refreshing if needed...")
-
-	// Gemini
-	log.Println("Checking Gemini credentials...")
-	if _, err := geminiProvider.GetAuthenticator().GetToken(ctx); err != nil {
-		log.Printf("Warning: Gemini credentials check failed: %v", err)
-	} else {
-		log.Println("Gemini credentials are valid.")
-	}
-
-	// Kiro
-	log.Println("Checking Kiro credentials...")
-	if _, err := kiroProvider.GetAuthenticator().GetToken(ctx); err != nil {
-		log.Printf("Warning: Kiro credentials check failed: %v", err)
-	} else {
-		log.Println("Kiro credentials are valid.")
-	}
-
-	// Antigravity
-	log.Println("Checking Antigravity credentials...")
-	if _, err := antigravityProvider.GetAuthenticator().GetToken(ctx); err != nil {
-		log.Printf("Warning: Antigravity credentials check failed: %v", err)
-	} else {
-		log.Println("Antigravity credentials are valid.")
-	}
-
-	// iFlow
-	log.Println("Checking iFlow credentials...")
-	if _, err := iflowProv.GetAuthenticator().GetToken(ctx); err != nil {
-		log.Printf("Warning: iFlow credentials check failed: %v", err)
-	} else {
-		log.Println("iFlow credentials are valid.")
-	}
-
-	// Start the server
-	debugStatus := ""
-	if logging.IsDebugMode {
-		debugStatus = " [DEBUG ON]"
-	}
-	fmt.Printf("Proxy server starting on port %s%s\n", cfg.Server.Port, debugStatus)
-	if err := http.ListenAndServe(":"+cfg.Server.Port, nil); err != nil {
-		log.Fatal("Server failed to start: ", err)
-	}
+func init() {
+	// Print banner
+	fmt.Println(`
+╔════════════════════════════════════════════════════════╗
+║                                                            ║
+║              QWENCODER-PROXY SERVER                         ║
+║                                                            ║
+║  Unified proxy server with OAuth REST API and dashboard      ║
+║                                                            ║
+╚════════════════════════════════════════════════════════╝
+`)
 }

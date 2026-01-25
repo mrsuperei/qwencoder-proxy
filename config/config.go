@@ -25,11 +25,22 @@ type LoggingConfig struct {
 	IsDebugMode bool
 }
 
-// Config holds all configuration for the application
+// OAuthServerConfig holds OAuth REST API server configuration
+type OAuthServerConfig struct {
+	Port            string        // OAuth server port (default: 8080)
+	CallbackBaseURL string        // Base URL for callbacks (e.g., "http://localhost:8080")
+	StateTTL        time.Duration // OAuth state TTL (default: 10m)
+	DeviceCodeTTL   time.Duration // Device code TTL (default: 15m)
+	EnableCORS      bool          // Enable CORS (default: false)
+	AllowedOrigins  []string      // CORS allowed origins (default: ["*"])
+}
+
+// Config holds all configuration for application
 type Config struct {
-	Server     ServerConfig
-	HTTPClient HTTPClientConfig
-	Logging    LoggingConfig
+	Server      ServerConfig
+	HTTPClient  HTTPClientConfig
+	Logging     LoggingConfig
+	OAuthServer OAuthServerConfig
 }
 
 // DefaultConfig returns the default configuration
@@ -48,6 +59,14 @@ func DefaultConfig() *Config {
 		},
 		Logging: LoggingConfig{
 			IsDebugMode: false,
+		},
+		OAuthServer: OAuthServerConfig{
+			Port:            "8143",
+			CallbackBaseURL: "http://localhost:8143",
+			StateTTL:        10 * time.Minute,
+			DeviceCodeTTL:   15 * time.Minute,
+			EnableCORS:      false,
+			AllowedOrigins:  []string{"*"},
 		},
 	}
 }
