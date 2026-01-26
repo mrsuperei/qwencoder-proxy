@@ -15,3 +15,18 @@ iflow.test
 
 # Logs
 *.log
+
+# Credentials and sensitive data
+.credentials/
+.env
+.env.local
+.env.*.local
+*.pem
+*.key
+*.crt
+*.p12
+*.pfx
+secrets/
+credentials/
+*.secret
+*.credentials
