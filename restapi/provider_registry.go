@@ -72,7 +72,7 @@ func (pr *ProviderRegistry) registerDefaultProviders() {
 		ClientSecret: "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",
 		AuthURL:      "https://accounts.google.com/o/oauth2/v2/auth",
 		TokenURL:     "https://oauth2.googleapis.com/token",
-		Scopes:       []string{"https://www.googleapis.com/auth/cloud-platform"},
+		Scopes:       []string{"https://www.googleapis.com/auth/cloud-platform", "https://www.googleapis.com/auth/userinfo.email", "https://www.googleapis.com/auth/userinfo.profile", "openid"},
 		CredsDir:     ".gemini",
 		CredsFile:    "oauth_creds.json",
 	})

@@ -37,17 +37,39 @@ type Provider struct {
 	logger        *logging.Logger
 }
 
-// QwenAuthenticator wraps the existing qwenclient authentication
-type QwenAuthenticator struct{}
+// QwenAuthenticator wraps the multi-token manager for token selection
+type QwenAuthenticator struct {
+	tokenManager  *auth.TokenManager
+	multiTokenMgr *auth.MultiTokenManager
+	logger        *logging.Logger
+}
 
-// NewQwenAuthenticator creates a new Qwen authenticator
-func NewQwenAuthenticator() *QwenAuthenticator {
-	return &QwenAuthenticator{}
+// NewQwenAuthenticator creates a new Qwen authenticator with token manager
+func NewQwenAuthenticator(tokenManager *auth.TokenManager, logger *logging.Logger) *QwenAuthenticator {
+	return &QwenAuthenticator{
+		tokenManager:  tokenManager,
+		multiTokenMgr: nil,
+		logger:        logger,
+	}
+}
+
+// NewQwenAuthenticatorWithMultiTokenManager creates a new Qwen authenticator with both token manager and multi-token manager
+func NewQwenAuthenticatorWithMultiTokenManager(tokenManager *auth.TokenManager, multiTokenMgr *auth.MultiTokenManager, logger *logging.Logger) *QwenAuthenticator {
+	return &QwenAuthenticator{
+		tokenManager:  tokenManager,
+		multiTokenMgr: multiTokenMgr,
+		logger:        logger,
+	}
+}
+
+// SetMultiTokenManager sets the multi-token manager
+func (a *QwenAuthenticator) SetMultiTokenManager(multiTokenMgr *auth.MultiTokenManager) {
+	a.multiTokenMgr = multiTokenMgr
 }
 
 // Authenticate performs the authentication flow
 func (a *QwenAuthenticator) Authenticate(ctx context.Context) error {
-	return auth.AuthenticateWithOAuth()
+	return auth.AuthenticateWithOAuth(ctx, a.logger, a.multiTokenMgr)
 }
 
 // GetToken returns a valid access token
@@ -57,7 +79,7 @@ func (a *QwenAuthenticator) GetToken(ctx context.Context) (string, error) {
 		// If we get an auth error, try to trigger the authentication flow
 		if strings.Contains(err.Error(), "credentials not found") || strings.Contains(err.Error(), "failed to refresh token") {
 			// Trigger authentication flow to get new credentials
-			authErr := auth.AuthenticateWithOAuth()
+			authErr := auth.AuthenticateWithOAuth(ctx, a.logger, a.multiTokenMgr)
 			if authErr != nil {
 				return "", fmt.Errorf("authentication required but failed: %v. Error getting token: %w", authErr, err)
 			}
@@ -75,13 +97,18 @@ func (a *QwenAuthenticator) GetToken(ctx context.Context) (string, error) {
 
 // IsAuthenticated checks if valid credentials exist
 func (a *QwenAuthenticator) IsAuthenticated() bool {
-	_, _, err := qwenclient.GetValidTokenAndEndpoint()
+	if a.tokenManager == nil {
+		return false
+	}
+
+	_, err := a.tokenManager.SelectToken()
 	return err == nil
 }
 
 // GetCredentialsPath returns the path to stored credentials
 func (a *QwenAuthenticator) GetCredentialsPath() string {
-	return auth.GetQwenCredentialsPath()
+	// Multi-token system uses different storage path
+	return ""
 }
 
 // ClearCredentials removes stored credentials
@@ -94,9 +121,18 @@ func (a *QwenAuthenticator) ClearCredentials() error {
 // NewProvider creates a new Qwen provider
 func NewProvider() *Provider {
 	return &Provider{
-		authenticator: NewQwenAuthenticator(),
+		authenticator: NewQwenAuthenticator(nil, logging.NewLogger()),
 		httpClient:    &http.Client{Timeout: 5 * time.Minute},
 		logger:        logging.NewLogger(),
+	}
+}
+
+// NewProviderWithTokenManager creates a new Qwen provider with token manager
+func NewProviderWithTokenManager(tokenManager *auth.TokenManager, logger *logging.Logger) *Provider {
+	return &Provider{
+		authenticator: NewQwenAuthenticator(tokenManager, logger),
+		httpClient:    &http.Client{Timeout: 5 * time.Minute},
+		logger:        logger,
 	}
 }
 
@@ -147,10 +183,10 @@ func (p *Provider) ListModels(ctx context.Context) (interface{}, error) {
 	models := make([]interface{}, len(SupportedModels))
 	for i, model := range SupportedModels {
 		models[i] = map[string]interface{}{
-			"id":         model,
-			"object":     "model",
-			"created":    1677648736,
-			"owned_by":   "qwen",
+			"id":       model,
+			"object":   "model",
+			"created":  1677648736,
+			"owned_by": "qwen",
 		}
 	}
 	return map[string]interface{}{
@@ -168,7 +204,7 @@ func (p *Provider) GenerateContent(ctx context.Context, model string, request in
 
 	// Log the original request before conversion
 	p.logger.DebugLog("[Qwen] Original request before conversion: %+v", request)
-	
+
 	// Convert request to proper format for Qwen API
 	reqBody, err := json.Marshal(request)
 	if err != nil {
@@ -181,18 +217,18 @@ func (p *Provider) GenerateContent(ctx context.Context, model string, request in
 	// The endpoint from credentials may or may not include /v1, so we ensure it's properly formatted
 	// If endpoint is "https://portal.qwen.ai" and we want to call chat completions,
 	// the final URL should be "https://portal.qwen.ai/v1/chat/completions"
-	
+
 	// Ensure the endpoint ends with /v1 for the Qwen API
 	normalizedEndpoint := endpoint
 	if !strings.HasSuffix(normalizedEndpoint, "/v1") {
 		normalizedEndpoint = normalizedEndpoint + "/v1"
 	}
-	
+
 	// Since this is called from the OpenAI handler for /v1/chat/completions,
 	// we construct the appropriate path
 	url := fmt.Sprintf("%s/chat/completions", normalizedEndpoint)
 	p.logger.DebugLog("[Qwen] Constructed target URL: %s", url)
-	
+
 	req, err := http.NewRequestWithContext(ctx, "POST", url, bytes.NewReader(reqBody))
 	if err != nil {
 		return nil, fmt.Errorf("failed to create request: %w", err)
@@ -215,7 +251,7 @@ func (p *Provider) GenerateContent(ctx context.Context, model string, request in
 	defer resp.Body.Close()
 
 	p.logger.DebugLog("[Qwen] Response status: %d", resp.StatusCode)
-	
+
 	if resp.StatusCode != http.StatusOK {
 		body, _ := io.ReadAll(resp.Body)
 		p.logger.ErrorLog("[Qwen] API error (status %d): %s", resp.StatusCode, string(body))
@@ -248,16 +284,16 @@ func (p *Provider) GenerateContentStream(ctx context.Context, model string, requ
 	// The endpoint from credentials may or may not include /v1, so we ensure it's properly formatted
 	// If endpoint is "https://portal.qwen.ai" and we want to call chat completions,
 	// the final URL should be "https://portal.qwen.ai/v1/chat/completions"
-	
+
 	// Ensure the endpoint ends with /v1 for the Qwen API
 	normalizedEndpoint := endpoint
 	if !strings.HasSuffix(normalizedEndpoint, "/v1") {
 		normalizedEndpoint = normalizedEndpoint + "/v1"
 	}
-	
+
 	url := fmt.Sprintf("%s/chat/completions", normalizedEndpoint)
 	p.logger.DebugLog("[Qwen] Constructed streaming target URL: %s", url)
-	
+
 	req, err := http.NewRequestWithContext(ctx, "POST", url, bytes.NewReader(reqBody))
 	if err != nil {
 		return nil, fmt.Errorf("failed to create request: %w", err)
@@ -280,7 +316,7 @@ func (p *Provider) GenerateContentStream(ctx context.Context, model string, requ
 	}
 
 	p.logger.DebugLog("[Qwen] Streaming response status: %d", resp.StatusCode)
-	
+
 	if resp.StatusCode != http.StatusOK {
 		body, _ := io.ReadAll(resp.Body)
 		resp.Body.Close()

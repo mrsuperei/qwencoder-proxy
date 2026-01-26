@@ -12,6 +12,7 @@ import (
 	"sync"
 	"time"
 
+	"github.com/google/uuid"
 	"github.com/sunbankio/qwencoder-proxy/logging"
 	"golang.org/x/oauth2"
 )
@@ -51,11 +52,13 @@ type KiroCredentials struct {
 
 // KiroAuthenticator implements the Authenticator interface for Kiro
 type KiroAuthenticator struct {
-	config      *KiroOAuthConfig
-	credentials *KiroCredentials
-	mu          sync.RWMutex
-	logger      *logging.Logger
-	httpClient  *http.Client
+	config        *KiroOAuthConfig
+	credentials   *KiroCredentials
+	tokenManager  *TokenManager
+	multiTokenMgr *MultiTokenManager
+	mu            sync.RWMutex
+	logger        *logging.Logger
+	httpClient    *http.Client
 }
 
 // NewKiroAuthenticator creates a new Kiro authenticator
@@ -64,10 +67,26 @@ func NewKiroAuthenticator(config *KiroOAuthConfig) *KiroAuthenticator {
 		config = DefaultKiroOAuthConfig()
 	}
 	return &KiroAuthenticator{
-		config:     config,
-		logger:     logging.NewLogger(),
-		httpClient: &http.Client{Timeout: 30 * time.Second},
+		config:        config,
+		tokenManager:  nil, // Will be set via SetTokenManager
+		multiTokenMgr: nil, // Will be set via SetMultiTokenManager
+		logger:        logging.NewLogger(),
+		httpClient:    &http.Client{Timeout: 30 * time.Second},
 	}
+}
+
+// SetTokenManager sets the token manager for this authenticator
+func (a *KiroAuthenticator) SetTokenManager(tokenManager *TokenManager) {
+	a.mu.Lock()
+	defer a.mu.Unlock()
+	a.tokenManager = tokenManager
+}
+
+// SetMultiTokenManager sets the multi-token manager for this authenticator
+func (a *KiroAuthenticator) SetMultiTokenManager(mtm *MultiTokenManager) {
+	a.mu.Lock()
+	defer a.mu.Unlock()
+	a.multiTokenMgr = mtm
 }
 
 // GetCredentialsPath returns the path to the credentials file
@@ -80,6 +99,13 @@ func (a *KiroAuthenticator) IsAuthenticated() bool {
 	a.mu.RLock()
 	defer a.mu.RUnlock()
 
+	// If token manager is set, check if it has tokens
+	if a.tokenManager != nil {
+		tokens := a.tokenManager.store.ListTokens()
+		return len(tokens) > 0
+	}
+
+	// Fallback to legacy credential check
 	if a.credentials == nil {
 		creds, err := a.loadCredentials()
 		if err != nil {
@@ -161,6 +187,23 @@ func (a *KiroAuthenticator) loadCredentials() (*KiroCredentials, error) {
 		creds.Region = a.config.Region
 	}
 
+	// Extract email if multi-token manager is available
+	if a.multiTokenMgr != nil && creds.AccessToken != "" {
+		tokenResponse := make(map[string]interface{})
+		tokenResponse["access_token"] = creds.AccessToken
+		tokenResponse["refresh_token"] = creds.RefreshToken
+		tokenResponse["token_type"] = "Bearer"
+
+		email, err := a.multiTokenMgr.ExtractEmail(context.Background(), "kiro", tokenResponse, creds.AccessToken)
+		if err != nil {
+			a.logger.DebugLog("[Kiro Auth] Failed to extract email: %v", err)
+		} else {
+			if email != "" {
+				a.logger.DebugLog("[Kiro Auth] Extracted email: %s", email)
+			}
+		}
+	}
+
 	return &creds, nil
 }
 
@@ -212,6 +255,7 @@ func (a *KiroAuthenticator) ClearCredentials() error {
 
 	a.credentials = nil
 	// Don't delete the file as it may contain other AWS SSO credentials
+	// Multi-token system handles token removal separately
 	return nil
 }
 
@@ -231,6 +275,16 @@ func (a *KiroAuthenticator) GetToken(ctx context.Context) (string, error) {
 	a.mu.Lock()
 	defer a.mu.Unlock()
 
+	// If token manager is set, use it for token selection
+	if a.tokenManager != nil {
+		token, err := a.tokenManager.SelectToken()
+		if err != nil {
+			return "", fmt.Errorf("failed to select token from token manager: %w", err)
+		}
+		return token.AccessToken, nil
+	}
+
+	// Fallback to legacy credential loading
 	// Load credentials if not in memory
 	if a.credentials == nil {
 		creds, err := a.loadCredentials()
@@ -409,6 +463,51 @@ func (a *KiroAuthenticator) Authenticate(ctx context.Context) error {
 
 	if a.credentials.AccessToken == "" {
 		return fmt.Errorf("no valid access token found in credentials")
+	}
+
+	// Save to multi-token store if available
+	if a.multiTokenMgr != nil {
+		// Extract email from token response
+		tokenResponse := make(map[string]interface{})
+		tokenResponse["access_token"] = a.credentials.AccessToken
+		tokenResponse["refresh_token"] = a.credentials.RefreshToken
+		tokenResponse["token_type"] = "Bearer"
+
+		email, err := a.multiTokenMgr.ExtractEmail(ctx, "kiro", tokenResponse, a.credentials.AccessToken)
+		if err != nil {
+			a.logger.WarningLog("[Kiro Auth] Failed to extract email: %v", err)
+			email = ""
+		}
+
+		// Create ProviderToken with email
+		now := time.Now()
+		var expiry time.Time
+		if a.credentials.ExpiresAt != "" {
+			expiry, _ = time.Parse(time.RFC3339, a.credentials.ExpiresAt)
+		}
+		if expiry.IsZero() {
+			expiry = now.Add(1 * time.Hour) // Default to 1 hour if no expiry
+		}
+
+		providerToken := ProviderToken{
+			ID:           uuid.New().String(),
+			AccessToken:  a.credentials.AccessToken,
+			RefreshToken: a.credentials.RefreshToken,
+			TokenType:    "Bearer",
+			ExpiryDate:   expiry.UnixMilli(),
+			Email:        email,
+			Healthy:      true,
+			HealthScore:  1.0,
+			LastUsed:     now.UnixMilli(),
+			CreatedAt:    now.UnixMilli(),
+		}
+
+		// Save token to multi-token store
+		if err := a.multiTokenMgr.SaveToken("kiro", providerToken); err != nil {
+			a.logger.WarningLog("[Kiro Auth] Failed to save token to multi-token store: %v", err)
+		} else {
+			a.logger.InfoLog("[Kiro Auth] Credentials saved to multi-token store")
+		}
 	}
 
 	a.logger.DebugLog("[Kiro Auth] Authentication successful using existing credentials")

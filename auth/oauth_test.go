@@ -3,6 +3,8 @@ package auth
 import (
 	"testing"
 	"time"
+
+	"github.com/sunbankio/qwencoder-proxy/logging"
 )
 
 func TestIsTokenValid(t *testing.T) {
@@ -54,7 +56,9 @@ func TestIsTokenValid(t *testing.T) {
 }
 
 func TestAuthenticate(t *testing.T) {
-	err := AuthenticateWithOAuth()
+	logger := logging.NewLogger()
+	mtm := NewMultiTokenManager(logger)
+	err := AuthenticateWithOAuth(nil, logger, mtm)
 	if err != nil {
 		t.Errorf("Authentication failed with error: %v", err)
 	}

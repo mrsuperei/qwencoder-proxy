@@ -596,6 +596,132 @@
         .hidden {
             display: none !important;
         }
+
+        /* Token list styles */
+        .token-list {
+            margin-top: 1rem;
+            max-height: 400px;
+            overflow-y: auto;
+        }
+
+        .token-item {
+            background: var(--bg-color);
+            border: 1px solid var(--border-color);
+            border-radius: 6px;
+            padding: 0.75rem;
+            margin-bottom: 0.5rem;
+        }
+
+        .token-item.status-healthy {
+            border-left: 4px solid var(--success-color);
+        }
+
+        .token-item.status-unhealthy {
+            border-left: 4px solid var(--error-color);
+        }
+
+        .token-header {
+            display: flex;
+            justify-content: space-between;
+            align-items: center;
+            margin-bottom: 0.5rem;
+        }
+
+        .token-email {
+            font-weight: 600;
+            font-size: 0.875rem;
+        }
+
+        .token-status {
+            font-size: 0.75rem;
+            padding: 0.25rem 0.5rem;
+            border-radius: 4px;
+        }
+
+        .status-healthy .token-status {
+            background: #d1fae5;
+            color: #065f46;
+        }
+
+        .status-unhealthy .token-status {
+            background: #fee2e2;
+            color: #991b1b;
+        }
+
+        .token-details {
+            display: grid;
+            grid-template-columns: repeat(3, 1fr);
+            gap: 0.5rem;
+            margin-bottom: 0.5rem;
+            font-size: 0.75rem;
+        }
+
+        .token-detail-label {
+            color: var(--text-secondary);
+        }
+
+        .token-detail-value {
+            font-weight: 500;
+        }
+
+        .token-actions {
+            display: flex;
+            gap: 0.5rem;
+            justify-content: flex-end;
+        }
+
+        /* Add Token Modal */
+        .add-token-form {
+            display: flex;
+            flex-direction: column;
+            gap: 1rem;
+        }
+
+        .add-token-form textarea {
+            width: 100%;
+            padding: 0.625rem;
+            border: 1px solid var(--border-color);
+            border-radius: 6px;
+            font-size: 0.875rem;
+            min-height: 100px;
+            resize: vertical;
+        }
+
+        .add-token-form textarea:focus {
+            outline: none;
+            border-color: var(--primary-color);
+            box-shadow: 0 0 0 3px rgba(37, 99, 235, 0.1);
+        }
+
+        /* Provider Settings Modal */
+        .form-group select {
+            width: 100%;
+            padding: 0.625rem;
+            border: 1px solid var(--border-color);
+            border-radius: 6px;
+            font-size: 0.875rem;
+            background: var(--card-bg);
+        }
+
+        .form-group select:focus {
+            outline: none;
+            border-color: var(--primary-color);
+            box-shadow: 0 0 0 3px rgba(37, 99, 235, 0.1);
+        }
+
+        .provider-summary {
+            display: flex;
+            align-items: center;
+            justify-content: space-between;
+            padding: 0.5rem 0;
+            border-bottom: 1px solid var(--border-color);
+            margin-bottom: 0.5rem;
+        }
+
+        .provider-summary-count {
+            font-size: 0.75rem;
+            color: var(--text-secondary);
+        }
     </style>
 </head>
 <body>
@@ -679,6 +805,72 @@
             <div class="modal-footer">
                 <button class="btn btn-secondary" id="settingsCancel">Cancel</button>
                 <button class="btn btn-primary" id="settingsSave">Save</button>
+            </div>
+        </div>
+    </div>
+
+    <!-- Add Token Modal -->
+    <div class="modal-overlay" id="addTokenModal">
+        <div class="modal">
+            <div class="modal-header">
+                <h3 id="addTokenTitle">Add Token</h3>
+                <button class="modal-close" id="addTokenClose">&times;</button>
+            </div>
+            <div class="modal-body">
+                <div class="add-token-form">
+                    <div class="form-group">
+                        <label for="accessToken">Access Token *</label>
+                        <textarea id="accessToken" placeholder="Paste access token here..."></textarea>
+                    </div>
+                    <div class="form-group">
+                        <label for="refreshToken">Refresh Token (optional)</label>
+                        <input type="text" id="refreshToken" placeholder="Refresh token">
+                    </div>
+                    <div class="form-group">
+                        <label for="tokenEmail">Email (optional)</label>
+                        <input type="email" id="tokenEmail" placeholder="user@example.com">
+                    </div>
+                    <div class="form-group">
+                        <label for="expiresIn">Expires In (seconds, optional)</label>
+                        <input type="number" id="expiresIn" placeholder="3600">
+                    </div>
+                </div>
+            </div>
+            <div class="modal-footer">
+                <button class="btn btn-secondary" id="addTokenCancel">Cancel</button>
+                <button class="btn btn-primary" id="addTokenSave">Add Token</button>
+            </div>
+        </div>
+    </div>
+
+    <!-- Provider Settings Modal -->
+    <div class="modal-overlay" id="providerSettingsModal">
+        <div class="modal">
+            <div class="modal-header">
+                <h3 id="providerSettingsTitle">Provider Settings</h3>
+                <button class="modal-close" id="providerSettingsClose">&times;</button>
+            </div>
+            <div class="modal-body">
+                <div class="form-group">
+                    <label for="selectionStrategy">Selection Strategy</label>
+                    <select id="selectionStrategy">
+                        <option value="random">Random</option>
+                        <option value="round_robin">Round Robin</option>
+                        <option value="least_used">Least Used</option>
+                    </select>
+                </div>
+                <div class="form-group">
+                    <label for="refreshBuffer">Refresh Buffer (seconds)</label>
+                    <input type="number" id="refreshBuffer" placeholder="1800" min="0">
+                </div>
+                <div class="form-group">
+                    <label for="maxErrorCount">Max Error Count</label>
+                    <input type="number" id="maxErrorCount" placeholder="3" min="0">
+                </div>
+            </div>
+            <div class="modal-footer">
+                <button class="btn btn-secondary" id="providerSettingsCancel">Cancel</button>
+                <button class="btn btn-primary" id="providerSettingsSave">Save</button>
             </div>
         </div>
     </div>
@@ -773,6 +965,27 @@
             async clearAllCredentials() {
                 return this.request('DELETE', '/api/credentials');
             }
+
+            // Multi-token management methods
+            async getProviderCredentials(providerId) {
+                return this.request('GET', `/api/credentials/${providerId}`);
+            }
+
+            async addToken(providerId, tokenData) {
+                return this.request('POST', `/api/credentials/${providerId}`, tokenData);
+            }
+
+            async deleteToken(providerId, tokenId) {
+                return this.request('DELETE', `/api/credentials/${providerId}/${tokenId}`);
+            }
+
+            async refreshTokenById(providerId, tokenId) {
+                return this.request('POST', `/api/credentials/${providerId}/${tokenId}/refresh`);
+            }
+
+            async updateProviderSettings(providerId, settings) {
+                return this.request('PUT', `/api/credentials/${providerId}/settings`, settings);
+            }
         }
 
         // ============================================
@@ -845,6 +1058,7 @@
                 this.providers = [];
                 this.credentials = [];
                 this.pollingIntervals = new Map();
+                this.currentProviderId = null;
 
                 this.init();
             }
@@ -888,6 +1102,28 @@
                 });
                 document.getElementById('settingsSave').addEventListener('click', () => {
                     this.saveSettings();
+                });
+
+                // Add Token modal
+                document.getElementById('addTokenClose').addEventListener('click', () => {
+                    this.hideAddTokenModal();
+                });
+                document.getElementById('addTokenCancel').addEventListener('click', () => {
+                    this.hideAddTokenModal();
+                });
+                document.getElementById('addTokenSave').addEventListener('click', () => {
+                    this.saveToken();
+                });
+
+                // Provider Settings modal
+                document.getElementById('providerSettingsClose').addEventListener('click', () => {
+                    this.hideProviderSettingsModal();
+                });
+                document.getElementById('providerSettingsCancel').addEventListener('click', () => {
+                    this.hideProviderSettingsModal();
+                });
+                document.getElementById('providerSettingsSave').addEventListener('click', () => {
+                    this.saveProviderSettings();
                 });
 
                 // Device code modal
@@ -1010,9 +1246,8 @@
                                 <span class="provider-flow">${flowLabel}</span>
                             </div>
                         </div>
-                        <div class="provider-status not-authenticated" id="status-${provider.id}">
-                            <span>○</span>
-                            <span>Not Authenticated</span>
+                        <div class="provider-summary" id="providerSummary-${provider.id}" style="display: none;">
+                            <span class="provider-summary-count" id="tokenCount-${provider.id}">0 tokens</span>
                         </div>
                         <div class="provider-actions">
                             ${provider.flow === 'authorization_code' ? `
@@ -1030,25 +1265,14 @@
                                     🔒 External
                                 </button>
                             ` : ''}
-                        </div>
-                        <div class="token-info hidden" id="tokenInfo-${provider.id}">
-                            <div class="token-info-row">
-                                <span class="token-info-label">Token Type:</span>
-                                <span id="tokenType-${provider.id}">-</span>
-                            </div>
-                            <div class="token-info-row">
-                                <span class="token-info-label">Expires In:</span>
-                                <span id="expiresIn-${provider.id}">-</span>
-                            </div>
-                        </div>
-                        <div class="provider-actions hidden" id="authActions-${provider.id}">
-                            <button class="btn btn-secondary btn-sm" onclick="dashboard.refreshToken('${provider.id}')">
-                                🔄 Refresh
+                            <button class="btn btn-secondary" onclick="dashboard.showAddTokenModal('${provider.id}')">
+                                + Add Token
                             </button>
-                            <button class="btn btn-danger btn-sm" onclick="dashboard.logout('${provider.id}')">
-                                🚪 Logout
+                            <button class="btn btn-secondary" onclick="dashboard.showProviderSettingsModal('${provider.id}')">
+                                ⚙️ Settings
                             </button>
                         </div>
+                        <div class="token-list" id="tokenList-${provider.id}"></div>
                     `;
 
                     grid.appendChild(card);
@@ -1063,25 +1287,59 @@
                     if (!card) return;
 
                     const cred = this.credentials.find(c => c.provider === provider.id);
-                    const statusEl = document.getElementById(`status-${provider.id}`);
-                    const tokenInfoEl = document.getElementById(`tokenInfo-${provider.id}`);
-                    const authActionsEl = document.getElementById(`authActions-${provider.id}`);
+                    const summaryEl = document.getElementById(`providerSummary-${provider.id}`);
+                    const tokenListEl = document.getElementById(`tokenList-${provider.id}`);
 
-                    if (cred && cred.valid) {
-                        statusEl.className = 'provider-status authenticated';
-                        statusEl.innerHTML = '<span>✓</span><span>Authenticated</span>';
-                        tokenInfoEl.classList.remove('hidden');
-                        authActionsEl.classList.remove('hidden');
-
-                        document.getElementById(`tokenType-${provider.id}`).textContent = cred.token_type || 'Bearer';
-                        document.getElementById(`expiresIn-${provider.id}`).textContent = this.formatExpiresIn(cred.expires_in);
+                    if (cred && cred.tokens && cred.tokens.length > 0) {
+                        summaryEl.style.display = 'flex';
+                        document.getElementById(`tokenCount-${provider.id}`).textContent = `${cred.tokens.length} token${cred.tokens.length !== 1 ? 's' : ''}`;
+                        tokenListEl.innerHTML = cred.tokens.map(token => this.renderTokenItem(provider.id, token)).join('');
                     } else {
-                        statusEl.className = 'provider-status not-authenticated';
-                        statusEl.innerHTML = '<span>○</span><span>Not Authenticated</span>';
-                        tokenInfoEl.classList.add('hidden');
-                        authActionsEl.classList.add('hidden');
+                        summaryEl.style.display = 'none';
+                        tokenListEl.innerHTML = '';
                     }
                 });
+            }
+
+            renderTokenItem(providerId, token) {
+                const statusClass = token.healthy ? 'status-healthy' : 'status-unhealthy';
+                const expiryDate = new Date(token.expiry_date);
+                const expiresText = token.expires_in > 0
+                    ? this.formatDuration(token.expires_in * 1000)
+                    : 'Expired';
+
+                return `
+                    <div class="token-item ${statusClass}" id="token-${token.id}">
+                        <div class="token-header">
+                            <span class="token-email">${token.email || 'No email'}</span>
+                            <span class="token-status ${statusClass}">
+                                ${token.healthy ? '✓ Healthy' : '✗ Unhealthy'}
+                            </span>
+                        </div>
+                        <div class="token-details">
+                            <div>
+                                <span class="token-detail-label">Expires:</span>
+                                <span class="token-detail-value">${expiresText}</span>
+                            </div>
+                            <div>
+                                <span class="token-detail-label">Health:</span>
+                                <span class="token-detail-value">${Math.round(token.health_score * 100)}%</span>
+                            </div>
+                            <div>
+                                <span class="token-detail-label">Last Used:</span>
+                                <span class="token-detail-value">${this.formatTimestamp(token.last_used)}</span>
+                            </div>
+                        </div>
+                        <div class="token-actions">
+                            <button class="btn btn-sm btn-primary" onclick="dashboard.refreshTokenById('${providerId}', '${token.id}')">
+                                🔄 Refresh
+                            </button>
+                            <button class="btn btn-sm btn-danger" onclick="dashboard.deleteTokenById('${providerId}', '${token.id}')">
+                                🗑️ Delete
+                            </button>
+                        </div>
+                    </div>
+                `;
             }
 
             formatExpiresIn(seconds) {

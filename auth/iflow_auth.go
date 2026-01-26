@@ -16,19 +16,19 @@ import (
 	"sync"
 	"time"
 
+	"github.com/google/uuid"
 	"github.com/sunbankio/qwencoder-proxy/logging"
 	"golang.org/x/oauth2"
 )
 
 const (
 	// OAuth constants from reference/iflow.rs
-	IFlowAuthURL     = "https://iflow.cn/oauth"
-	IFlowTokenURL    = "https://iflow.cn/oauth/token"
-	IFlowUserInfoURL = "https://iflow.cn/api/oauth/getUserInfo"
-	IFlowAPIKeyURL   = "https://platform.iflow.cn/api/openapi/apikey"
-	IFlowClientID    = "10009311001"
+	IFlowAuthURL      = "https://iflow.cn/oauth"
+	IFlowTokenURL     = "https://iflow.cn/oauth/token"
+	IFlowAPIKeyURL    = "https://platform.iflow.cn/api/openapi/apikey"
+	IFlowClientID     = "10009311001"
 	IFlowClientSecret = "4Z3YjXycVsQvyGF1etiNlIBB4RsqSDtW"
-	IFlowDefaultPort = 11451
+	IFlowDefaultPort  = 11451
 )
 
 // IFlowOAuthConfig holds the OAuth configuration for iFlow
@@ -53,7 +53,7 @@ func DefaultIFlowOAuthConfig() *IFlowOAuthConfig {
 
 // IFlowCredentials represents the stored OAuth credentials for iFlow
 type IFlowCredentials struct {
-	AuthType        string `json:"auth_type"`        // "oauth" or "cookie"
+	AuthType        string `json:"auth_type"` // "oauth" or "cookie"
 	AccessToken     string `json:"access_token,omitempty"`
 	RefreshToken    string `json:"refresh_token,omitempty"`
 	Expire          string `json:"expire,omitempty"`
@@ -129,12 +129,14 @@ func (c *IFlowCredentials) GetExpire() string {
 
 // IFlowAuthenticator implements the auth.Authenticator interface for iFlow
 type IFlowAuthenticator struct {
-	config      *IFlowOAuthConfig
-	credentials *IFlowCredentials
-	mu          sync.RWMutex
-	logger      *logging.Logger
-	httpClient  *http.Client
-	tokenSource oauth2.TokenSource
+	config        *IFlowOAuthConfig
+	credentials   *IFlowCredentials
+	tokenManager  *TokenManager
+	multiTokenMgr *MultiTokenManager
+	mu            sync.RWMutex
+	logger        *logging.Logger
+	httpClient    *http.Client
+	tokenSource   oauth2.TokenSource
 }
 
 // NewIFlowAuthenticator creates a new iFlow authenticator
@@ -143,10 +145,26 @@ func NewIFlowAuthenticator(config *IFlowOAuthConfig) *IFlowAuthenticator {
 		config = DefaultIFlowOAuthConfig()
 	}
 	return &IFlowAuthenticator{
-		config:     config,
-		logger:     logging.NewLogger(),
-		httpClient: &http.Client{Timeout: 30 * time.Second},
+		config:        config,
+		tokenManager:  nil, // Will be set via SetTokenManager
+		multiTokenMgr: nil, // Will be set via SetMultiTokenManager
+		logger:        logging.NewLogger(),
+		httpClient:    &http.Client{Timeout: 30 * time.Second},
 	}
+}
+
+// SetTokenManager sets the token manager for this authenticator
+func (a *IFlowAuthenticator) SetTokenManager(tokenManager *TokenManager) {
+	a.mu.Lock()
+	defer a.mu.Unlock()
+	a.tokenManager = tokenManager
+}
+
+// SetMultiTokenManager sets the multi-token manager for this authenticator
+func (a *IFlowAuthenticator) SetMultiTokenManager(mtm *MultiTokenManager) {
+	a.mu.Lock()
+	defer a.mu.Unlock()
+	a.multiTokenMgr = mtm
 }
 
 // Authenticate performs the OAuth authentication flow
@@ -185,6 +203,20 @@ func (a *IFlowAuthenticator) GetToken(ctx context.Context) (string, error) {
 	a.mu.Lock()
 	defer a.mu.Unlock()
 
+	// If token manager is set, use it for token selection
+	if a.tokenManager != nil {
+		token, err := a.tokenManager.SelectToken()
+		if err != nil {
+			return "", fmt.Errorf("failed to select token from token manager: %w", err)
+		}
+		// Return API key if available, otherwise return access token
+		if token.APIKey != "" {
+			return token.APIKey, nil
+		}
+		return token.AccessToken, nil
+	}
+
+	// Fallback to legacy credential loading
 	// Load credentials if not loaded
 	if a.credentials == nil {
 		a.loadCredentials()
@@ -289,6 +321,13 @@ func (a *IFlowAuthenticator) IsAuthenticated() bool {
 	a.mu.RLock()
 	defer a.mu.RUnlock()
 
+	// If token manager is set, check if it has tokens
+	if a.tokenManager != nil {
+		tokens := a.tokenManager.store.ListTokens()
+		return len(tokens) > 0
+	}
+
+	// Fallback to legacy credential check
 	if a.credentials == nil {
 		// Try to load from file
 		a.loadCredentials()
@@ -311,11 +350,8 @@ func (a *IFlowAuthenticator) ClearCredentials() error {
 	a.mu.Lock()
 	defer a.mu.Unlock()
 
-	credsPath := a.GetCredentialsPath()
-	if err := os.Remove(credsPath); err != nil && !os.IsNotExist(err) {
-		return fmt.Errorf("failed to remove credentials file: %w", err)
-	}
-
+	// Multi-token system handles token removal separately
+	// Don't delete the credentials file as it may contain other tokens
 	a.credentials = nil
 	return nil
 }
@@ -567,24 +603,77 @@ func (a *IFlowAuthenticator) exchangeCodeForTokens(code string, pkceCodes *IFlow
 
 	expiresAt := time.Now().Add(time.Duration(tokenResp.ExpiresIn) * time.Second)
 
-	a.credentials = &IFlowCredentials{
-		AuthType:     "oauth",
-		AccessToken:  tokenResp.AccessToken,
-		RefreshToken: tokenResp.RefreshToken,
-		TokenType:    tokenResp.TokenType,
-		Expire:       expiresAt.Format(time.RFC3339),
-		ExpiresAt:    expiresAt.Format(time.RFC3339),
-		ExpiryDate:   expiresAt.UnixMilli(),
-		LastRefresh:  time.Now().Format(time.RFC3339),
-		Type:         "iflow",
+	// Check if multi-token manager is available
+	if a.multiTokenMgr == nil {
+		// Fallback to legacy saving
+		a.credentials = &IFlowCredentials{
+			AuthType:     "oauth",
+			AccessToken:  tokenResp.AccessToken,
+			RefreshToken: tokenResp.RefreshToken,
+			TokenType:    tokenResp.TokenType,
+			Expire:       expiresAt.Format(time.RFC3339),
+			ExpiresAt:    expiresAt.Format(time.RFC3339),
+			ExpiryDate:   expiresAt.UnixMilli(),
+			LastRefresh:  time.Now().Format(time.RFC3339),
+			Type:         "iflow",
+		}
+		// Fetch user info and API key
+		if err := a.fetchUserInfo(); err != nil {
+			a.logger.DebugLog("[iFlow] Failed to fetch user info: %v", err)
+			// Don't fail the exchange, just log the error
+		}
+		return a.saveCredentials()
 	}
+
+	// Extract email from token response
+	tokenResponse := make(map[string]interface{})
+	tokenResponse["access_token"] = tokenResp.AccessToken
+	tokenResponse["refresh_token"] = tokenResp.RefreshToken
+	tokenResponse["token_type"] = tokenResp.TokenType
+	tokenResponse["expires_in"] = tokenResp.ExpiresIn
+	tokenResponse["scope"] = tokenResp.Scope
+
+	email, err := a.multiTokenMgr.ExtractEmail(context.Background(), "iflow", tokenResponse, tokenResp.AccessToken)
+	if err != nil {
+		a.logger.WarningLog("[iFlow Auth] Failed to extract email: %v", err)
+		email = ""
+	}
+
 	// Fetch user info and API key
 	if err := a.fetchUserInfo(); err != nil {
 		a.logger.DebugLog("[iFlow] Failed to fetch user info: %v", err)
 		// Don't fail the exchange, just log the error
 	}
 
-	return a.saveCredentials()
+	// Use email from credentials if available (fetchUserInfo may have set it)
+	if a.credentials != nil && a.credentials.Email != "" {
+		email = a.credentials.Email
+	}
+
+	// Create ProviderToken with email and API key
+	now := time.Now()
+	providerToken := ProviderToken{
+		ID:           uuid.New().String(),
+		AccessToken:  tokenResp.AccessToken,
+		RefreshToken: tokenResp.RefreshToken,
+		TokenType:    tokenResp.TokenType,
+		ExpiryDate:   expiresAt.UnixMilli(),
+		Email:        email,
+		Scope:        tokenResp.Scope,
+		APIKey:       a.credentials.APIKey,
+		Healthy:      true,
+		HealthScore:  1.0,
+		LastUsed:     now.UnixMilli(),
+		CreatedAt:    now.UnixMilli(),
+	}
+
+	// Save token to multi-token store
+	if err := a.multiTokenMgr.SaveToken("iflow", providerToken); err != nil {
+		return fmt.Errorf("failed to save token to multi-token store: %w", err)
+	}
+
+	a.logger.DebugLog("[iFlow Auth] Authentication successful, credentials saved to multi-token store")
+	return nil
 }
 
 // fetchUserInfo fetches user information and API key

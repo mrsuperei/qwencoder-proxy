@@ -38,16 +38,18 @@ type DevicePollState struct {
 
 // StateManager manages in-memory state for OAuth flows
 type StateManager struct {
-	states map[string]*OAuthState
-	polls  map[string]*DevicePollState
-	mu     sync.RWMutex
+	states         map[string]*OAuthState
+	polls          map[string]*DevicePollState
+	processedCodes map[string]time.Time // Tracks processed OAuth codes for idempotency (code -> processedAt)
+	mu             sync.RWMutex
 }
 
 // NewStateManager creates a new state manager
 func NewStateManager() *StateManager {
 	sm := &StateManager{
-		states: make(map[string]*OAuthState),
-		polls:  make(map[string]*DevicePollState),
+		states:         make(map[string]*OAuthState),
+		polls:          make(map[string]*DevicePollState),
+		processedCodes: make(map[string]time.Time),
 	}
 	// Start cleanup routine
 	go sm.StartCleanupRoutine()
@@ -192,7 +194,24 @@ func (sm *StateManager) GetPoll(pollID string) (*DevicePollState, error) {
 	return poll, nil
 }
 
-// CleanupExpired removes expired states and polls
+// IsCodeProcessed checks if an OAuth authorization code has already been processed
+func (sm *StateManager) IsCodeProcessed(code string) bool {
+	sm.mu.RLock()
+	defer sm.mu.RUnlock()
+
+	_, exists := sm.processedCodes[code]
+	return exists
+}
+
+// MarkCodeProcessed marks an OAuth authorization code as processed
+func (sm *StateManager) MarkCodeProcessed(code string) {
+	sm.mu.Lock()
+	defer sm.mu.Unlock()
+
+	sm.processedCodes[code] = time.Now()
+}
+
+// CleanupExpired removes expired states, polls, and processed codes
 func (sm *StateManager) CleanupExpired() {
 	sm.mu.Lock()
 	defer sm.mu.Unlock()
@@ -210,6 +229,14 @@ func (sm *StateManager) CleanupExpired() {
 	for id, poll := range sm.polls {
 		if now.After(poll.ExpiresAt) {
 			delete(sm.polls, id)
+		}
+	}
+
+	// Clean up processed codes older than 1 hour (OAuth codes are typically short-lived)
+	codeExpiry := 1 * time.Hour
+	for code, processedAt := range sm.processedCodes {
+		if now.Sub(processedAt) > codeExpiry {
+			delete(sm.processedCodes, code)
 		}
 	}
 }

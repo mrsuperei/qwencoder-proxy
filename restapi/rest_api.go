@@ -21,6 +21,36 @@ import (
 	"golang.org/x/oauth2"
 )
 
+// ProviderTokenInfo represents token information for API responses
+type ProviderTokenInfo struct {
+	ID          string  `json:"id"`
+	Email       string  `json:"email"`
+	ExpiryDate  int64   `json:"expiry_date"`
+	ExpiresIn   int64   `json:"expires_in"`
+	TokenType   string  `json:"token_type"`
+	Healthy     bool    `json:"healthy"`
+	HealthScore float64 `json:"health_score"`
+	LastUsed    int64   `json:"last_used"`
+	CreatedAt   int64   `json:"created_at"`
+	ErrorCount  int     `json:"error_count"`
+}
+
+// ProviderCredentialsInfo represents credentials info for a provider
+type ProviderCredentialsInfo struct {
+	ProviderID string              `json:"provider_id"`
+	Tokens     []ProviderTokenInfo `json:"tokens"`
+	Settings   auth.StoreSettings  `json:"settings"`
+}
+
+// TokenSelectionResponse represents the response when selecting a token
+type TokenSelectionResponse struct {
+	AccessToken string `json:"access_token"`
+	Email       string `json:"email"`
+	TokenID     string `json:"token_id"`
+	TokenType   string `json:"token_type"`
+	ExpiresIn   int64  `json:"expires_in"`
+}
+
 // Config holds the configuration for the REST API server
 type Config struct {
 	Port            string        // Server port
@@ -46,11 +76,14 @@ func DefaultConfig() *Config {
 
 // Server represents the OAuth REST API server
 type Server struct {
-	config       *Config
-	registry     *ProviderRegistry
-	stateManager *StateManager
-	logger       *logging.Logger
-	httpClient   *http.Client
+	config            *Config
+	registry          *ProviderRegistry
+	stateManager      *StateManager
+	logger            *logging.Logger
+	httpClient        *http.Client
+	tokenStores       map[string]*auth.MultiTokenStore // providerID -> MultiTokenStore
+	tokenManagers     map[string]*auth.TokenManager    // providerID -> TokenManager
+	multiTokenManager *auth.MultiTokenManager          // Multi-token manager for all providers
 }
 
 // NewServer creates a new OAuth REST API server
@@ -63,12 +96,24 @@ func NewServer(config *Config, logger *logging.Logger) *Server {
 		logger = &logging.Logger{}
 	}
 
+	// Create multi-token manager
+	multiTokenManager := auth.NewMultiTokenManager(logger)
+	if err := multiTokenManager.Initialize(); err != nil {
+		logger.ErrorLog("Failed to initialize multi-token manager: %v", err)
+	}
+	if err := multiTokenManager.Start(); err != nil {
+		logger.ErrorLog("Failed to start multi-token manager: %v", err)
+	}
+
 	return &Server{
-		config:       config,
-		registry:     NewProviderRegistry(),
-		stateManager: NewStateManager(),
-		logger:       logger,
-		httpClient:   &http.Client{Timeout: 30 * time.Second},
+		config:            config,
+		registry:          NewProviderRegistry(),
+		stateManager:      NewStateManager(),
+		logger:            logger,
+		httpClient:        &http.Client{Timeout: 30 * time.Second},
+		tokenStores:       make(map[string]*auth.MultiTokenStore),
+		tokenManagers:     make(map[string]*auth.TokenManager),
+		multiTokenManager: multiTokenManager,
 	}
 }
 
@@ -101,8 +146,19 @@ func (s *Server) Start() error {
 	return http.ListenAndServe(addr, handler)
 }
 
+// Stop stops the server and cleans up resources
+func (s *Server) Stop() {
+	s.logger.InfoLog("Stopping OAuth REST API server...")
+
+	// Stop multi-token manager
+	if s.multiTokenManager != nil {
+		s.multiTokenManager.Stop()
+		s.logger.InfoLog("Multi-token manager stopped")
+	}
+}
+
 // RegisterRoutes registers OAuth API routes with an external http.ServeMux
-// This allows the OAuth server to be integrated into a larger server
+// This allows to OAuth server to be integrated into a larger server
 func (s *Server) RegisterRoutes(mux *http.ServeMux) {
 	s.registerRoutes(mux)
 }
@@ -164,6 +220,71 @@ func (s *Server) registerRoutes(mux *http.ServeMux) {
 
 	// Credentials management
 	mux.HandleFunc("/api/credentials", s.handleCredentials)
+	mux.HandleFunc("/api/credentials/", s.handleProviderCredentials)
+}
+
+// getTokenStore gets or creates a token store for a provider
+func (s *Server) getTokenStore(providerID string) (*auth.MultiTokenStore, error) {
+	if store, ok := s.tokenStores[providerID]; ok {
+		return store, nil
+	}
+
+	credsPath, err := s.registry.GetCredentialsPath(providerID)
+	if err != nil {
+		return nil, err
+	}
+
+	store := auth.NewMultiTokenStore(providerID, credsPath, s.logger)
+	if err := store.Load(); err != nil {
+		s.logger.WarningLog("Failed to load token store for %s: %v", providerID, err)
+	}
+
+	s.tokenStores[providerID] = store
+	return store, nil
+}
+
+// getTokenManager gets or creates a token manager for a provider
+func (s *Server) getTokenManager(providerID string) (*auth.TokenManager, error) {
+	if manager, ok := s.tokenManagers[providerID]; ok {
+		return manager, nil
+	}
+
+	store, err := s.getTokenStore(providerID)
+	if err != nil {
+		return nil, err
+	}
+
+	// Create strategy factory and get default strategy
+	factory := auth.NewStrategyFactory()
+	strategy, err := factory.CreateStrategy(auth.DefaultSelectionStrategy)
+	if err != nil {
+		return nil, err
+	}
+
+	manager := auth.NewTokenManager(store, strategy, s.logger)
+	s.tokenManagers[providerID] = manager
+	return manager, nil
+}
+
+// providerTokenToInfo converts ProviderToken to ProviderTokenInfo
+func (s *Server) providerTokenToInfo(token auth.ProviderToken) ProviderTokenInfo {
+	expiresIn := (token.ExpiryDate - time.Now().UnixMilli()) / 1000
+	if expiresIn < 0 {
+		expiresIn = 0
+	}
+
+	return ProviderTokenInfo{
+		ID:          token.ID,
+		Email:       token.Email,
+		ExpiryDate:  token.ExpiryDate,
+		ExpiresIn:   expiresIn,
+		TokenType:   token.TokenType,
+		Healthy:     token.Healthy,
+		HealthScore: token.HealthScore,
+		LastUsed:    token.LastUsed,
+		CreatedAt:   token.CreatedAt,
+		ErrorCount:  token.ErrorCount,
+	}
 }
 
 // handleProviders returns a list of all available providers
@@ -419,7 +540,17 @@ func (s *Server) pollForToken(ctx context.Context, pollID, providerID string, co
 				return
 			}
 
-			// Success - save credentials
+			// Success - save credentials with email extraction
+			// Parse token response for email extraction
+			tokenResponse := make(map[string]interface{})
+			tokenResponse["access_token"] = token.AccessToken
+			tokenResponse["token_type"] = token.TokenType
+			tokenResponse["refresh_token"] = token.RefreshToken
+
+			if resourceURL, ok := token.Extra("resource_url").(string); ok {
+				tokenResponse["resource_url"] = resourceURL
+			}
+
 			creds := auth.OAuthCreds{
 				AccessToken:  token.AccessToken,
 				TokenType:    token.TokenType,
@@ -427,11 +558,7 @@ func (s *Server) pollForToken(ctx context.Context, pollID, providerID string, co
 				ExpiryDate:   token.Expiry.UnixMilli(),
 			}
 
-			if resourceURL, ok := token.Extra("resource_url").(string); ok {
-				creds.ResourceURL = resourceURL
-			}
-
-			if err := s.saveCredentials(providerID, creds); err != nil {
+			if err := s.saveCredentials(providerID, creds, tokenResponse); err != nil {
 				s.logger.ErrorLog("Failed to save credentials for %s: %v", providerID, err)
 				s.stateManager.UpdatePollError(pollID, "save_failed", err.Error())
 				return
@@ -635,6 +762,14 @@ func (s *Server) handleCallback(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
+	// Check if this code has already been processed (idempotency)
+	if s.stateManager.IsCodeProcessed(code) {
+		s.logger.WarningLog("[Callback] Duplicate callback detected - code already processed: %s", code)
+		// Return success to avoid confusing the user (the original processing was successful)
+		s.writeCallbackHTML(w, true, "", "")
+		return
+	}
+
 	s.logger.InfoLog("[Callback] Validating state: %s", state)
 
 	// Validate state
@@ -647,6 +782,10 @@ func (s *Server) handleCallback(w http.ResponseWriter, r *http.Request) {
 
 	s.logger.InfoLog("[Callback] State validated for provider: %s", oauthState.Provider)
 
+	// Mark this code as processed BEFORE exchanging tokens to prevent duplicate processing
+	s.stateManager.MarkCodeProcessed(code)
+	s.logger.InfoLog("[Callback] Marked code as processed: %s", code)
+
 	// Get provider config
 	config, err := s.registry.GetConfig(oauthState.Provider)
 	if err != nil {
@@ -657,8 +796,8 @@ func (s *Server) handleCallback(w http.ResponseWriter, r *http.Request) {
 
 	s.logger.InfoLog("[Callback] Exchanging code for tokens for provider: %s", oauthState.Provider)
 
-	// Exchange code for tokens
-	creds, err := s.exchangeCodeForTokens(config, code, oauthState.RedirectURI, oauthState.CodeVerifier)
+	// Exchange code for tokens with email extraction
+	creds, tokenResponseMap, err := s.exchangeCodeForTokensWithResponse(config, code, oauthState.RedirectURI, oauthState.CodeVerifier)
 	if err != nil {
 		s.logger.ErrorLog("[Callback] Token exchange failed: %v", err)
 		s.writeCallbackHTML(w, false, "token_exchange_failed", err.Error())
@@ -667,8 +806,8 @@ func (s *Server) handleCallback(w http.ResponseWriter, r *http.Request) {
 
 	s.logger.InfoLog("[Callback] Token exchange successful for provider: %s", oauthState.Provider)
 
-	// Save credentials
-	if err := s.saveCredentials(oauthState.Provider, creds); err != nil {
+	// Save credentials with email extraction
+	if err := s.saveCredentials(oauthState.Provider, creds, tokenResponseMap); err != nil {
 		s.logger.ErrorLog("[Callback] Failed to save credentials: %v", err)
 		s.writeCallbackHTML(w, false, "save_failed", err.Error())
 		return
@@ -713,9 +852,9 @@ func (s *Server) writeCallbackHTML(w http.ResponseWriter, success bool, errorCod
 	}
 }
 
-// exchangeCodeForTokens exchanges an authorization code for tokens
-func (s *Server) exchangeCodeForTokens(config *ProviderConfig, code, redirectURI, codeVerifier string) (auth.OAuthCreds, error) {
-	s.logger.InfoLog("[exchangeCodeForTokens] Exchanging code for tokens - TokenURL: %s", config.TokenURL)
+// exchangeCodeForTokensWithResponse exchanges an authorization code for tokens and returns both creds and response map
+func (s *Server) exchangeCodeForTokensWithResponse(config *ProviderConfig, code, redirectURI, codeVerifier string) (auth.OAuthCreds, map[string]interface{}, error) {
+	s.logger.InfoLog("[exchangeCodeForTokensWithResponse] Exchanging code for tokens - TokenURL: %s", config.TokenURL)
 
 	data := url.Values{}
 	data.Set("client_id", config.ClientID)
@@ -727,31 +866,31 @@ func (s *Server) exchangeCodeForTokens(config *ProviderConfig, code, redirectURI
 		data.Set("code_verifier", codeVerifier)
 	}
 
-	s.logger.InfoLog("[exchangeCodeForTokens] Request data prepared - client_id: %s, redirect_uri: %s, has_code_verifier: %v",
+	s.logger.InfoLog("[exchangeCodeForTokensWithResponse] Request data prepared - client_id: %s, redirect_uri: %s, has_code_verifier: %v",
 		config.ClientID, redirectURI, codeVerifier != "")
 
 	req, err := http.NewRequest("POST", config.TokenURL, strings.NewReader(data.Encode()))
 	if err != nil {
-		s.logger.ErrorLog("[exchangeCodeForTokens] Failed to create token request: %v", err)
-		return auth.OAuthCreds{}, fmt.Errorf("failed to create token request: %w", err)
+		s.logger.ErrorLog("[exchangeCodeForTokensWithResponse] Failed to create token request: %v", err)
+		return auth.OAuthCreds{}, nil, fmt.Errorf("failed to create token request: %w", err)
 	}
 	req.Header.Set("Content-Type", "application/x-www-form-urlencoded")
 
-	s.logger.InfoLog("[exchangeCodeForTokens] Sending token request to %s", config.TokenURL)
+	s.logger.InfoLog("[exchangeCodeForTokensWithResponse] Sending token request to %s", config.TokenURL)
 
 	resp, err := s.httpClient.Do(req)
 	if err != nil {
-		s.logger.ErrorLog("[exchangeCodeForTokens] Failed to send token request: %v", err)
-		return auth.OAuthCreds{}, fmt.Errorf("failed to send token request: %w", err)
+		s.logger.ErrorLog("[exchangeCodeForTokensWithResponse] Failed to send token request: %v", err)
+		return auth.OAuthCreds{}, nil, fmt.Errorf("failed to send token request: %w", err)
 	}
 	defer resp.Body.Close()
 
-	s.logger.InfoLog("[exchangeCodeForTokens] Received response - Status: %d", resp.StatusCode)
+	s.logger.InfoLog("[exchangeCodeForTokensWithResponse] Received response - Status: %d", resp.StatusCode)
 
 	if resp.StatusCode != http.StatusOK {
 		body, _ := io.ReadAll(resp.Body)
-		s.logger.ErrorLog("[exchangeCodeForTokens] Token exchange failed - Status: %d, Body: %s", resp.StatusCode, string(body))
-		return auth.OAuthCreds{}, fmt.Errorf("token exchange failed (status %d): %s", resp.StatusCode, string(body))
+		s.logger.ErrorLog("[exchangeCodeForTokensWithResponse] Token exchange failed - Status: %d, Body: %s", resp.StatusCode, string(body))
+		return auth.OAuthCreds{}, nil, fmt.Errorf("token exchange failed (status %d): %s", resp.StatusCode, string(body))
 	}
 
 	var tokenResp struct {
@@ -764,22 +903,32 @@ func (s *Server) exchangeCodeForTokens(config *ProviderConfig, code, redirectURI
 	}
 
 	if err := json.NewDecoder(resp.Body).Decode(&tokenResp); err != nil {
-		s.logger.ErrorLog("[exchangeCodeForTokens] Failed to decode token response: %v", err)
-		return auth.OAuthCreds{}, fmt.Errorf("failed to decode token response: %w", err)
+		s.logger.ErrorLog("[exchangeCodeForTokensWithResponse] Failed to decode token response: %v", err)
+		return auth.OAuthCreds{}, nil, fmt.Errorf("failed to decode token response: %w", err)
 	}
 
-	s.logger.InfoLog("[exchangeCodeForTokens] Token response decoded - has_access_token: %v, has_refresh_token: %v, expires_in: %d",
+	s.logger.InfoLog("[exchangeCodeForTokensWithResponse] Token response decoded - has_access_token: %v, has_refresh_token: %v, expires_in: %d",
 		tokenResp.AccessToken != "", tokenResp.RefreshToken != "", tokenResp.ExpiresIn)
+
+	// Build token response map for email extraction
+	tokenResponse := make(map[string]interface{})
+	tokenResponse["access_token"] = tokenResp.AccessToken
+	tokenResponse["token_type"] = tokenResp.TokenType
+	tokenResponse["refresh_token"] = tokenResp.RefreshToken
+
+	if tokenResp.Scope != "" {
+		tokenResponse["scope"] = tokenResp.Scope
+	}
 
 	creds := auth.OAuthCreds{
 		AccessToken:  tokenResp.AccessToken,
-		RefreshToken: tokenResp.RefreshToken,
 		TokenType:    tokenResp.TokenType,
+		RefreshToken: tokenResp.RefreshToken,
 		ExpiryDate:   time.Now().UnixMilli() + (tokenResp.ExpiresIn * 1000),
 		ResourceURL:  tokenResp.ResourceURL,
 	}
 
-	return creds, nil
+	return creds, tokenResponse, nil
 }
 
 // handleToken handles token operations (GET /api/token/{provider}, DELETE /api/token/{provider})
@@ -816,32 +965,37 @@ func (s *Server) handleToken(w http.ResponseWriter, r *http.Request) {
 
 // handleGetToken returns the current access token for a provider
 func (s *Server) handleGetToken(w http.ResponseWriter, r *http.Request, providerID string) {
-	config, err := s.registry.GetConfig(providerID)
+	manager, err := s.getTokenManager(providerID)
 	if err != nil {
-		WriteError(w, http.StatusBadRequest, "invalid_provider", err.Error())
+		WriteError(w, http.StatusNotFound, "not_found", err.Error())
 		return
 	}
 
-	creds, err := s.loadCredentials(providerID)
+	// Select a token using the configured strategy
+	token, err := manager.SelectToken()
 	if err != nil {
-		WriteError(w, http.StatusNotFound, "credentials_not_found", "No credentials found for provider")
+		WriteError(w, http.StatusServiceUnavailable, "no_token", err.Error())
 		return
 	}
 
-	// Check if token is valid
-	if !auth.IsTokenValid(creds) {
-		// Try to refresh
-		creds, err = s.refreshToken(config, creds)
-		if err != nil {
-			WriteError(w, http.StatusUnauthorized, "token_expired", "Token is expired and refresh failed")
-			return
+	// Update LastUsed timestamp
+	store, err := s.getTokenStore(providerID)
+	if err != nil {
+		s.logger.WarningLog("Failed to get token store: %v", err)
+	} else {
+		if err := store.UpdateToken(token.ID, func(t *auth.ProviderToken) {
+			t.LastUsed = auth.GetCurrentTimestamp()
+		}); err != nil {
+			s.logger.WarningLog("Failed to update LastUsed timestamp: %v", err)
 		}
 	}
 
-	response := map[string]interface{}{
-		"access_token": creds.AccessToken,
-		"token_type":   creds.TokenType,
-		"expires_in":   (creds.ExpiryDate - time.Now().UnixMilli()) / 1000,
+	response := TokenSelectionResponse{
+		AccessToken: token.AccessToken,
+		Email:       token.Email,
+		TokenID:     token.ID,
+		TokenType:   token.TokenType,
+		ExpiresIn:   (token.ExpiryDate - time.Now().UnixMilli()) / 1000,
 	}
 
 	WriteJSON(w, http.StatusOK, response)
@@ -913,22 +1067,23 @@ func (s *Server) handleListCredentials(w http.ResponseWriter, r *http.Request) {
 	credentials := make([]map[string]interface{}, 0)
 
 	for _, provider := range providers {
-		creds, err := s.loadCredentials(provider.ID)
+		store, err := s.getTokenStore(provider.ID)
 		if err != nil {
-			continue // Skip providers without credentials
+			continue // Skip providers without token store
+		}
+
+		tokens := store.ListTokens()
+		tokenInfos := make([]ProviderTokenInfo, 0, len(tokens))
+		for _, token := range tokens {
+			tokenInfos = append(tokenInfos, s.providerTokenToInfo(token))
 		}
 
 		info := map[string]interface{}{
-			"provider":   provider.ID,
-			"expires_at": creds.ExpiryDate,
-			"token_type": creds.TokenType,
-		}
-
-		if auth.IsTokenValid(creds) {
-			info["valid"] = true
-			info["expires_in"] = (creds.ExpiryDate - time.Now().UnixMilli()) / 1000
-		} else {
-			info["valid"] = false
+			"provider":     provider.ID,
+			"total_tokens": len(tokens),
+			"valid_tokens": store.GetValidTokenCount(),
+			"settings":     store.Settings,
+			"tokens":       tokenInfos,
 		}
 
 		credentials = append(credentials, info)
@@ -982,28 +1137,42 @@ func (s *Server) loadCredentials(providerID string) (auth.OAuthCreds, error) {
 	return creds, nil
 }
 
-// saveCredentials saves credentials for a provider
-func (s *Server) saveCredentials(providerID string, creds auth.OAuthCreds) error {
-	credsPath, err := s.registry.GetCredentialsPath(providerID)
-	if err != nil {
-		return err
+// saveCredentials saves credentials for a provider using multi-token store
+func (s *Server) saveCredentials(providerID string, creds auth.OAuthCreds, tokenResponse map[string]interface{}) error {
+	// Extract email from token response
+	email := ""
+	if tokenResponse != nil {
+		var err error
+		email, err = s.multiTokenManager.ExtractEmail(context.Background(), providerID, tokenResponse, creds.AccessToken)
+		if err != nil {
+			s.logger.WarningLog("Failed to extract email for %s: %v", providerID, err)
+			email = ""
+		}
 	}
 
-	// Create directory if it doesn't exist
-	dir := filepath.Dir(credsPath)
-	if err := os.MkdirAll(dir, 0700); err != nil {
-		return fmt.Errorf("failed to create credentials directory: %w", err)
+	// Create provider token with email
+	providerToken := auth.ProviderToken{
+		ID:           auth.GenerateTokenID(),
+		AccessToken:  creds.AccessToken,
+		RefreshToken: creds.RefreshToken,
+		TokenType:    creds.TokenType,
+		ExpiryDate:   creds.ExpiryDate,
+		Email:        email,
+		ResourceURL:  creds.ResourceURL,
+		Scope:        "", // Will be populated from token response if available
+		Healthy:      true,
+		HealthScore:  1.0,
+		LastUsed:     auth.GetCurrentTimestamp(),
+		CreatedAt:    auth.GetCurrentTimestamp(),
+		ErrorCount:   0,
 	}
 
-	data, err := json.MarshalIndent(creds, "", "  ")
-	if err != nil {
-		return fmt.Errorf("failed to marshal credentials: %w", err)
+	// Save token to multi-token store
+	if err := s.multiTokenManager.SaveToken(providerID, providerToken); err != nil {
+		return fmt.Errorf("failed to save token to multi-token store: %w", err)
 	}
 
-	if err := os.WriteFile(credsPath, data, 0600); err != nil {
-		return fmt.Errorf("failed to write credentials file: %w", err)
-	}
-
+	s.logger.InfoLog("Saved token for provider %s with email %s", providerID, email)
 	return nil
 }
 
@@ -1045,8 +1214,9 @@ func (s *Server) refreshToken(config *ProviderConfig, creds auth.OAuthCreds) (au
 		updated.ResourceURL = resourceURL
 	}
 
-	// Save updated credentials
-	if err := s.saveCredentials(config.ID, updated); err != nil {
+	// Save updated credentials with empty token response map
+	tokenResponse := make(map[string]interface{})
+	if err := s.saveCredentials(config.ID, updated, tokenResponse); err != nil {
 		return auth.OAuthCreds{}, fmt.Errorf("failed to save refreshed credentials: %w", err)
 	}
 
@@ -1077,6 +1247,319 @@ func (s *Server) GetProviderConfig(providerID string) (*ProviderConfig, error) {
 // GetRegistry returns the provider registry (for use by other packages)
 func (s *Server) GetRegistry() *ProviderRegistry {
 	return s.registry
+}
+
+// handleProviderCredentials handles provider-specific credential operations
+func (s *Server) handleProviderCredentials(w http.ResponseWriter, r *http.Request) {
+	// Extract provider ID and action from path
+	// Path format: /api/credentials/{provider} or /api/credentials/{provider}/{action}
+	parts := strings.Split(strings.Trim(r.URL.Path, "/"), "/")
+	if len(parts) < 4 {
+		WriteError(w, http.StatusNotFound, "not_found", "Endpoint not found")
+		return
+	}
+
+	providerID := parts[3]
+
+	switch r.Method {
+	case http.MethodGet:
+		if len(parts) == 4 {
+			// GET /api/credentials/{provider} - List all tokens for a provider
+			s.handleGetProviderCredentials(w, r, providerID)
+		} else {
+			WriteError(w, http.StatusNotFound, "not_found", "Endpoint not found")
+		}
+	case http.MethodPost:
+		if len(parts) == 4 {
+			// POST /api/credentials/{provider} - Add a new token
+			s.handleAddToken(w, r, providerID)
+		} else if len(parts) == 6 && parts[5] == "refresh" {
+			// POST /api/credentials/{provider}/{tokenID}/refresh - Refresh a specific token
+			tokenID := parts[4]
+			s.handleRefreshTokenByID(w, r, providerID, tokenID)
+		} else {
+			WriteError(w, http.StatusNotFound, "not_found", "Endpoint not found")
+		}
+	case http.MethodDelete:
+		if len(parts) == 5 {
+			// DELETE /api/credentials/{provider}/{tokenID} - Delete a specific token
+			tokenID := parts[4]
+			s.handleDeleteTokenByID(w, r, providerID, tokenID)
+		} else {
+			WriteError(w, http.StatusNotFound, "not_found", "Endpoint not found")
+		}
+	case http.MethodPut:
+		if len(parts) == 5 && parts[4] == "settings" {
+			// PUT /api/credentials/{provider}/settings - Update provider settings
+			s.handleUpdateProviderSettings(w, r, providerID)
+		} else {
+			WriteError(w, http.StatusNotFound, "not_found", "Endpoint not found")
+		}
+	default:
+		WriteError(w, http.StatusMethodNotAllowed, "method_not_allowed", "Method not allowed")
+	}
+}
+
+// handleGetProviderCredentials returns all tokens for a provider
+func (s *Server) handleGetProviderCredentials(w http.ResponseWriter, r *http.Request, providerID string) {
+	store, err := s.getTokenStore(providerID)
+	if err != nil {
+		WriteError(w, http.StatusNotFound, "not_found", err.Error())
+		return
+	}
+
+	tokens := store.ListTokens()
+	tokenInfos := make([]ProviderTokenInfo, 0, len(tokens))
+	for _, token := range tokens {
+		tokenInfos = append(tokenInfos, s.providerTokenToInfo(token))
+	}
+
+	WriteJSON(w, http.StatusOK, ProviderCredentialsInfo{
+		ProviderID: providerID,
+		Tokens:     tokenInfos,
+		Settings:   store.Settings,
+	})
+}
+
+// handleAddToken adds a new token to a provider
+func (s *Server) handleAddToken(w http.ResponseWriter, r *http.Request, providerID string) {
+	var req struct {
+		AccessToken  string `json:"access_token"`
+		RefreshToken string `json:"refresh_token,omitempty"`
+		TokenType    string `json:"token_type,omitempty"`
+		ExpiresIn    int64  `json:"expires_in,omitempty"`
+		ResourceURL  string `json:"resource_url,omitempty"`
+		Email        string `json:"email,omitempty"`
+	}
+
+	if err := ParseJSON(r, &req); err != nil {
+		WriteError(w, http.StatusBadRequest, "invalid_request", err.Error())
+		return
+	}
+
+	if req.AccessToken == "" {
+		WriteError(w, http.StatusBadRequest, "invalid_request", "access_token is required")
+		return
+	}
+
+	store, err := s.getTokenStore(providerID)
+	if err != nil {
+		WriteError(w, http.StatusNotFound, "not_found", err.Error())
+		return
+	}
+
+	// Extract email if not provided
+	email := req.Email
+	if email == "" {
+		// Try to extract email from token
+		extractor := auth.NewEmailExtractionManager(s.logger)
+		emailExtractor, err := extractor.GetExtractor(providerID)
+		if err != nil {
+			s.logger.WarningLog("Failed to get email extractor for %s: %v", providerID, err)
+			email = "unknown@example.com"
+		} else {
+			if extractedEmail, err := emailExtractor.ExtractEmail(context.Background(), nil, req.AccessToken); err == nil {
+				email = extractedEmail
+			} else {
+				s.logger.WarningLog("Failed to extract email for %s: %v", providerID, err)
+				email = "unknown@example.com"
+			}
+		}
+	}
+
+	// Calculate expiry date
+	expiryDate := int64(0)
+	if req.ExpiresIn > 0 {
+		expiryDate = time.Now().UnixMilli() + (req.ExpiresIn * 1000)
+	}
+
+	token := auth.ProviderToken{
+		ID:           auth.GenerateTokenID(),
+		AccessToken:  req.AccessToken,
+		RefreshToken: req.RefreshToken,
+		TokenType:    req.TokenType,
+		ExpiryDate:   expiryDate,
+		ResourceURL:  req.ResourceURL,
+		Email:        email,
+		Healthy:      true,
+		HealthScore:  1.0,
+		LastUsed:     auth.GetCurrentTimestamp(),
+		CreatedAt:    auth.GetCurrentTimestamp(),
+		ErrorCount:   0,
+	}
+
+	if err := store.AddToken(token); err != nil {
+		WriteError(w, http.StatusInternalServerError, "add_failed", err.Error())
+		return
+	}
+
+	WriteJSON(w, http.StatusCreated, map[string]interface{}{
+		"token_id": token.ID,
+		"email":    token.Email,
+		"success":  true,
+	})
+}
+
+// handleDeleteTokenByID deletes a specific token
+func (s *Server) handleDeleteTokenByID(w http.ResponseWriter, r *http.Request, providerID, tokenID string) {
+	store, err := s.getTokenStore(providerID)
+	if err != nil {
+		WriteError(w, http.StatusNotFound, "not_found", err.Error())
+		return
+	}
+
+	if err := store.RemoveToken(tokenID); err != nil {
+		WriteError(w, http.StatusNotFound, "token_not_found", err.Error())
+		return
+	}
+
+	WriteJSON(w, http.StatusOK, map[string]interface{}{
+		"success": true,
+		"message": "Token deleted successfully",
+	})
+}
+
+// handleRefreshTokenByID refreshes a specific token
+func (s *Server) handleRefreshTokenByID(w http.ResponseWriter, r *http.Request, providerID, tokenID string) {
+	store, err := s.getTokenStore(providerID)
+	if err != nil {
+		WriteError(w, http.StatusNotFound, "not_found", err.Error())
+		return
+	}
+
+	token, err := store.GetToken(tokenID)
+	if err != nil {
+		WriteError(w, http.StatusNotFound, "token_not_found", err.Error())
+		return
+	}
+
+	// Get provider config for refresh
+	config, err := s.registry.GetConfig(providerID)
+	if err != nil {
+		WriteError(w, http.StatusBadRequest, "invalid_provider", err.Error())
+		return
+	}
+
+	// Refresh token using provider-specific logic
+	refreshed, err := s.refreshProviderToken(config, token)
+	if err != nil {
+		WriteError(w, http.StatusInternalServerError, "refresh_failed", err.Error())
+		return
+	}
+
+	// Update token in store
+	refreshed.ID = tokenID
+	refreshed.Email = token.Email
+	refreshed.CreatedAt = token.CreatedAt
+	refreshed.LastUsed = auth.GetCurrentTimestamp()
+	refreshed.Healthy = true
+	refreshed.HealthScore = 1.0
+	refreshed.ErrorCount = 0
+
+	if err := store.AddToken(refreshed); err != nil {
+		WriteError(w, http.StatusInternalServerError, "save_failed", err.Error())
+		return
+	}
+
+	WriteJSON(w, http.StatusOK, map[string]interface{}{
+		"success": true,
+		"token":   s.providerTokenToInfo(refreshed),
+	})
+}
+
+// handleUpdateProviderSettings updates provider settings
+func (s *Server) handleUpdateProviderSettings(w http.ResponseWriter, r *http.Request, providerID string) {
+	var req struct {
+		SelectionStrategy string `json:"selection_strategy"`
+		RefreshBufferSec  int    `json:"refresh_buffer_sec"`
+		MaxErrorCount     int    `json:"max_error_count"`
+	}
+
+	if err := ParseJSON(r, &req); err != nil {
+		WriteError(w, http.StatusBadRequest, "invalid_request", err.Error())
+		return
+	}
+
+	store, err := s.getTokenStore(providerID)
+	if err != nil {
+		WriteError(w, http.StatusNotFound, "not_found", err.Error())
+		return
+	}
+
+	// Update settings with validation
+	settings := store.Settings
+	if req.SelectionStrategy != "" {
+		// Validate strategy
+		factory := auth.NewStrategyFactory()
+		if _, err := factory.CreateStrategy(req.SelectionStrategy); err != nil {
+			WriteError(w, http.StatusBadRequest, "invalid_strategy", err.Error())
+			return
+		}
+		settings.SelectionStrategy = req.SelectionStrategy
+	}
+	if req.RefreshBufferSec > 0 {
+		settings.RefreshBufferSec = req.RefreshBufferSec
+	}
+	if req.MaxErrorCount > 0 {
+		settings.MaxErrorCount = req.MaxErrorCount
+	}
+
+	store.Settings = settings
+	if err := store.Save(); err != nil {
+		WriteError(w, http.StatusInternalServerError, "save_failed", err.Error())
+		return
+	}
+
+	// Update token manager strategy if it exists
+	if manager, ok := s.tokenManagers[providerID]; ok {
+		factory := auth.NewStrategyFactory()
+		if strategy, err := factory.CreateStrategy(settings.SelectionStrategy); err == nil {
+			manager.SetStrategy(strategy)
+		}
+	}
+
+	WriteJSON(w, http.StatusOK, map[string]interface{}{
+		"success":  true,
+		"settings": settings,
+	})
+}
+
+// refreshProviderToken refreshes a token using provider-specific logic
+func (s *Server) refreshProviderToken(config *ProviderConfig, token *auth.ProviderToken) (auth.ProviderToken, error) {
+	if token.RefreshToken == "" {
+		return auth.ProviderToken{}, fmt.Errorf("no refresh token available")
+	}
+
+	oauthConfig := &oauth2.Config{
+		ClientID:     config.ClientID,
+		ClientSecret: config.ClientSecret,
+		Endpoint: oauth2.Endpoint{
+			TokenURL: config.TokenURL,
+		},
+	}
+
+	ctx, cancel := context.WithTimeout(context.Background(), 30*time.Second)
+	defer cancel()
+
+	oauthToken := &oauth2.Token{
+		RefreshToken: token.RefreshToken,
+	}
+
+	tokenSource := oauthConfig.TokenSource(ctx, oauthToken)
+	newToken, err := tokenSource.Token()
+	if err != nil {
+		return auth.ProviderToken{}, fmt.Errorf("failed to refresh token: %w", err)
+	}
+
+	refreshed := auth.ProviderToken{
+		AccessToken:  newToken.AccessToken,
+		TokenType:    newToken.TokenType,
+		RefreshToken: newToken.RefreshToken,
+		ExpiryDate:   newToken.Expiry.UnixMilli(),
+		ResourceURL:  token.ResourceURL,
+	}
+
+	return refreshed, nil
 }
 
 // GetStateManager returns the state manager (for use by other packages)

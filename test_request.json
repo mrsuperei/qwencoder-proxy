@@ -1,9 +1,0 @@
-{
-  "model": "qwen3-coder-plus",
-  "messages": [
-    {
-      "role": "user",
-      "content": "Hello"
-    }
-  ]
-}

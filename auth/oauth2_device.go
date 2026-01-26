@@ -10,12 +10,14 @@ import (
 	"runtime"
 	"time"
 
+	"github.com/google/uuid"
 	"github.com/sunbankio/qwencoder-proxy/logging"
 	"golang.org/x/oauth2"
 )
 
 // AuthenticateWithDeviceFlow handles the OAuth 2.0 device authorization flow using the golang.org/x/oauth2 package.
-func AuthenticateWithDeviceFlow() error {
+// It requires a MultiTokenManager to save the token using the multi-token store.
+func AuthenticateWithDeviceFlow(ctx context.Context, logger *logging.Logger, multiTokenMgr *MultiTokenManager) error {
 	conf := &oauth2.Config{
 		ClientID: QwenOAuthClientID,
 		Scopes:   []string{QwenOAuthScope},
@@ -25,8 +27,15 @@ func AuthenticateWithDeviceFlow() error {
 		},
 	}
 
-	ctx, cancel := context.WithTimeout(context.Background(), 2*time.Minute)
-	defer cancel()
+	if ctx == nil {
+		var cancel context.CancelFunc
+		ctx, cancel = context.WithTimeout(context.Background(), 2*time.Minute)
+		defer cancel()
+	}
+
+	if logger == nil {
+		logger = logging.NewLogger()
+	}
 
 	codeVerifier, err := generateCodeVerifier()
 	if err != nil {
@@ -53,7 +62,7 @@ func AuthenticateWithDeviceFlow() error {
 
 	// Try to open the verification URI in the browser
 	if err := openBrowser(verificationURL); err != nil {
-		logging.NewLogger().WarningLog("Failed to open browser automatically: %v. Please open the URL manually.", err)
+		logger.WarningLog("Failed to open browser automatically: %v. Please open the URL manually.", err)
 	}
 
 	fmt.Printf("\n=== Qwen OAuth Authentication ===\n")
@@ -66,18 +75,51 @@ func AuthenticateWithDeviceFlow() error {
 		return fmt.Errorf("failed to get token: %w", err)
 	}
 
-	creds := OAuthCreds{
-		AccessToken:  token.AccessToken,
-		TokenType:    token.TokenType,
-		RefreshToken: token.RefreshToken,
-		ExpiryDate:   token.Expiry.UnixMilli(),
-	}
-	if resourceURL, ok := token.Extra("resource_url").(string); ok {
-		creds.ResourceURL = resourceURL
+	// Ensure multi-token manager is initialized
+	if multiTokenMgr == nil {
+		return fmt.Errorf("multi-token manager is required but was nil")
 	}
 
-	if err := SaveOAuthCreds(creds); err != nil {
-		return fmt.Errorf("failed to save credentials: %w", err)
+	if err := multiTokenMgr.Initialize(); err != nil {
+		return fmt.Errorf("failed to initialize multi-token manager: %w", err)
+	}
+
+	// Extract email from token response
+	tokenResponse := make(map[string]interface{})
+	tokenResponse["access_token"] = token.AccessToken
+	tokenResponse["refresh_token"] = token.RefreshToken
+	tokenResponse["token_type"] = token.TokenType
+	tokenResponse["expires_in"] = int64(token.Expiry.Sub(time.Now()).Seconds())
+
+	email, err := multiTokenMgr.ExtractEmail(ctx, "qwen", tokenResponse, token.AccessToken)
+	if err != nil {
+		logger.WarningLog("[Qwen OAuth] Failed to extract email: %v", err)
+		email = ""
+	}
+
+	// Create ProviderToken with email
+	now := time.Now()
+	providerToken := ProviderToken{
+		ID:           uuid.New().String(),
+		AccessToken:  token.AccessToken,
+		RefreshToken: token.RefreshToken,
+		TokenType:    token.TokenType,
+		ExpiryDate:   token.Expiry.UnixMilli(),
+		Email:        email,
+		Healthy:      true,
+		HealthScore:  1.0,
+		LastUsed:     now.UnixMilli(),
+		CreatedAt:    now.UnixMilli(),
+	}
+
+	// Extract resource URL if available
+	if resourceURL, ok := token.Extra("resource_url").(string); ok {
+		providerToken.ResourceURL = resourceURL
+	}
+
+	// Save token to multi-token store
+	if err := multiTokenMgr.SaveToken("qwen", providerToken); err != nil {
+		return fmt.Errorf("failed to save token to multi-token store: %w", err)
 	}
 
 	fmt.Println("Authentication successful! Credentials saved.")

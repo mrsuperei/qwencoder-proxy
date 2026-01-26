@@ -1,0 +1,13 @@
+{
+  "id": "ee0f7648-f913-4855-99b4-d9aa06fe968a",
+  "access_token": "ya29.a0AUMWg_KtUAbk2OJoHYwknNXifRYhSPQA1k9MEMkaE84KuEUelsje6BrKbt4SDvCndnvhu4Dcy_tWpbWDpAughg2UTS6AMOxc2c_eBEZl9RsgIh9wVKFG5LN3qu6pSHDVtWj8OVvb-dbWxpAtFYYXKDb6fSXn498AItFpd32cJPeu0FvAB1rU5DD1GTIosEkltDalTOOt8Lr0aCgYKAQUSARESFQHGX2MiF1Hl5N_v_ODFVgz1stdUUg0211",
+  "refresh_token": "1//09lWxj7Ti5V2hCgYIARAAGAkSNwF-L9IremIXas-f3kWs9oEvnRsE7qEwkh_r6pCCMRwQbvIRQoaKDvwQDloiP18PIGjXObmQNG4",
+  "token_type": "Bearer",
+  "expiry_date": 1769457093194,
+  "email": "vuurman.pogo@gmail.com",
+  "healthy": true,
+  "health_score": 1,
+  "last_used": 1769453494242,
+  "created_at": 1769453494242,
+  "error_count": 0
+}

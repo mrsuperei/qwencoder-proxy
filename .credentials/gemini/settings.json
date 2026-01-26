@@ -1,0 +1,5 @@
+{
+  "selection_strategy": "random",
+  "refresh_buffer_sec": 1800,
+  "max_error_count": 3
+}

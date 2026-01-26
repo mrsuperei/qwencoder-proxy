@@ -7,9 +7,11 @@ import (
 	"net/http"
 	"os"
 	"path/filepath"
+	"sync"
 	"time"
 
 	"github.com/gofrs/flock"
+	"github.com/sunbankio/qwencoder-proxy/logging"
 	"golang.org/x/oauth2"
 )
 
@@ -151,7 +153,27 @@ func RefreshAccessToken(credentials OAuthCreds) (OAuthCreds, error) {
 	return updatedCredentials, nil
 }
 
+// Global multi-token manager for OAuth flows
+var (
+	defaultMultiTokenManager *MultiTokenManager
+	defaultMultiTokenMux     sync.RWMutex
+)
+
+// SetDefaultMultiTokenManager sets the default multi-token manager for OAuth flows
+func SetDefaultMultiTokenManager(mtm *MultiTokenManager) {
+	defaultMultiTokenMux.Lock()
+	defer defaultMultiTokenMux.Unlock()
+	defaultMultiTokenManager = mtm
+}
+
+// GetDefaultMultiTokenManager returns the default multi-token manager
+func GetDefaultMultiTokenManager() *MultiTokenManager {
+	defaultMultiTokenMux.RLock()
+	defer defaultMultiTokenMux.RUnlock()
+	return defaultMultiTokenManager
+}
+
 // AuthenticateWithOAuth performs the complete OAuth device authorization flow
-func AuthenticateWithOAuth() error {
-	return AuthenticateWithDeviceFlow()
+func AuthenticateWithOAuth(ctx context.Context, logger *logging.Logger, multiTokenMgr *MultiTokenManager) error {
+	return AuthenticateWithDeviceFlow(ctx, logger, multiTokenMgr)
 }
