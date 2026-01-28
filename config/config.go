@@ -5,6 +5,29 @@ import (
 	"time"
 )
 
+// HTTPClient is an interface that abstracts HTTP client operations.
+// This interface enables dependency inversion, testability, and allows for
+// proxy-aware implementations.
+//
+// The standard library's *http.Client satisfies this interface, making it
+// easy to adopt throughout the codebase without breaking existing code.
+//
+// Example usage:
+//
+//	client := &http.Client{Timeout: 30 * time.Second}
+//	var httpClient HTTPClient = client // *http.Client satisfies HTTPClient
+//
+// Future implementations may include:
+// - StandardHTTPClient: Wraps *http.Client with additional functionality
+// - RetryHTTPClient: Adds automatic retry logic for failed requests
+// - LoggingHTTPClient: Logs request/response details for debugging
+// - MetricsHTTPClient: Tracks request metrics and statistics
+type HTTPClient interface {
+	// Do sends an HTTP request and returns an HTTP response.
+	// This method matches the signature of http.Client.Do().
+	Do(req *http.Request) (*http.Response, error)
+}
+
 // ServerConfig holds server-related configuration
 type ServerConfig struct {
 	Port string

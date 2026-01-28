@@ -7,7 +7,9 @@ import (
 	"encoding/json"
 	"fmt"
 	"io"
+	"net"
 	"net/http"
+	"net/url"
 	"strings"
 	"time"
 
@@ -45,6 +47,7 @@ type Provider struct {
 	baseURL       string
 	authenticator *auth.IFlowAuthenticator
 	httpClient    *http.Client
+	tokenManager  *auth.TokenManager
 	logger        *logging.Logger
 }
 
@@ -91,6 +94,11 @@ func (p *Provider) GetAuthenticator() provider.Authenticator {
 	return p.authenticator
 }
 
+// SetTokenManager sets the TokenManager for this provider
+func (p *Provider) SetTokenManager(manager *auth.TokenManager) {
+	p.tokenManager = manager
+}
+
 // IsHealthy checks if the provider is available
 func (p *Provider) IsHealthy(ctx context.Context) bool {
 	// Try to list models as a health check
@@ -118,11 +126,172 @@ func (p *Provider) ListModels(ctx context.Context) (interface{}, error) {
 	return &modelsResp, nil
 }
 
+// isProxyError checks if an error is a proxy-related error
+// This includes connection errors, timeout errors, and DNS resolution errors
+func (p *Provider) isProxyError(err error) bool {
+	if err == nil {
+		return false
+	}
+
+	// Check for timeout errors
+	if netErr, ok := err.(net.Error); ok {
+		if netErr.Timeout() {
+			return true
+		}
+	}
+
+	// Check for connection errors
+	if strings.Contains(err.Error(), "connection refused") ||
+		strings.Contains(err.Error(), "connection reset") ||
+		strings.Contains(err.Error(), "broken pipe") ||
+		strings.Contains(err.Error(), "EOF") {
+		return true
+	}
+
+	// Check for DNS resolution errors
+	if strings.Contains(err.Error(), "no such host") ||
+		strings.Contains(err.Error(), "dns") ||
+		strings.Contains(err.Error(), "lookup") {
+		return true
+	}
+
+	// Check for proxy-specific errors
+	if strings.Contains(err.Error(), "proxy") ||
+		strings.Contains(err.Error(), "SOCKS") ||
+		strings.Contains(err.Error(), "tunnel") {
+		return true
+	}
+
+	// Check for URL errors (often related to proxy configuration)
+	if urlErr, ok := err.(*url.Error); ok {
+		return p.isProxyError(urlErr.Err)
+	}
+
+	return false
+}
+
+// classifyProxyError returns a string classification of the proxy error type
+// This is used for health tracking and logging purposes
+func (p *Provider) classifyProxyError(err error) string {
+	if err == nil {
+		return "none"
+	}
+
+	// Check for timeout errors
+	if netErr, ok := err.(net.Error); ok && netErr.Timeout() {
+		return "timeout"
+	}
+
+	// Check for connection errors
+	if strings.Contains(err.Error(), "connection refused") {
+		return "connection_refused"
+	}
+	if strings.Contains(err.Error(), "connection reset") {
+		return "connection_reset"
+	}
+	if strings.Contains(err.Error(), "broken pipe") {
+		return "broken_pipe"
+	}
+	if strings.Contains(err.Error(), "EOF") {
+		return "eof"
+	}
+
+	// Check for DNS resolution errors
+	if strings.Contains(err.Error(), "no such host") ||
+		strings.Contains(err.Error(), "lookup") {
+		return "dns_resolution"
+	}
+
+	// Check for proxy-specific errors
+	if strings.Contains(err.Error(), "proxy") {
+		return "proxy_error"
+	}
+	if strings.Contains(err.Error(), "SOCKS") {
+		return "socks_error"
+	}
+	if strings.Contains(err.Error(), "tunnel") {
+		return "tunnel_error"
+	}
+
+	// Check for URL errors
+	if urlErr, ok := err.(*url.Error); ok {
+		return "url_error: " + p.classifyProxyError(urlErr.Err)
+	}
+
+	return "unknown"
+}
+
+// doRequestWithProxy executes an HTTP request using the provided client
+// and handles proxy error classification and health tracking
+func (p *Provider) doRequestWithProxy(req *http.Request, client *http.Client, tokenID string) (*http.Response, error) {
+	resp, err := client.Do(req)
+	if err != nil {
+		// Check if this is a proxy error
+		if p.isProxyError(err) {
+			errorType := p.classifyProxyError(err)
+			p.logger.ErrorLog("[iFlow] Proxy error for token %s: %s (%s)", tokenID, err.Error(), errorType)
+
+			// Update proxy health if tokenManager is available
+			if p.tokenManager != nil {
+				if updateErr := p.tokenManager.UpdateProxyHealth(tokenID, false, err); updateErr != nil {
+					p.logger.WarningLog("[iFlow] Failed to update proxy health for token %s: %v", tokenID, updateErr)
+				}
+			}
+		} else {
+			p.logger.ErrorLog("[iFlow] Request error for token %s: %v", tokenID, err)
+		}
+		return nil, err
+	}
+
+	// Update proxy health on success
+	if p.tokenManager != nil {
+		if updateErr := p.tokenManager.UpdateProxyHealth(tokenID, true, nil); updateErr != nil {
+			p.logger.WarningLog("[iFlow] Failed to update proxy health for token %s: %v", tokenID, updateErr)
+		}
+	}
+
+	return resp, nil
+}
+
 // GenerateContent handles non-streaming requests with OpenAI format
 func (p *Provider) GenerateContent(ctx context.Context, model string, request interface{}) (interface{}, error) {
-	token, err := p.authenticator.GetToken(ctx)
-	if err != nil {
-		return nil, fmt.Errorf("failed to get token: %w", err)
+	// Get token and proxy-aware client
+	var client *http.Client
+	var token string
+	var tokenID string
+
+	// Try to use token manager for proxy-aware client selection
+	if p.tokenManager != nil {
+		selectedToken, selectedClient, selectErr := p.tokenManager.SelectTokenWithClient()
+		if selectErr != nil {
+			p.logger.ErrorLog("[iFlow] Token selection failed: %v", selectErr)
+			return nil, fmt.Errorf("failed to select token: %w", selectErr)
+		}
+		if selectedClient == nil {
+			p.logger.DebugLog("[iFlow] Token manager returned nil client, using default HTTP client")
+			client = p.httpClient
+		} else {
+			client = selectedClient
+		}
+		token = selectedToken.AccessToken
+		tokenID = selectedToken.ID
+
+		// Log proxy usage
+		if selectedToken.Proxy != nil && selectedToken.Proxy.Enabled {
+			p.logger.DebugLog("[iFlow] GenerateContent using token %s with proxy: %s:%d", tokenID, selectedToken.Proxy.Host, selectedToken.Proxy.Port)
+		} else {
+			p.logger.DebugLog("[iFlow] GenerateContent using token %s with direct connection", tokenID)
+		}
+	} else {
+		// No token manager, use authenticator and default client (backward compatibility)
+		var authErr error
+		token, authErr = p.authenticator.GetToken(ctx)
+		if authErr != nil {
+			p.logger.ErrorLog("[iFlow] Token retrieval failed: %v", authErr)
+			return nil, fmt.Errorf("failed to get token: %w", authErr)
+		}
+		client = p.httpClient
+		tokenID = "fallback"
 	}
 
 	tokenPrefix := token
@@ -150,7 +319,7 @@ func (p *Provider) GenerateContent(ctx context.Context, model string, request in
 
 	p.logger.DebugLog("[iFlow] Sending chat completions request to %s", url)
 
-	resp, err := p.httpClient.Do(req)
+	resp, err := p.doRequestWithProxy(req, client, tokenID)
 	if err != nil {
 		return nil, fmt.Errorf("failed to send request: %w", err)
 	}
@@ -161,17 +330,26 @@ func (p *Provider) GenerateContent(ctx context.Context, model string, request in
 
 	if resp.StatusCode == http.StatusUnauthorized {
 		// Try to refresh token and retry
+		p.logger.DebugLog("[iFlow] Received %d, attempting to refresh token and retry", resp.StatusCode)
+
+		// Read and close the original response body
+		bodyBytes, _ := io.ReadAll(resp.Body)
+		resp.Body.Close()
+
 		_, refreshErr := p.authenticator.GetToken(ctx)
 		if refreshErr != nil {
-			body, _ := io.ReadAll(resp.Body)
-			return nil, fmt.Errorf("unauthorized and token refresh failed: %s", string(body))
+			p.logger.ErrorLog("[iFlow] Token refresh failed: %v", refreshErr)
+			return nil, fmt.Errorf("unauthorized and token refresh failed: %s", string(bodyBytes))
 		}
 
 		// Retry with refreshed token
-		token, _ = p.authenticator.GetToken(ctx)
-		req.Header.Set("Authorization", "Bearer "+token)
+		refreshedToken, tokenErr := p.authenticator.GetToken(ctx)
+		if tokenErr != nil {
+			return nil, fmt.Errorf("failed to get refreshed token: %w", tokenErr)
+		}
+		req.Header.Set("Authorization", "Bearer "+refreshedToken)
 
-		resp, err = p.httpClient.Do(req)
+		resp, err = p.doRequestWithProxy(req, client, tokenID)
 		if err != nil {
 			return nil, fmt.Errorf("failed to send retry request: %w", err)
 		}
@@ -201,9 +379,43 @@ func (p *Provider) GenerateContent(ctx context.Context, model string, request in
 
 // GenerateContentStream handles streaming requests with OpenAI format
 func (p *Provider) GenerateContentStream(ctx context.Context, model string, request interface{}) (io.ReadCloser, error) {
-	token, err := p.authenticator.GetToken(ctx)
-	if err != nil {
-		return nil, fmt.Errorf("failed to get token: %w", err)
+	// Get token and proxy-aware client
+	var client *http.Client
+	var token string
+	var tokenID string
+
+	// Try to use token manager for proxy-aware client selection
+	if p.tokenManager != nil {
+		selectedToken, selectedClient, selectErr := p.tokenManager.SelectTokenWithClient()
+		if selectErr != nil {
+			p.logger.ErrorLog("[iFlow] Token selection failed: %v", selectErr)
+			return nil, fmt.Errorf("failed to select token: %w", selectErr)
+		}
+		if selectedClient == nil {
+			p.logger.DebugLog("[iFlow] Token manager returned nil client, using default HTTP client")
+			client = p.httpClient
+		} else {
+			client = selectedClient
+		}
+		token = selectedToken.AccessToken
+		tokenID = selectedToken.ID
+
+		// Log proxy usage
+		if selectedToken.Proxy != nil && selectedToken.Proxy.Enabled {
+			p.logger.DebugLog("[iFlow] GenerateContentStream using token %s with proxy: %s:%d", tokenID, selectedToken.Proxy.Host, selectedToken.Proxy.Port)
+		} else {
+			p.logger.DebugLog("[iFlow] GenerateContentStream using token %s with direct connection", tokenID)
+		}
+	} else {
+		// No token manager, use authenticator and default client (backward compatibility)
+		var authErr error
+		token, authErr = p.authenticator.GetToken(ctx)
+		if authErr != nil {
+			p.logger.ErrorLog("[iFlow] Token retrieval failed: %v", authErr)
+			return nil, fmt.Errorf("failed to get token: %w", authErr)
+		}
+		client = p.httpClient
+		tokenID = "fallback"
 	}
 
 	// Marshal the request
@@ -225,7 +437,7 @@ func (p *Provider) GenerateContentStream(ctx context.Context, model string, requ
 
 	p.logger.DebugLog("[iFlow] Sending streaming chat completions request to %s", url)
 
-	resp, err := p.httpClient.Do(req)
+	resp, err := p.doRequestWithProxy(req, client, tokenID)
 	if err != nil {
 		return nil, fmt.Errorf("failed to send request: %w", err)
 	}
@@ -235,18 +447,26 @@ func (p *Provider) GenerateContentStream(ctx context.Context, model string, requ
 
 	if resp.StatusCode == http.StatusUnauthorized {
 		// Try to refresh token and retry
+		p.logger.DebugLog("[iFlow] Received %d, attempting to refresh token and retry", resp.StatusCode)
+
+		// Read and close the original response body
+		bodyBytes, _ := io.ReadAll(resp.Body)
+		resp.Body.Close()
+
 		_, refreshErr := p.authenticator.GetToken(ctx)
 		if refreshErr != nil {
-			body, _ := io.ReadAll(resp.Body)
-			resp.Body.Close()
-			return nil, fmt.Errorf("unauthorized and token refresh failed: %s", string(body))
+			p.logger.ErrorLog("[iFlow] Token refresh failed: %v", refreshErr)
+			return nil, fmt.Errorf("unauthorized and token refresh failed: %s", string(bodyBytes))
 		}
 
 		// Retry with refreshed token
-		token, _ = p.authenticator.GetToken(ctx)
-		req.Header.Set("Authorization", "Bearer "+token)
+		refreshedToken, tokenErr := p.authenticator.GetToken(ctx)
+		if tokenErr != nil {
+			return nil, fmt.Errorf("failed to get refreshed token: %w", tokenErr)
+		}
+		req.Header.Set("Authorization", "Bearer "+refreshedToken)
 
-		resp, err = p.httpClient.Do(req)
+		resp, err = p.doRequestWithProxy(req, client, tokenID)
 		if err != nil {
 			return nil, fmt.Errorf("failed to send retry request: %w", err)
 		}
@@ -299,7 +519,7 @@ type OpenAIMessage struct {
 	Content string `json:"content"`
 }
 
-// OpenAIUsage represents token usage in OpenAI response
+// OpenAIUsage represents token usage in OpenAI format
 type OpenAIUsage struct {
 	PromptTokens     int `json:"prompt_tokens"`
 	CompletionTokens int `json:"completion_tokens"`

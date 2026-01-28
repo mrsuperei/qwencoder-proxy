@@ -261,7 +261,10 @@ func (s *Server) getTokenManager(providerID string) (*auth.TokenManager, error) 
 		return nil, err
 	}
 
-	manager := auth.NewTokenManager(store, strategy, s.logger)
+	// Get proxy health tracker for this provider
+	proxyHealthTracker, _ := s.multiTokenManager.GetProxyHealthTracker(providerID)
+
+	manager := auth.NewTokenManager(store, strategy, s.logger, nil, proxyHealthTracker)
 	s.tokenManagers[providerID] = manager
 	return manager, nil
 }
@@ -924,7 +927,7 @@ func (s *Server) exchangeCodeForTokensWithResponse(config *ProviderConfig, code,
 		AccessToken:  tokenResp.AccessToken,
 		TokenType:    tokenResp.TokenType,
 		RefreshToken: tokenResp.RefreshToken,
-		ExpiryDate:   time.Now().UnixMilli() + (tokenResp.ExpiresIn * 1000),
+		ExpiryDate:   time.Now().Add(time.Duration(tokenResp.ExpiresIn) * time.Second).UnixMilli(), // Calculate absolute expiry time
 		ResourceURL:  tokenResp.ResourceURL,
 	}
 
@@ -965,7 +968,7 @@ func (s *Server) handleToken(w http.ResponseWriter, r *http.Request) {
 
 // handleGetToken returns the current access token for a provider
 func (s *Server) handleGetToken(w http.ResponseWriter, r *http.Request, providerID string) {
-	manager, err := s.getTokenManager(providerID)
+	manager, err := s.multiTokenManager.GetTokenManager(providerID)
 	if err != nil {
 		WriteError(w, http.StatusNotFound, "not_found", err.Error())
 		return
@@ -979,7 +982,7 @@ func (s *Server) handleGetToken(w http.ResponseWriter, r *http.Request, provider
 	}
 
 	// Update LastUsed timestamp
-	store, err := s.getTokenStore(providerID)
+	store, err := s.multiTokenManager.GetTokenStore(providerID)
 	if err != nil {
 		s.logger.WarningLog("Failed to get token store: %v", err)
 	} else {
@@ -1067,7 +1070,7 @@ func (s *Server) handleListCredentials(w http.ResponseWriter, r *http.Request) {
 	credentials := make([]map[string]interface{}, 0)
 
 	for _, provider := range providers {
-		store, err := s.getTokenStore(provider.ID)
+		store, err := s.multiTokenManager.GetTokenStore(provider.ID)
 		if err != nil {
 			continue // Skip providers without token store
 		}
@@ -1266,6 +1269,10 @@ func (s *Server) handleProviderCredentials(w http.ResponseWriter, r *http.Reques
 		if len(parts) == 4 {
 			// GET /api/credentials/{provider} - List all tokens for a provider
 			s.handleGetProviderCredentials(w, r, providerID)
+		} else if len(parts) == 6 && parts[5] == "proxy" {
+			// GET /api/credentials/{provider}/{tokenID}/proxy - Get proxy config for a token
+			tokenID := parts[4]
+			s.getProxyConfigHandler(w, r, providerID, tokenID)
 		} else {
 			WriteError(w, http.StatusNotFound, "not_found", "Endpoint not found")
 		}
@@ -1285,6 +1292,10 @@ func (s *Server) handleProviderCredentials(w http.ResponseWriter, r *http.Reques
 			// DELETE /api/credentials/{provider}/{tokenID} - Delete a specific token
 			tokenID := parts[4]
 			s.handleDeleteTokenByID(w, r, providerID, tokenID)
+		} else if len(parts) == 6 && parts[5] == "proxy" {
+			// DELETE /api/credentials/{provider}/{tokenID}/proxy - Remove proxy config for a token
+			tokenID := parts[4]
+			s.deleteProxyConfigHandler(w, r, providerID, tokenID)
 		} else {
 			WriteError(w, http.StatusNotFound, "not_found", "Endpoint not found")
 		}
@@ -1292,6 +1303,10 @@ func (s *Server) handleProviderCredentials(w http.ResponseWriter, r *http.Reques
 		if len(parts) == 5 && parts[4] == "settings" {
 			// PUT /api/credentials/{provider}/settings - Update provider settings
 			s.handleUpdateProviderSettings(w, r, providerID)
+		} else if len(parts) == 6 && parts[5] == "proxy" {
+			// PUT /api/credentials/{provider}/{tokenID}/proxy - Update proxy config for a token
+			tokenID := parts[4]
+			s.updateProxyConfigHandler(w, r, providerID, tokenID)
 		} else {
 			WriteError(w, http.StatusNotFound, "not_found", "Endpoint not found")
 		}
@@ -1302,7 +1317,7 @@ func (s *Server) handleProviderCredentials(w http.ResponseWriter, r *http.Reques
 
 // handleGetProviderCredentials returns all tokens for a provider
 func (s *Server) handleGetProviderCredentials(w http.ResponseWriter, r *http.Request, providerID string) {
-	store, err := s.getTokenStore(providerID)
+	store, err := s.multiTokenManager.GetTokenStore(providerID)
 	if err != nil {
 		WriteError(w, http.StatusNotFound, "not_found", err.Error())
 		return
@@ -1342,7 +1357,7 @@ func (s *Server) handleAddToken(w http.ResponseWriter, r *http.Request, provider
 		return
 	}
 
-	store, err := s.getTokenStore(providerID)
+	store, err := s.multiTokenManager.GetTokenStore(providerID)
 	if err != nil {
 		WriteError(w, http.StatusNotFound, "not_found", err.Error())
 		return
@@ -1402,7 +1417,7 @@ func (s *Server) handleAddToken(w http.ResponseWriter, r *http.Request, provider
 
 // handleDeleteTokenByID deletes a specific token
 func (s *Server) handleDeleteTokenByID(w http.ResponseWriter, r *http.Request, providerID, tokenID string) {
-	store, err := s.getTokenStore(providerID)
+	store, err := s.multiTokenManager.GetTokenStore(providerID)
 	if err != nil {
 		WriteError(w, http.StatusNotFound, "not_found", err.Error())
 		return
@@ -1421,7 +1436,7 @@ func (s *Server) handleDeleteTokenByID(w http.ResponseWriter, r *http.Request, p
 
 // handleRefreshTokenByID refreshes a specific token
 func (s *Server) handleRefreshTokenByID(w http.ResponseWriter, r *http.Request, providerID, tokenID string) {
-	store, err := s.getTokenStore(providerID)
+	store, err := s.multiTokenManager.GetTokenStore(providerID)
 	if err != nil {
 		WriteError(w, http.StatusNotFound, "not_found", err.Error())
 		return
@@ -1480,7 +1495,7 @@ func (s *Server) handleUpdateProviderSettings(w http.ResponseWriter, r *http.Req
 		return
 	}
 
-	store, err := s.getTokenStore(providerID)
+	store, err := s.multiTokenManager.GetTokenStore(providerID)
 	if err != nil {
 		WriteError(w, http.StatusNotFound, "not_found", err.Error())
 		return
@@ -1524,6 +1539,202 @@ func (s *Server) handleUpdateProviderSettings(w http.ResponseWriter, r *http.Req
 	})
 }
 
+// ProxyConfigResponse represents the response for proxy configuration
+type ProxyConfigResponse struct {
+	TokenID      string            `json:"token_id"`
+	Proxy        *auth.ProxyConfig `json:"proxy"`
+	HealthStatus *auth.ProxyHealth `json:"health_status,omitempty"`
+}
+
+// getProxyConfigHandler handles GET /api/credentials/{provider}/{tokenID}/proxy
+// Returns proxy configuration with masked password and health status
+func (s *Server) getProxyConfigHandler(w http.ResponseWriter, r *http.Request, providerID, tokenID string) {
+	s.logger.InfoLog("[getProxyConfig] GET request - provider: %s, tokenID: %s", providerID, tokenID)
+
+	// Validate provider type
+	if err := s.validateProvider(providerID); err != nil {
+		s.logger.ErrorLog("[getProxyConfig] Invalid provider: %s - %v", providerID, err)
+		WriteError(w, http.StatusBadRequest, "invalid_provider", err.Error())
+		return
+	}
+
+	// Get token store
+	store, err := s.multiTokenManager.GetTokenStore(providerID)
+	if err != nil {
+		s.logger.ErrorLog("[getProxyConfig] Failed to get token store for %s: %v", providerID, err)
+		WriteError(w, http.StatusBadRequest, "invalid_provider", err.Error())
+		return
+	}
+
+	// Get token
+	token, err := store.GetToken(tokenID)
+	if err != nil {
+		s.logger.ErrorLog("[getProxyConfig] Token not found - provider: %s, tokenID: %s", providerID, tokenID)
+		WriteError(w, http.StatusNotFound, "not_found", "Token not found")
+		return
+	}
+
+	// Get proxy health tracker
+	proxyHealthTracker, err := s.multiTokenManager.GetProxyHealthTracker(providerID)
+	if err != nil {
+		s.logger.WarningLog("[getProxyConfig] Failed to get proxy health tracker for %s: %v", providerID, err)
+	}
+
+	// Get health status
+	var healthStatus *auth.ProxyHealth
+	if proxyHealthTracker != nil {
+		healthStatus = proxyHealthTracker.GetHealthStatus(tokenID)
+	}
+
+	// Create response with masked password
+	response := ProxyConfigResponse{
+		TokenID:      tokenID,
+		Proxy:        token.Proxy,
+		HealthStatus: healthStatus,
+	}
+
+	// Mask password in response
+	if response.Proxy != nil && response.Proxy.Password != "" {
+		response.Proxy.Password = "***"
+	}
+
+	s.logger.InfoLog("[getProxyConfig] Successfully retrieved proxy config for token %s", tokenID)
+	WriteJSON(w, http.StatusOK, response)
+}
+
+// updateProxyConfigHandler handles PUT /api/credentials/{provider}/{tokenID}/proxy
+// Updates proxy configuration for a token
+func (s *Server) updateProxyConfigHandler(w http.ResponseWriter, r *http.Request, providerID, tokenID string) {
+	s.logger.InfoLog("[updateProxyConfig] PUT request - provider: %s, tokenID: %s", providerID, tokenID)
+
+	// Validate provider type
+	if err := s.validateProvider(providerID); err != nil {
+		s.logger.ErrorLog("[updateProxyConfig] Invalid provider: %s - %v", providerID, err)
+		WriteError(w, http.StatusBadRequest, "invalid_provider", err.Error())
+		return
+	}
+
+	// Parse request body
+	var proxyConfig auth.ProxyConfig
+	if err := ParseJSON(r, &proxyConfig); err != nil {
+		s.logger.ErrorLog("[updateProxyConfig] Failed to parse request: %v", err)
+		WriteError(w, http.StatusBadRequest, "invalid_request", err.Error())
+		return
+	}
+
+	// Set default enabled value if not specified
+	if !proxyConfig.Enabled && proxyConfig.Type == "" {
+		proxyConfig.Enabled = true
+	}
+
+	// Validate proxy configuration
+	if err := proxyConfig.Validate(); err != nil {
+		s.logger.ErrorLog("[updateProxyConfig] Invalid proxy config: %v", err)
+		WriteErrorWithDetails(w, http.StatusBadRequest, "validation_error", "Invalid proxy configuration", map[string]interface{}{
+			"details": err.Error(),
+		})
+		return
+	}
+
+	// Get token store
+	store, err := s.multiTokenManager.GetTokenStore(providerID)
+	if err != nil {
+		s.logger.ErrorLog("[updateProxyConfig] Failed to get token store for %s: %v", providerID, err)
+		WriteError(w, http.StatusBadRequest, "invalid_provider", err.Error())
+		return
+	}
+
+	// Check if token exists
+	_, err = store.GetToken(tokenID)
+	if err != nil {
+		s.logger.ErrorLog("[updateProxyConfig] Token not found - provider: %s, tokenID: %s", providerID, tokenID)
+		WriteError(w, http.StatusNotFound, "not_found", "Token not found")
+		return
+	}
+
+	// Log the change for audit trail
+	s.logger.InfoLog("[updateProxyConfig] Updating proxy config for token %s - Type: %s, Host: %s, Port: %d, Enabled: %t",
+		tokenID, proxyConfig.Type, proxyConfig.Host, proxyConfig.Port, proxyConfig.Enabled)
+
+	// Update token with new proxy config
+	if err := store.UpdateToken(tokenID, func(t *auth.ProviderToken) {
+		t.Proxy = &proxyConfig
+		t.ProxyHealthScore = 1.0 // Reset proxy health score on config change
+	}); err != nil {
+		s.logger.ErrorLog("[updateProxyConfig] Failed to update token: %v", err)
+		WriteError(w, http.StatusInternalServerError, "update_failed", err.Error())
+		return
+	}
+
+	// Log successful update
+	s.logger.InfoLog("[updateProxyConfig] Successfully updated proxy config for token %s", tokenID)
+
+	WriteJSON(w, http.StatusOK, map[string]interface{}{
+		"success": true,
+		"message": "Proxy configuration updated",
+	})
+}
+
+// deleteProxyConfigHandler handles DELETE /api/credentials/{provider}/{tokenID}/proxy
+// Removes proxy configuration from a token (sets to nil)
+func (s *Server) deleteProxyConfigHandler(w http.ResponseWriter, r *http.Request, providerID, tokenID string) {
+	s.logger.InfoLog("[deleteProxyConfig] DELETE request - provider: %s, tokenID: %s", providerID, tokenID)
+
+	// Validate provider type
+	if err := s.validateProvider(providerID); err != nil {
+		s.logger.ErrorLog("[deleteProxyConfig] Invalid provider: %s - %v", providerID, err)
+		WriteError(w, http.StatusBadRequest, "invalid_provider", err.Error())
+		return
+	}
+
+	// Get token store
+	store, err := s.multiTokenManager.GetTokenStore(providerID)
+	if err != nil {
+		s.logger.ErrorLog("[deleteProxyConfig] Failed to get token store for %s: %v", providerID, err)
+		WriteError(w, http.StatusBadRequest, "invalid_provider", err.Error())
+		return
+	}
+
+	// Check if token exists
+	token, err := store.GetToken(tokenID)
+	if err != nil {
+		s.logger.ErrorLog("[deleteProxyConfig] Token not found - provider: %s, tokenID: %s", providerID, tokenID)
+		WriteError(w, http.StatusNotFound, "not_found", "Token not found")
+		return
+	}
+
+	// Check if proxy was configured
+	hadProxy := token.Proxy != nil
+
+	// Log the deletion for audit trail
+	s.logger.InfoLog("[deleteProxyConfig] Removing proxy config for token %s (had proxy: %v)", tokenID, hadProxy)
+
+	// Update token to remove proxy config
+	if err := store.UpdateToken(tokenID, func(t *auth.ProviderToken) {
+		t.Proxy = nil
+		t.ProxyHealthScore = 1.0 // Reset proxy health score
+	}); err != nil {
+		s.logger.ErrorLog("[deleteProxyConfig] Failed to update token: %v", err)
+		WriteError(w, http.StatusInternalServerError, "update_failed", err.Error())
+		return
+	}
+
+	// Log successful deletion
+	s.logger.InfoLog("[deleteProxyConfig] Successfully removed proxy config for token %s", tokenID)
+
+	WriteJSON(w, http.StatusOK, map[string]interface{}{
+		"success": true,
+		"message": "Proxy configuration removed",
+	})
+}
+
+// validateProvider validates that the provider ID is valid
+func (s *Server) validateProvider(providerID string) error {
+	// Get provider config to validate
+	_, err := s.registry.GetConfig(providerID)
+	return err
+}
+
 // refreshProviderToken refreshes a token using provider-specific logic
 func (s *Server) refreshProviderToken(config *ProviderConfig, token *auth.ProviderToken) (auth.ProviderToken, error) {
 	if token.RefreshToken == "" {
@@ -1565,6 +1776,16 @@ func (s *Server) refreshProviderToken(config *ProviderConfig, token *auth.Provid
 // GetStateManager returns the state manager (for use by other packages)
 func (s *Server) GetStateManager() *StateManager {
 	return s.stateManager
+}
+
+// SetMultiTokenManager sets an external multi-token manager (for integration with main application)
+func (s *Server) SetMultiTokenManager(multiTokenMgr *auth.MultiTokenManager) {
+	s.multiTokenManager = multiTokenMgr
+}
+
+// GetMultiTokenManager returns the multi-token manager (for use by other packages)
+func (s *Server) GetMultiTokenManager() *auth.MultiTokenManager {
+	return s.multiTokenManager
 }
 
 // resolveDashboardDir resolves the dashboard directory path relative to the executable location

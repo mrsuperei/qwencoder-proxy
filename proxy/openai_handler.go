@@ -2,11 +2,15 @@
 package proxy
 
 import (
+	"context"
 	"encoding/json"
+	"errors"
 	"fmt"
+	"net"
 	"net/http"
 	"strings"
 
+	"github.com/sunbankio/qwencoder-proxy/auth"
 	"github.com/sunbankio/qwencoder-proxy/converter"
 	"github.com/sunbankio/qwencoder-proxy/logging"
 	"github.com/sunbankio/qwencoder-proxy/provider"
@@ -18,6 +22,7 @@ type OpenAIHandler struct {
 	convFactory   *converter.Factory
 	logger        *logging.Logger
 	fixedProvider provider.ProviderType // If set, always use this provider
+	tokenManager  *auth.TokenManager    // Optional, for proxy error handling
 }
 
 // NewOpenAIHandler creates a new OpenAI-compatible handler
@@ -29,6 +34,16 @@ func NewOpenAIHandler(factory *provider.Factory, convFactory *converter.Factory)
 	}
 }
 
+// NewOpenAIHandlerWithTokenManager creates a new OpenAI-compatible handler with token manager for proxy error handling
+func NewOpenAIHandlerWithTokenManager(factory *provider.Factory, convFactory *converter.Factory, tokenManager *auth.TokenManager) *OpenAIHandler {
+	return &OpenAIHandler{
+		factory:      factory,
+		convFactory:  convFactory,
+		logger:       logging.NewLogger(),
+		tokenManager: tokenManager,
+	}
+}
+
 // NewProviderSpecificHandler creates a new handler that forces requests to use a specific provider
 func NewProviderSpecificHandler(factory *provider.Factory, convFactory *converter.Factory, providerType provider.ProviderType) *OpenAIHandler {
 	return &OpenAIHandler{
@@ -36,6 +51,17 @@ func NewProviderSpecificHandler(factory *provider.Factory, convFactory *converte
 		convFactory:   convFactory,
 		fixedProvider: providerType,
 		logger:        logging.NewLogger(),
+	}
+}
+
+// NewProviderSpecificHandlerWithTokenManager creates a new handler that forces requests to use a specific provider with token manager
+func NewProviderSpecificHandlerWithTokenManager(factory *provider.Factory, convFactory *converter.Factory, providerType provider.ProviderType, tokenManager *auth.TokenManager) *OpenAIHandler {
+	return &OpenAIHandler{
+		factory:       factory,
+		convFactory:   convFactory,
+		fixedProvider: providerType,
+		logger:        logging.NewLogger(),
+		tokenManager:  tokenManager,
 	}
 }
 
@@ -174,12 +200,12 @@ func (h *OpenAIHandler) handleChatCompletions(w http.ResponseWriter, r *http.Req
 		// Use converted streaming for providers that need format conversion
 		if needsStreamConversion(p.Protocol()) {
 			if err := ConvertedStreamResponse(w, r, h.factory, p, nativeReq, model, h.logger); err != nil {
-				h.logger.ErrorLog("[Handler] Converted streaming error: %v", err)
+				h.handleStreamingError(w, err)
 			}
 		} else {
 			// Use raw streaming for providers that already format correctly (like Kiro)
 			if err := StreamResponse(w, r, h.factory, p, nativeReq, model, h.logger); err != nil {
-				h.logger.ErrorLog("[Handler] Raw streaming error: %v", err)
+				h.handleStreamingError(w, err)
 			}
 		}
 	} else {
@@ -191,6 +217,12 @@ func (h *OpenAIHandler) handleNonStreamCompletions(w http.ResponseWriter, r *htt
 	resp, err := GenerateAndConvert(r.Context(), p, conv, nativeReq, model)
 	if err != nil {
 		h.logger.ErrorLog("[Handler] GenerateAndConvert failed with %s: %v", p.Name(), err)
+
+		// Check if this is a proxy error
+		if h.isProxyError(err) {
+			h.handleProxyError(w, err)
+			return
+		}
 
 		// Try alternative if not a fixed provider request
 		if h.fixedProvider == "" {
@@ -227,6 +259,196 @@ func needsStreamConversion(protocol provider.ProtocolType) bool {
 		// Default to conversion for unknown protocols
 		return true
 	}
+}
+
+// handleStreamingError handles errors during streaming responses
+func (h *OpenAIHandler) handleStreamingError(w http.ResponseWriter, err error) {
+	// Check if this is a proxy error
+	if h.isProxyError(err) {
+		h.handleProxyError(w, err)
+		return
+	}
+
+	// For other errors, log and return generic error
+	h.logger.ErrorLog("[Handler] Streaming error: %v", err)
+	http.Error(w, "Streaming failed", http.StatusInternalServerError)
+}
+
+// handleProxyError handles proxy-related errors and returns structured error responses
+func (h *OpenAIHandler) handleProxyError(w http.ResponseWriter, err error) {
+	// Get proxy details from error
+	details := h.getProxyErrorDetails(err)
+
+	// Log the proxy error with masked credentials
+	h.logProxyError(err, details)
+
+	// Create structured error response
+	errorResp := map[string]interface{}{
+		"error":            "proxy_connection_failed",
+		"message":          fmt.Sprintf("Failed to connect to proxy %s:%d", details["proxy_host"], details["proxy_port"]),
+		"details":          details,
+		"suggested_action": "Check proxy configuration or disable proxy for this token",
+	}
+
+	// Set headers and write JSON response
+	w.Header().Set("Content-Type", "application/json")
+	w.WriteHeader(http.StatusBadGateway)
+	json.NewEncoder(w).Encode(errorResp)
+}
+
+// isProxyError detects if an error is related to proxy connection issues
+func (h *OpenAIHandler) isProxyError(err error) bool {
+	if err == nil {
+		return false
+	}
+
+	// Check for common proxy error patterns
+	errStr := err.Error()
+
+	// Network operation timeout
+	if errors.Is(err, context.DeadlineExceeded) {
+		return true
+	}
+
+	// Connection refused
+	if strings.Contains(errStr, "connection refused") {
+		return true
+	}
+
+	// Proxy authentication failure
+	if strings.Contains(errStr, "proxy authentication failed") ||
+		strings.Contains(errStr, "407") {
+		return true
+	}
+
+	// DNS lookup failure
+	if strings.Contains(errStr, "no such host") ||
+		strings.Contains(errStr, "lookup") ||
+		strings.Contains(errStr, "dns") {
+		return true
+	}
+
+	// SOCKS proxy errors
+	if strings.Contains(errStr, "socks") {
+		return true
+	}
+
+	// Connection timeout
+	if strings.Contains(errStr, "timeout") {
+		return true
+	}
+
+	// Network unreachable
+	if strings.Contains(errStr, "network unreachable") ||
+		strings.Contains(errStr, "unreachable") {
+		return true
+	}
+
+	// Check for net.OpError which often indicates network-level issues
+	var netErr *net.OpError
+	if errors.As(err, &netErr) {
+		return true
+	}
+
+	return false
+}
+
+// getProxyErrorDetails extracts proxy-related details from an error
+func (h *OpenAIHandler) getProxyErrorDetails(err error) map[string]interface{} {
+	details := make(map[string]interface{})
+
+	// Default values
+	details["proxy_type"] = "unknown"
+	details["proxy_host"] = "unknown"
+	details["proxy_port"] = 0
+	details["original_error"] = err.Error()
+
+	// Try to extract proxy details from token manager if available
+	if h.tokenManager != nil {
+		// Note: In a real implementation, we might need to track which token
+		// was used for the current request. For now, we'll provide generic details.
+		// This could be enhanced by passing token context through the request.
+	}
+
+	// Try to extract proxy details from error message
+	errStr := err.Error()
+
+	// Extract host from error messages like "dial tcp: lookup proxy.example.com: no such host"
+	if strings.Contains(errStr, "lookup ") {
+		parts := strings.Split(errStr, "lookup ")
+		if len(parts) > 1 {
+			hostParts := strings.Split(parts[1], ":")
+			if len(hostParts) > 0 {
+				details["proxy_host"] = strings.TrimSpace(hostParts[0])
+			}
+		}
+	}
+
+	// Detect proxy type from error message
+	if strings.Contains(errStr, "socks5") {
+		details["proxy_type"] = "socks5"
+	} else if strings.Contains(errStr, "http") {
+		details["proxy_type"] = "http"
+	} else if strings.Contains(errStr, "https") {
+		details["proxy_type"] = "https"
+	}
+
+	// Detect authentication errors
+	if strings.Contains(errStr, "407") || strings.Contains(errStr, "authentication") {
+		details["auth_error"] = true
+	}
+
+	return details
+}
+
+// logProxyError logs proxy errors with masked credentials
+func (h *OpenAIHandler) logProxyError(err error, details map[string]interface{}) {
+	// Create a masked version of details for logging
+	maskedDetails := make(map[string]interface{})
+	for k, v := range details {
+		maskedDetails[k] = v
+	}
+
+	// Mask any sensitive information
+	if proxyHost, ok := details["proxy_host"].(string); ok {
+		maskedDetails["proxy_host"] = proxyHost
+	}
+	if proxyPort, ok := details["proxy_port"].(int); ok {
+		maskedDetails["proxy_port"] = proxyPort
+	}
+	if proxyType, ok := details["proxy_type"].(string); ok {
+		maskedDetails["proxy_type"] = proxyType
+	}
+
+	// Log with structured format
+	h.logger.ErrorLog("[Handler] Proxy connection failed - Type: %s, Host: %s, Port: %d, Error: %v",
+		maskedDetails["proxy_type"],
+		maskedDetails["proxy_host"],
+		maskedDetails["proxy_port"],
+		err)
+}
+
+// formatProxyError formats a proxy error as a JSON response
+func (h *OpenAIHandler) formatProxyError(err error) []byte {
+	details := h.getProxyErrorDetails(err)
+	errorResp := map[string]interface{}{
+		"error":            "proxy_connection_failed",
+		"message":          fmt.Sprintf("Failed to connect to proxy %s:%d", details["proxy_host"], details["proxy_port"]),
+		"details":          details,
+		"suggested_action": "Check proxy configuration or disable proxy for this token",
+	}
+
+	jsonBytes, err := json.Marshal(errorResp)
+	if err != nil {
+		// Fallback to simple error message
+		fallback := map[string]interface{}{
+			"error":   "proxy_connection_failed",
+			"message": err.Error(),
+		}
+		jsonBytes, _ = json.Marshal(fallback)
+	}
+
+	return jsonBytes
 }
 
 // RegisterOpenAIRoutes registers all OpenAI-compatible routes

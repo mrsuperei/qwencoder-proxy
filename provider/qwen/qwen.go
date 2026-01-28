@@ -5,9 +5,12 @@ import (
 	"bytes"
 	"context"
 	"encoding/json"
+	"errors"
 	"fmt"
 	"io"
+	"net"
 	"net/http"
+	"net/url"
 	"os"
 	"runtime"
 	"strings"
@@ -34,6 +37,7 @@ var SupportedModels = []string{
 type Provider struct {
 	authenticator *QwenAuthenticator
 	httpClient    *http.Client
+	tokenManager  *auth.TokenManager
 	logger        *logging.Logger
 }
 
@@ -118,6 +122,35 @@ func (a *QwenAuthenticator) ClearCredentials() error {
 	return os.Remove(credsPath)
 }
 
+// GetTokenWithClient returns a valid access token and an HTTP client.
+// The HTTP client is configured with the proxy settings from the selected token.
+func (a *QwenAuthenticator) GetTokenWithClient(ctx context.Context) (string, *http.Client, error) {
+	if a.tokenManager == nil {
+		return "", nil, errors.New("token manager not initialized")
+	}
+
+	token, client, err := a.tokenManager.SelectTokenWithClient()
+	if err != nil {
+		return "", nil, fmt.Errorf("failed to select token with client: %w", err)
+	}
+	return token.AccessToken, client, nil
+}
+
+// GetHTTPClient returns an HTTP client configured with proxy settings.
+// The client is configured with the proxy settings from the selected token.
+func (a *QwenAuthenticator) GetHTTPClient() (*http.Client, error) {
+	if a.tokenManager == nil {
+		return nil, errors.New("token manager not initialized")
+	}
+
+	token, client, err := a.tokenManager.SelectTokenWithClient()
+	if err != nil {
+		return nil, fmt.Errorf("failed to select token with client: %w", err)
+	}
+	_ = token // Token is not needed for GetHTTPClient
+	return client, nil
+}
+
 // NewProvider creates a new Qwen provider
 func NewProvider() *Provider {
 	return &Provider{
@@ -170,6 +203,11 @@ func (p *Provider) GetAuthenticator() provider.Authenticator {
 	return p.authenticator
 }
 
+// SetTokenManager sets the TokenManager for this provider
+func (p *Provider) SetTokenManager(manager *auth.TokenManager) {
+	p.tokenManager = manager
+}
+
 // IsHealthy checks if the provider is available
 func (p *Provider) IsHealthy(ctx context.Context) bool {
 	// Try to list models as a health check
@@ -195,11 +233,171 @@ func (p *Provider) ListModels(ctx context.Context) (interface{}, error) {
 	}, nil
 }
 
+// isProxyError checks if an error is a proxy-related error
+// This includes connection errors, timeout errors, and DNS resolution errors
+func (p *Provider) isProxyError(err error) bool {
+	if err == nil {
+		return false
+	}
+
+	// Check for timeout errors
+	if netErr, ok := err.(net.Error); ok {
+		if netErr.Timeout() {
+			return true
+		}
+	}
+
+	// Check for connection errors
+	if strings.Contains(err.Error(), "connection refused") ||
+		strings.Contains(err.Error(), "connection reset") ||
+		strings.Contains(err.Error(), "broken pipe") ||
+		strings.Contains(err.Error(), "EOF") {
+		return true
+	}
+
+	// Check for DNS resolution errors
+	if strings.Contains(err.Error(), "no such host") ||
+		strings.Contains(err.Error(), "dns") ||
+		strings.Contains(err.Error(), "lookup") {
+		return true
+	}
+
+	// Check for proxy-specific errors
+	if strings.Contains(err.Error(), "proxy") ||
+		strings.Contains(err.Error(), "SOCKS") ||
+		strings.Contains(err.Error(), "tunnel") {
+		return true
+	}
+
+	// Check for URL errors (often related to proxy configuration)
+	if urlErr, ok := err.(*url.Error); ok {
+		return p.isProxyError(urlErr.Err)
+	}
+
+	return false
+}
+
+// classifyProxyError returns a string classification of the proxy error type
+// This is used for health tracking and logging purposes
+func (p *Provider) classifyProxyError(err error) string {
+	if err == nil {
+		return "none"
+	}
+
+	// Check for timeout errors
+	if netErr, ok := err.(net.Error); ok && netErr.Timeout() {
+		return "timeout"
+	}
+
+	// Check for connection errors
+	if strings.Contains(err.Error(), "connection refused") {
+		return "connection_refused"
+	}
+	if strings.Contains(err.Error(), "connection reset") {
+		return "connection_reset"
+	}
+	if strings.Contains(err.Error(), "broken pipe") {
+		return "broken_pipe"
+	}
+	if strings.Contains(err.Error(), "EOF") {
+		return "eof"
+	}
+
+	// Check for DNS resolution errors
+	if strings.Contains(err.Error(), "no such host") ||
+		strings.Contains(err.Error(), "lookup") {
+		return "dns_resolution"
+	}
+
+	// Check for proxy-specific errors
+	if strings.Contains(err.Error(), "SOCKS") {
+		return "socks_error"
+	}
+	if strings.Contains(err.Error(), "proxy") {
+		return "proxy_error"
+	}
+	if strings.Contains(err.Error(), "tunnel") {
+		return "tunnel_error"
+	}
+
+	// Check for URL errors
+	if urlErr, ok := err.(*url.Error); ok {
+		return "url_error: " + p.classifyProxyError(urlErr.Err)
+	}
+
+	return "unknown"
+}
+
+// doRequestWithProxy executes an HTTP request using the provided client
+// and handles proxy error classification and health tracking
+func (p *Provider) doRequestWithProxy(req *http.Request, client *http.Client, tokenID string) (*http.Response, error) {
+	resp, err := client.Do(req)
+	if err != nil {
+		// Check if this is a proxy error
+		if p.isProxyError(err) {
+			errorType := p.classifyProxyError(err)
+			p.logger.ErrorLog("[Qwen] Proxy error for token %s: %s (%s)", tokenID, err.Error(), errorType)
+
+			// Update proxy health if tokenManager is available
+			if p.tokenManager != nil {
+				if updateErr := p.tokenManager.UpdateProxyHealth(tokenID, false, err); updateErr != nil {
+					p.logger.WarningLog("[Qwen] Failed to update proxy health for token %s: %v", tokenID, updateErr)
+				}
+			}
+		} else {
+			p.logger.ErrorLog("[Qwen] Request error for token %s: %v", tokenID, err)
+		}
+		return nil, err
+	}
+
+	// Update proxy health on success
+	if p.tokenManager != nil {
+		if updateErr := p.tokenManager.UpdateProxyHealth(tokenID, true, nil); updateErr != nil {
+			p.logger.WarningLog("[Qwen] Failed to update proxy health for token %s: %v", tokenID, updateErr)
+		}
+	}
+
+	return resp, nil
+}
+
 // GenerateContent handles non-streaming requests with native format
 func (p *Provider) GenerateContent(ctx context.Context, model string, request interface{}) (interface{}, error) {
-	token, endpoint, err := qwenclient.GetValidTokenAndEndpoint()
-	if err != nil {
-		return nil, fmt.Errorf("failed to get token: %w", err)
+	// Determine which client and token to use
+	var client *http.Client
+	var token string
+	var tokenID string
+
+	// Try to use token manager for proxy-aware client selection
+	if p.tokenManager != nil {
+		selectedToken, selectedClient, selectErr := p.tokenManager.SelectTokenWithClient()
+		if selectErr != nil {
+			p.logger.ErrorLog("[Qwen] Token selection failed: %v", selectErr)
+			return nil, fmt.Errorf("failed to select token: %w", selectErr)
+		}
+		if selectedClient == nil {
+			p.logger.DebugLog("[Qwen] Token manager returned nil client, using default HTTP client")
+			client = p.httpClient
+		} else {
+			client = selectedClient
+		}
+		token = selectedToken.AccessToken
+		tokenID = selectedToken.ID
+
+		// Log proxy usage
+		if selectedToken.Proxy != nil && selectedToken.Proxy.Enabled {
+			p.logger.DebugLog("[Qwen] GenerateContent using token %s with proxy: %s:%d", tokenID, selectedToken.Proxy.Host, selectedToken.Proxy.Port)
+		} else {
+			p.logger.DebugLog("[Qwen] GenerateContent using token %s with direct connection", tokenID)
+		}
+	} else {
+		// No token manager, fall back to qwenclient for backward compatibility
+		token, _, err := qwenclient.GetValidTokenAndEndpoint()
+		if err != nil {
+			return nil, fmt.Errorf("failed to get token: %w", err)
+		}
+		_ = token // Token is used below for authorization
+		client = p.httpClient
+		tokenID = "fallback"
 	}
 
 	// Log the original request before conversion
@@ -213,10 +411,13 @@ func (p *Provider) GenerateContent(ctx context.Context, model string, request in
 
 	p.logger.DebugLog("[Qwen] Request body being sent: %s", string(reqBody))
 
-	// For OpenAI-compatible requests, we need to forward the original request path
-	// The endpoint from credentials may or may not include /v1, so we ensure it's properly formatted
-	// If endpoint is "https://portal.qwen.ai" and we want to call chat completions,
-	// the final URL should be "https://portal.qwen.ai/v1/chat/completions"
+	// Get endpoint from qwenclient for backward compatibility
+	_, endpoint, err := qwenclient.GetValidTokenAndEndpoint()
+	if err != nil {
+		p.logger.WarningLog("[Qwen] Failed to get endpoint from qwenclient: %v", err)
+		// Use default endpoint
+		endpoint = DefaultBaseURL
+	}
 
 	// Ensure the endpoint ends with /v1 for the Qwen API
 	normalizedEndpoint := endpoint
@@ -243,7 +444,7 @@ func (p *Provider) GenerateContent(ctx context.Context, model string, request in
 
 	p.logger.DebugLog("[Qwen] Sending request to %s with headers: %v", url, req.Header)
 
-	resp, err := p.httpClient.Do(req)
+	resp, err := p.doRequestWithProxy(req, client, tokenID)
 	if err != nil {
 		p.logger.ErrorLog("[Qwen] Failed to send request: %v", err)
 		return nil, fmt.Errorf("failed to send request: %w", err)
@@ -269,9 +470,42 @@ func (p *Provider) GenerateContent(ctx context.Context, model string, request in
 
 // GenerateContentStream handles streaming requests with native format
 func (p *Provider) GenerateContentStream(ctx context.Context, model string, request interface{}) (io.ReadCloser, error) {
-	token, endpoint, err := qwenclient.GetValidTokenAndEndpoint()
-	if err != nil {
-		return nil, fmt.Errorf("failed to get token: %w", err)
+	// Determine which client and token to use
+	var client *http.Client
+	var token string
+	var tokenID string
+
+	// Try to use token manager for proxy-aware client selection
+	if p.tokenManager != nil {
+		selectedToken, selectedClient, selectErr := p.tokenManager.SelectTokenWithClient()
+		if selectErr != nil {
+			p.logger.ErrorLog("[Qwen] Token selection failed: %v", selectErr)
+			return nil, fmt.Errorf("failed to select token: %w", selectErr)
+		}
+		if selectedClient == nil {
+			p.logger.DebugLog("[Qwen] Token manager returned nil client, using default HTTP client")
+			client = p.httpClient
+		} else {
+			client = selectedClient
+		}
+		token = selectedToken.AccessToken
+		tokenID = selectedToken.ID
+
+		// Log proxy usage
+		if selectedToken.Proxy != nil && selectedToken.Proxy.Enabled {
+			p.logger.DebugLog("[Qwen] GenerateContentStream using token %s with proxy: %s:%d", tokenID, selectedToken.Proxy.Host, selectedToken.Proxy.Port)
+		} else {
+			p.logger.DebugLog("[Qwen] GenerateContentStream using token %s with direct connection", tokenID)
+		}
+	} else {
+		// No token manager, fall back to qwenclient for backward compatibility
+		token, _, err := qwenclient.GetValidTokenAndEndpoint()
+		if err != nil {
+			return nil, fmt.Errorf("failed to get token: %w", err)
+		}
+		_ = token // Token is used below for authorization
+		client = p.httpClient
+		tokenID = "fallback"
 	}
 
 	// Convert request to proper format for Qwen API
@@ -280,10 +514,13 @@ func (p *Provider) GenerateContentStream(ctx context.Context, model string, requ
 		return nil, fmt.Errorf("failed to marshal request: %w", err)
 	}
 
-	// For OpenAI-compatible requests, we need to forward the original request path
-	// The endpoint from credentials may or may not include /v1, so we ensure it's properly formatted
-	// If endpoint is "https://portal.qwen.ai" and we want to call chat completions,
-	// the final URL should be "https://portal.qwen.ai/v1/chat/completions"
+	// Get endpoint from qwenclient for backward compatibility
+	_, endpoint, err := qwenclient.GetValidTokenAndEndpoint()
+	if err != nil {
+		p.logger.WarningLog("[Qwen] Failed to get endpoint from qwenclient: %v", err)
+		// Use default endpoint
+		endpoint = DefaultBaseURL
+	}
 
 	// Ensure the endpoint ends with /v1 for the Qwen API
 	normalizedEndpoint := endpoint
@@ -309,7 +546,7 @@ func (p *Provider) GenerateContentStream(ctx context.Context, model string, requ
 
 	p.logger.DebugLog("[Qwen] Sending streaming request to %s", url)
 
-	resp, err := p.httpClient.Do(req)
+	resp, err := p.doRequestWithProxy(req, client, tokenID)
 	if err != nil {
 		p.logger.ErrorLog("[Qwen] Failed to send streaming request: %v", err)
 		return nil, fmt.Errorf("failed to send request: %w", err)

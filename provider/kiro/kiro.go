@@ -12,7 +12,9 @@ import (
 	"encoding/json"
 	"fmt"
 	"io"
+	"net"
 	"net/http"
+	"net/url"
 	"os"
 	"runtime"
 	"strings"
@@ -56,6 +58,7 @@ var ModelMapping = map[string]string{
 type Provider struct {
 	authenticator *auth.KiroAuthenticator
 	httpClient    *http.Client
+	tokenManager  *auth.TokenManager
 	logger        *logging.Logger
 	machineID     string
 }
@@ -114,6 +117,11 @@ func (p *Provider) GetAuthenticator() provider.Authenticator {
 	return p.authenticator
 }
 
+// SetTokenManager sets the TokenManager for this provider
+func (p *Provider) SetTokenManager(manager *auth.TokenManager) {
+	p.tokenManager = manager
+}
+
 // IsHealthy checks if the provider is available
 func (p *Provider) IsHealthy(ctx context.Context) bool {
 	return p.authenticator.IsAuthenticated()
@@ -123,6 +131,133 @@ func (p *Provider) IsHealthy(ctx context.Context) bool {
 func (p *Provider) getBaseURL() string {
 	region := p.authenticator.GetRegion()
 	return fmt.Sprintf("https://codewhisperer.%s.amazonaws.com", region)
+}
+
+// isProxyError checks if an error is a proxy-related error
+// This includes connection errors, timeout errors, and DNS resolution errors
+func (p *Provider) isProxyError(err error) bool {
+	if err == nil {
+		return false
+	}
+
+	// Check for timeout errors
+	if netErr, ok := err.(net.Error); ok {
+		if netErr.Timeout() {
+			return true
+		}
+	}
+
+	// Check for connection errors
+	if strings.Contains(err.Error(), "connection refused") ||
+		strings.Contains(err.Error(), "connection reset") ||
+		strings.Contains(err.Error(), "broken pipe") ||
+		strings.Contains(err.Error(), "EOF") {
+		return true
+	}
+
+	// Check for DNS resolution errors
+	if strings.Contains(err.Error(), "no such host") ||
+		strings.Contains(err.Error(), "dns") ||
+		strings.Contains(err.Error(), "lookup") {
+		return true
+	}
+
+	// Check for proxy-specific errors
+	if strings.Contains(err.Error(), "proxy") ||
+		strings.Contains(err.Error(), "SOCKS") ||
+		strings.Contains(err.Error(), "tunnel") {
+		return true
+	}
+
+	// Check for URL errors (often related to proxy configuration)
+	if urlErr, ok := err.(*url.Error); ok {
+		return p.isProxyError(urlErr.Err)
+	}
+
+	return false
+}
+
+// classifyProxyError returns a string classification of the proxy error type
+// This is used for health tracking and logging purposes
+func (p *Provider) classifyProxyError(err error) string {
+	if err == nil {
+		return "none"
+	}
+
+	// Check for timeout errors
+	if netErr, ok := err.(net.Error); ok && netErr.Timeout() {
+		return "timeout"
+	}
+
+	// Check for connection errors
+	if strings.Contains(err.Error(), "connection refused") {
+		return "connection_refused"
+	}
+	if strings.Contains(err.Error(), "connection reset") {
+		return "connection_reset"
+	}
+	if strings.Contains(err.Error(), "broken pipe") {
+		return "broken_pipe"
+	}
+	if strings.Contains(err.Error(), "EOF") {
+		return "eof"
+	}
+
+	// Check for DNS resolution errors
+	if strings.Contains(err.Error(), "no such host") ||
+		strings.Contains(err.Error(), "lookup") {
+		return "dns_resolution"
+	}
+
+	// Check for proxy-specific errors
+	if strings.Contains(err.Error(), "proxy") {
+		return "proxy_error"
+	}
+	if strings.Contains(err.Error(), "SOCKS") {
+		return "socks_error"
+	}
+	if strings.Contains(err.Error(), "tunnel") {
+		return "tunnel_error"
+	}
+
+	// Check for URL errors
+	if urlErr, ok := err.(*url.Error); ok {
+		return "url_error: " + p.classifyProxyError(urlErr.Err)
+	}
+
+	return "unknown"
+}
+
+// doRequestWithProxy executes an HTTP request using the provided client
+// and handles proxy error classification and health tracking
+func (p *Provider) doRequestWithProxy(req *http.Request, client *http.Client, tokenID string) (*http.Response, error) {
+	resp, err := client.Do(req)
+	if err != nil {
+		// Check if this is a proxy error
+		if p.isProxyError(err) {
+			errorType := p.classifyProxyError(err)
+			p.logger.ErrorLog("[Kiro] Proxy error for token %s: %s (%s)", tokenID, err.Error(), errorType)
+
+			// Update proxy health if tokenManager is available
+			if p.tokenManager != nil {
+				if updateErr := p.tokenManager.UpdateProxyHealth(tokenID, false, err); updateErr != nil {
+					p.logger.WarningLog("[Kiro] Failed to update proxy health for token %s: %v", tokenID, updateErr)
+				}
+			}
+		} else {
+			p.logger.ErrorLog("[Kiro] Request error for token %s: %v", tokenID, err)
+		}
+		return nil, err
+	}
+
+	// Update proxy health on success
+	if p.tokenManager != nil {
+		if updateErr := p.tokenManager.UpdateProxyHealth(tokenID, true, nil); updateErr != nil {
+			p.logger.WarningLog("[Kiro] Failed to update proxy health for token %s: %v", tokenID, updateErr)
+		}
+	}
+
+	return resp, nil
 }
 
 // getHeaders returns the headers for Kiro API requests
@@ -161,9 +296,43 @@ func (p *Provider) ListModels(ctx context.Context) (interface{}, error) {
 
 // GenerateContent handles non-streaming requests with native Claude format
 func (p *Provider) GenerateContent(ctx context.Context, model string, request interface{}) (interface{}, error) {
-	token, err := p.authenticator.GetToken(ctx)
-	if err != nil {
-		return nil, fmt.Errorf("failed to get token: %w", err)
+	// Get token and proxy-aware client
+	var client *http.Client
+	var token string
+	var tokenID string
+
+	// Try to use token manager for proxy-aware client selection
+	if p.tokenManager != nil {
+		selectedToken, selectedClient, selectErr := p.tokenManager.SelectTokenWithClient()
+		if selectErr != nil {
+			p.logger.ErrorLog("[Kiro] Token selection failed: %v", selectErr)
+			return nil, fmt.Errorf("failed to select token: %w", selectErr)
+		}
+		if selectedClient == nil {
+			p.logger.DebugLog("[Kiro] Token manager returned nil client, using default HTTP client")
+			client = p.httpClient
+		} else {
+			client = selectedClient
+		}
+		token = selectedToken.AccessToken
+		tokenID = selectedToken.ID
+
+		// Log proxy usage
+		if selectedToken.Proxy != nil && selectedToken.Proxy.Enabled {
+			p.logger.DebugLog("[Kiro] GenerateContent using token %s with proxy: %s:%d", tokenID, selectedToken.Proxy.Host, selectedToken.Proxy.Port)
+		} else {
+			p.logger.DebugLog("[Kiro] GenerateContent using token %s with direct connection", tokenID)
+		}
+	} else {
+		// No token manager, use authenticator and default client (backward compatibility)
+		var authErr error
+		token, authErr = p.authenticator.GetToken(ctx)
+		if authErr != nil {
+			p.logger.ErrorLog("[Kiro] Token retrieval failed: %v", authErr)
+			return nil, fmt.Errorf("failed to get token: %w", authErr)
+		}
+		client = p.httpClient
+		tokenID = "fallback"
 	}
 
 	// Convert request to Kiro format
@@ -203,7 +372,7 @@ func (p *Provider) GenerateContent(ctx context.Context, model string, request in
 	fmt.Println("[Kiro DEBUG] Request body:", string(reqBody))
 	fmt.Println("[Kiro DEBUG] Invocation ID:", invocationID)
 
-	resp, err := p.httpClient.Do(req)
+	resp, err := p.doRequestWithProxy(req, client, tokenID)
 	if err != nil {
 		return nil, fmt.Errorf("failed to send request: %w", err)
 	}
@@ -231,9 +400,43 @@ func (p *Provider) GenerateContent(ctx context.Context, model string, request in
 
 // GenerateContentStream handles streaming requests with native Claude format
 func (p *Provider) GenerateContentStream(ctx context.Context, model string, request interface{}) (io.ReadCloser, error) {
-	token, err := p.authenticator.GetToken(ctx)
-	if err != nil {
-		return nil, fmt.Errorf("failed to get token: %w", err)
+	// Get token and proxy-aware client
+	var client *http.Client
+	var token string
+	var tokenID string
+
+	// Try to use token manager for proxy-aware client selection
+	if p.tokenManager != nil {
+		selectedToken, selectedClient, selectErr := p.tokenManager.SelectTokenWithClient()
+		if selectErr != nil {
+			p.logger.ErrorLog("[Kiro] Token selection failed: %v", selectErr)
+			return nil, fmt.Errorf("failed to select token: %w", selectErr)
+		}
+		if selectedClient == nil {
+			p.logger.DebugLog("[Kiro] Token manager returned nil client, using default HTTP client")
+			client = p.httpClient
+		} else {
+			client = selectedClient
+		}
+		token = selectedToken.AccessToken
+		tokenID = selectedToken.ID
+
+		// Log proxy usage
+		if selectedToken.Proxy != nil && selectedToken.Proxy.Enabled {
+			p.logger.DebugLog("[Kiro] GenerateContentStream using token %s with proxy: %s:%d", tokenID, selectedToken.Proxy.Host, selectedToken.Proxy.Port)
+		} else {
+			p.logger.DebugLog("[Kiro] GenerateContentStream using token %s with direct connection", tokenID)
+		}
+	} else {
+		// No token manager, use authenticator and default client (backward compatibility)
+		var authErr error
+		token, authErr = p.authenticator.GetToken(ctx)
+		if authErr != nil {
+			p.logger.ErrorLog("[Kiro] Token retrieval failed: %v", authErr)
+			return nil, fmt.Errorf("failed to get token: %w", authErr)
+		}
+		client = p.httpClient
+		tokenID = "fallback"
 	}
 
 	// Convert request to Kiro format
@@ -271,7 +474,7 @@ func (p *Provider) GenerateContentStream(ctx context.Context, model string, requ
 	p.logger.DebugLog("[Kiro] Sending SendMessageStreaming request to %s", url)
 	fmt.Println("[Kiro DEBUG] Streaming Invocation ID:", invocationID)
 
-	resp, err := p.httpClient.Do(req)
+	resp, err := p.doRequestWithProxy(req, client, tokenID)
 	if err != nil {
 		return nil, fmt.Errorf("failed to send request: %w", err)
 	}
@@ -282,11 +485,11 @@ func (p *Provider) GenerateContentStream(ctx context.Context, model string, requ
 		return nil, fmt.Errorf("API error (status %d): %s", resp.StatusCode, string(body))
 	}
 
-	return p.convertBedrockStreamToOpenAI(ctx, resp.Body, model), nil
+	return p.convertBedrockStreamToOpenAI(ctx, resp.Body, model, tokenID), nil
 }
 
 // convertBedrockStreamToOpenAI converts AWS Bedrock event stream to OpenAI SSE
-func (p *Provider) convertBedrockStreamToOpenAI(ctx context.Context, body io.ReadCloser, model string) io.ReadCloser {
+func (p *Provider) convertBedrockStreamToOpenAI(ctx context.Context, body io.ReadCloser, model string, tokenID string) io.ReadCloser {
 	r, w := io.Pipe()
 
 	go func() {
@@ -294,7 +497,7 @@ func (p *Provider) convertBedrockStreamToOpenAI(ctx context.Context, body io.Rea
 		defer w.Close()
 
 		reader := bufio.NewReader(body)
-		
+
 		// Use a unique ID for the whole stream
 		id := "chatcmpl-" + generateUUID()
 		created := time.Now().Unix()
@@ -311,6 +514,14 @@ func (p *Provider) convertBedrockStreamToOpenAI(ctx context.Context, body io.Rea
 			if _, err := io.ReadFull(reader, lenBuf); err != nil {
 				if err != io.EOF {
 					p.logger.ErrorLog("Error reading stream length: %v", err)
+					// Check if this is a proxy error and update health
+					if p.isProxyError(err) {
+						if p.tokenManager != nil {
+							if updateErr := p.tokenManager.UpdateProxyHealth(tokenID, false, err); updateErr != nil {
+								p.logger.WarningLog("[Kiro] Failed to update proxy health for token %s: %v", tokenID, updateErr)
+							}
+						}
+					}
 				}
 				break
 			}
@@ -318,31 +529,86 @@ func (p *Provider) convertBedrockStreamToOpenAI(ctx context.Context, body io.Rea
 
 			// 2. Read Header Length (4 bytes)
 			if _, err := io.ReadFull(reader, lenBuf); err != nil {
+				if err != io.EOF {
+					p.logger.ErrorLog("Error reading header length: %v", err)
+					// Check if this is a proxy error and update health
+					if p.isProxyError(err) {
+						if p.tokenManager != nil {
+							if updateErr := p.tokenManager.UpdateProxyHealth(tokenID, false, err); updateErr != nil {
+								p.logger.WarningLog("[Kiro] Failed to update proxy health for token %s: %v", tokenID, updateErr)
+							}
+						}
+					}
+				}
 				break
 			}
 			headerLen := binary.BigEndian.Uint32(lenBuf)
 
 			// 3. Read Prelude CRC (4 bytes) - discard
 			if _, err := reader.Discard(4); err != nil {
+				if err != io.EOF {
+					p.logger.ErrorLog("Error reading prelude CRC: %v", err)
+					// Check if this is a proxy error and update health
+					if p.isProxyError(err) {
+						if p.tokenManager != nil {
+							if updateErr := p.tokenManager.UpdateProxyHealth(tokenID, false, err); updateErr != nil {
+								p.logger.WarningLog("[Kiro] Failed to update proxy health for token %s: %v", tokenID, updateErr)
+							}
+						}
+					}
+				}
 				break
 			}
 
 			// 4. Read Headers (headerLen bytes) - discard
 			if _, err := reader.Discard(int(headerLen)); err != nil {
+				if err != io.EOF {
+					p.logger.ErrorLog("Error reading headers: %v", err)
+					// Check if this is a proxy error and update health
+					if p.isProxyError(err) {
+						if p.tokenManager != nil {
+							if updateErr := p.tokenManager.UpdateProxyHealth(tokenID, false, err); updateErr != nil {
+								p.logger.WarningLog("[Kiro] Failed to update proxy health for token %s: %v", tokenID, updateErr)
+							}
+						}
+					}
+				}
 				break
 			}
 
 			// 5. Read Payload
 			// Payload length = TotalLen - 12 (prelude) - HeaderLen - 4 (MessageCRC)
 			payloadLen := int(totalLen) - 16 - int(headerLen)
-			
+
 			payload := make([]byte, payloadLen)
 			if _, err := io.ReadFull(reader, payload); err != nil {
+				if err != io.EOF {
+					p.logger.ErrorLog("Error reading payload: %v", err)
+					// Check if this is a proxy error and update health
+					if p.isProxyError(err) {
+						if p.tokenManager != nil {
+							if updateErr := p.tokenManager.UpdateProxyHealth(tokenID, false, err); updateErr != nil {
+								p.logger.WarningLog("[Kiro] Failed to update proxy health for token %s: %v", tokenID, updateErr)
+							}
+						}
+					}
+				}
 				break
 			}
 
 			// 6. Read Message CRC (4 bytes) - discard
 			if _, err := reader.Discard(4); err != nil {
+				if err != io.EOF {
+					p.logger.ErrorLog("Error reading message CRC: %v", err)
+					// Check if this is a proxy error and update health
+					if p.isProxyError(err) {
+						if p.tokenManager != nil {
+							if updateErr := p.tokenManager.UpdateProxyHealth(tokenID, false, err); updateErr != nil {
+								p.logger.WarningLog("[Kiro] Failed to update proxy health for token %s: %v", tokenID, updateErr)
+							}
+						}
+					}
+				}
 				break
 			}
 
@@ -350,7 +616,7 @@ func (p *Provider) convertBedrockStreamToOpenAI(ctx context.Context, body io.Rea
 			var event struct {
 				Content string `json:"content"`
 			}
-			
+
 			if err := json.Unmarshal(payload, &event); err != nil {
 				continue
 			}
@@ -371,9 +637,16 @@ func (p *Provider) convertBedrockStreamToOpenAI(ctx context.Context, body io.Rea
 						},
 					},
 				}
-				
+
 				chunkBytes, _ := json.Marshal(chunk)
 				fmt.Fprintf(w, "data: %s\n\n", string(chunkBytes))
+			}
+		}
+
+		// Update proxy health on successful stream completion
+		if p.tokenManager != nil {
+			if updateErr := p.tokenManager.UpdateProxyHealth(tokenID, true, nil); updateErr != nil {
+				p.logger.WarningLog("[Kiro] Failed to update proxy health for token %s: %v", tokenID, updateErr)
 			}
 		}
 

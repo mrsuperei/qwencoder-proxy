@@ -16,21 +16,23 @@ import (
 
 // ProviderToken represents a single stored token with metadata
 type ProviderToken struct {
-	ID           string  `json:"id"` // Unique token ID (UUID)
-	AccessToken  string  `json:"access_token"`
-	RefreshToken string  `json:"refresh_token"`
-	TokenType    string  `json:"token_type"`
-	ExpiryDate   int64   `json:"expiry_date"`
-	Email        string  `json:"email"`                  // Extracted from OAuth response
-	ResourceURL  string  `json:"resource_url,omitempty"` // For Qwen
-	Scope        string  `json:"scope,omitempty"`        // For Gemini
-	APIKey       string  `json:"api_key,omitempty"`      // For IFlow
-	Healthy      bool    `json:"healthy"`                // Track if token is working
-	HealthScore  float64 `json:"health_score"`           // 0.0-1.0 health score
-	LastUsed     int64   `json:"last_used"`              // Timestamp of last use
-	CreatedAt    int64   `json:"created_at"`             // Token creation timestamp
-	ErrorCount   int     `json:"error_count"`            // Number of consecutive errors
-	LastError    string  `json:"last_error,omitempty"`   // Last error message
+	ID               string       `json:"id"` // Unique token ID (UUID)
+	AccessToken      string       `json:"access_token"`
+	RefreshToken     string       `json:"refresh_token"`
+	TokenType        string       `json:"token_type"`
+	ExpiryDate       int64        `json:"expiry_date"`
+	Email            string       `json:"email"`                        // Extracted from OAuth response
+	ResourceURL      string       `json:"resource_url,omitempty"`       // For Qwen
+	Scope            string       `json:"scope,omitempty"`              // For Gemini
+	APIKey           string       `json:"api_key,omitempty"`            // For IFlow
+	Healthy          bool         `json:"healthy"`                      // Track if token is working
+	HealthScore      float64      `json:"health_score"`                 // 0.0-1.0 health score
+	LastUsed         int64        `json:"last_used"`                    // Timestamp of last use
+	CreatedAt        int64        `json:"created_at"`                   // Token creation timestamp
+	ErrorCount       int          `json:"error_count"`                  // Number of consecutive errors
+	LastError        string       `json:"last_error,omitempty"`         // Last error message
+	Proxy            *ProxyConfig `json:"proxy,omitempty"`              // Proxy configuration for this token
+	ProxyHealthScore float64      `json:"proxy_health_score,omitempty"` // Separate health tracking for proxy (0.0-1.0)
 }
 
 // StoreSettings contains provider-specific settings
@@ -95,6 +97,8 @@ func (mts *MultiTokenStore) Load() error {
 		return nil
 	}
 
+	mts.logger.InfoLog("[MultiTokenStore] Loading tokens from directory: %s", mts.providerDir)
+
 	// Load all JSON files from the provider directory
 	return mts.loadInternal()
 }
@@ -106,6 +110,8 @@ func (mts *MultiTokenStore) loadInternal() error {
 	if err != nil {
 		return fmt.Errorf("failed to read provider directory: %w", err)
 	}
+
+	mts.logger.DebugLog("[MultiTokenStore] Found %d entries in directory: %s", len(entries), mts.providerDir)
 
 	loadedTokens := make([]ProviderToken, 0)
 	for _, entry := range entries {
@@ -150,7 +156,11 @@ func (mts *MultiTokenStore) loadInternal() error {
 
 	mts.Tokens = loadedTokens
 	mts.Version = StoreVersion
-	mts.logger.InfoLog("Loaded token store for provider: %s with %d tokens", mts.ProviderID, len(mts.Tokens))
+	mts.logger.InfoLog("[MultiTokenStore] Loaded token store for provider: %s with %d tokens", mts.ProviderID, len(mts.Tokens))
+	for i, token := range mts.Tokens {
+		mts.logger.DebugLog("[MultiTokenStore] Loaded token[%d]: ID=%s, Email=%s, Healthy=%v, ExpiryDate=%d",
+			i, token.ID, token.Email, token.Healthy, token.ExpiryDate)
+	}
 	return nil
 }
 
@@ -192,18 +202,20 @@ func (mts *MultiTokenStore) migrateFromLegacy(legacyFilePath string) error {
 
 	// Create a new token from legacy data
 	token := ProviderToken{
-		ID:           GenerateTokenID(),
-		AccessToken:  legacyCreds.AccessToken,
-		RefreshToken: legacyCreds.RefreshToken,
-		TokenType:    legacyCreds.TokenType,
-		ExpiryDate:   legacyCreds.ExpiryDate,
-		ResourceURL:  legacyCreds.ResourceURL,
-		Email:        "", // Email not available in legacy format
-		Healthy:      true,
-		HealthScore:  1.0,
-		LastUsed:     GetCurrentTimestamp(),
-		CreatedAt:    GetCurrentTimestamp(),
-		ErrorCount:   0,
+		ID:               GenerateTokenID(),
+		AccessToken:      legacyCreds.AccessToken,
+		RefreshToken:     legacyCreds.RefreshToken,
+		TokenType:        legacyCreds.TokenType,
+		ExpiryDate:       legacyCreds.ExpiryDate,
+		ResourceURL:      legacyCreds.ResourceURL,
+		Email:            "", // Email not available in legacy format
+		Healthy:          true,
+		HealthScore:      1.0,
+		LastUsed:         GetCurrentTimestamp(),
+		CreatedAt:        GetCurrentTimestamp(),
+		ErrorCount:       0,
+		Proxy:            nil, // No proxy in legacy format
+		ProxyHealthScore: 1.0, // Default healthy proxy score
 	}
 
 	// Ensure provider directory exists
@@ -329,6 +341,18 @@ func (mts *MultiTokenStore) AddToken(token ProviderToken) error {
 	}
 	if token.TokenType == "" {
 		token.TokenType = "Bearer"
+	}
+
+	// Validate proxy configuration if provided
+	if token.Proxy != nil {
+		if err := token.Proxy.Validate(); err != nil {
+			return fmt.Errorf("invalid proxy configuration: %w", err)
+		}
+	}
+
+	// Set default proxy health score if not set
+	if token.ProxyHealthScore == 0 {
+		token.ProxyHealthScore = 1.0
 	}
 
 	// Check if token with same ID already exists
@@ -483,6 +507,7 @@ func (mts *MultiTokenStore) MarkTokenHealthy(tokenID string) error {
 		token.ErrorCount = 0
 		token.LastError = ""
 		token.LastUsed = GetCurrentTimestamp()
+		token.ProxyHealthScore = 1.0 // Reset proxy health score
 	})
 }
 

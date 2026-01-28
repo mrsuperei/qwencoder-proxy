@@ -26,19 +26,21 @@ type ProviderConfig struct {
 
 // MultiTokenManager manages all multi-token components
 type MultiTokenManager struct {
-	stores          map[string]*MultiTokenStore
-	managers        map[string]*TokenManager
-	refreshers      map[string]ProviderRefresh
-	schedulers      map[string]*RefreshScheduler
-	extractors      map[string]EmailExtractor
-	emailManager    *EmailExtractionManager
-	healthTrackers  map[string]*HealthTracker
-	strategyFactory *StrategyFactory
-	mu              sync.RWMutex
-	logger          *logging.Logger
-	httpClient      *http.Client
-	credentialsDir  string
-	initialized     bool
+	stores              map[string]*MultiTokenStore
+	managers            map[string]*TokenManager
+	refreshers          map[string]ProviderRefresh
+	schedulers          map[string]*RefreshScheduler
+	extractors          map[string]EmailExtractor
+	emailManager        *EmailExtractionManager
+	healthTrackers      map[string]*HealthTracker
+	proxyHealthTrackers map[string]*ProxyHealthTracker
+	strategyFactory     *StrategyFactory
+	mu                  sync.RWMutex
+	logger              *logging.Logger
+	httpClient          *http.Client
+	clientFactory       ProxyClientFactory
+	credentialsDir      string
+	initialized         bool
 }
 
 // NewMultiTokenManager creates a new MultiTokenManager
@@ -48,16 +50,17 @@ func NewMultiTokenManager(logger *logging.Logger) *MultiTokenManager {
 	}
 
 	return &MultiTokenManager{
-		stores:          make(map[string]*MultiTokenStore),
-		managers:        make(map[string]*TokenManager),
-		refreshers:      make(map[string]ProviderRefresh),
-		schedulers:      make(map[string]*RefreshScheduler),
-		extractors:      make(map[string]EmailExtractor),
-		healthTrackers:  make(map[string]*HealthTracker),
-		strategyFactory: NewStrategyFactory(),
-		logger:          logger,
-		httpClient:      &http.Client{Timeout: 30 * time.Second},
-		credentialsDir:  ".credentials",
+		stores:              make(map[string]*MultiTokenStore),
+		managers:            make(map[string]*TokenManager),
+		refreshers:          make(map[string]ProviderRefresh),
+		schedulers:          make(map[string]*RefreshScheduler),
+		extractors:          make(map[string]EmailExtractor),
+		healthTrackers:      make(map[string]*HealthTracker),
+		proxyHealthTrackers: make(map[string]*ProxyHealthTracker),
+		strategyFactory:     NewStrategyFactory(),
+		logger:              logger,
+		httpClient:          &http.Client{Timeout: 30 * time.Second},
+		credentialsDir:      ".credentials",
 	}
 }
 
@@ -73,6 +76,13 @@ func (mtm *MultiTokenManager) SetHTTPClient(client *http.Client) {
 	mtm.mu.Lock()
 	defer mtm.mu.Unlock()
 	mtm.httpClient = client
+}
+
+// SetClientFactory sets the proxy-aware HTTP client factory
+func (mtm *MultiTokenManager) SetClientFactory(clientFactory ProxyClientFactory) {
+	mtm.mu.Lock()
+	defer mtm.mu.Unlock()
+	mtm.clientFactory = clientFactory
 }
 
 // Initialize initializes all components
@@ -143,6 +153,7 @@ func (mtm *MultiTokenManager) GetTokenStore(providerID string) (*MultiTokenStore
 	mtm.mu.RUnlock()
 
 	if ok {
+		mtm.logger.DebugLog("[MultiTokenManager] Returning existing token store for provider: %s", providerID)
 		return store, nil
 	}
 
@@ -152,8 +163,11 @@ func (mtm *MultiTokenManager) GetTokenStore(providerID string) (*MultiTokenStore
 
 	// Check again in case another goroutine created it
 	if store, ok := mtm.stores[providerID]; ok {
+		mtm.logger.DebugLog("[MultiTokenManager] Returning existing token store for provider: %s (after re-check)", providerID)
 		return store, nil
 	}
+
+	mtm.logger.InfoLog("[MultiTokenManager] Creating new token store for provider: %s", providerID)
 
 	// Create credentials directory
 	credsPath := filepath.Join(mtm.credentialsDir, providerID+".json")
@@ -173,6 +187,9 @@ func (mtm *MultiTokenManager) GetTokenStore(providerID string) (*MultiTokenStore
 	// Create health tracker for this provider
 	mtm.healthTrackers[providerID] = NewHealthTracker(store, mtm.logger)
 
+	// Create proxy health tracker for this provider
+	mtm.proxyHealthTrackers[providerID] = NewProxyHealthTracker(mtm.logger, 5, 5*time.Minute)
+
 	mtm.logger.InfoLog("[MultiTokenManager] Created token store for provider: %s", providerID)
 	return store, nil
 }
@@ -184,14 +201,19 @@ func (mtm *MultiTokenManager) GetTokenManager(providerID string) (*TokenManager,
 	mtm.mu.RUnlock()
 
 	if ok {
+		mtm.logger.DebugLog("[MultiTokenManager] Returning existing token manager for provider: %s", providerID)
 		return manager, nil
 	}
+
+	mtm.logger.InfoLog("[MultiTokenManager] Creating new token manager for provider: %s", providerID)
 
 	// Get or create store
 	store, err := mtm.GetTokenStore(providerID)
 	if err != nil {
 		return nil, err
 	}
+
+	mtm.logger.DebugLog("[MultiTokenManager] Store for %s has %d tokens", providerID, store.GetTokenCount())
 
 	// Create strategy from store settings
 	strategy, err := mtm.strategyFactory.CreateStrategy(store.Settings.SelectionStrategy)
@@ -207,7 +229,14 @@ func (mtm *MultiTokenManager) GetTokenManager(providerID string) (*TokenManager,
 		return manager, nil
 	}
 
-	manager = NewTokenManager(store, strategy, mtm.logger)
+	// Get proxy health tracker for this provider (already created by GetTokenStore)
+	proxyHealthTracker, ok := mtm.proxyHealthTrackers[providerID]
+	if !ok {
+		proxyHealthTracker = NewProxyHealthTracker(mtm.logger, 5, 5*time.Minute)
+		mtm.proxyHealthTrackers[providerID] = proxyHealthTracker
+	}
+
+	manager = NewTokenManager(store, strategy, mtm.logger, mtm.clientFactory, proxyHealthTracker)
 	mtm.managers[providerID] = manager
 
 	mtm.logger.InfoLog("[MultiTokenManager] Created token manager for provider: %s", providerID)
@@ -240,6 +269,30 @@ func (mtm *MultiTokenManager) GetHealthTracker(providerID string) (*HealthTracke
 
 	tracker = NewHealthTracker(store, mtm.logger)
 	mtm.healthTrackers[providerID] = tracker
+
+	return tracker, nil
+}
+
+// GetProxyHealthTracker returns the proxy health tracker for a provider
+func (mtm *MultiTokenManager) GetProxyHealthTracker(providerID string) (*ProxyHealthTracker, error) {
+	mtm.mu.RLock()
+	tracker, ok := mtm.proxyHealthTrackers[providerID]
+	mtm.mu.RUnlock()
+
+	if ok {
+		return tracker, nil
+	}
+
+	mtm.mu.Lock()
+	defer mtm.mu.Unlock()
+
+	// Check again in case another goroutine created it
+	if tracker, ok := mtm.proxyHealthTrackers[providerID]; ok {
+		return tracker, nil
+	}
+
+	tracker = NewProxyHealthTracker(mtm.logger, 5, 5*time.Minute)
+	mtm.proxyHealthTrackers[providerID] = tracker
 
 	return tracker, nil
 }
@@ -283,8 +336,8 @@ func (mtm *MultiTokenManager) RegisterRefresher(providerID string, refresher Pro
 		return fmt.Errorf("provider store not found: %s", providerID)
 	}
 
-	// Create refresh coordinator for this provider
-	coordinator := NewRefreshCoordinator(store, 3, mtm.logger)
+	// Create refresh coordinator for this provider with client factory
+	coordinator := NewRefreshCoordinator(store, 3, mtm.logger, mtm.clientFactory)
 	coordinator.RegisterRefresher(refresher)
 
 	// Create refresh scheduler for this provider

@@ -1,6 +1,8 @@
 package auth
 
 import (
+	"errors"
+	"net/http"
 	"testing"
 	"time"
 
@@ -9,6 +11,20 @@ import (
 
 	"github.com/sunbankio/qwencoder-proxy/logging"
 )
+
+// mockProxyClientFactory is a mock implementation of ProxyClientFactory for testing
+type mockProxyClientFactory struct {
+	mockClient *http.Client
+	calls      []*ProxyConfig
+}
+
+func (m *mockProxyClientFactory) GetClient(proxyConfig *ProxyConfig) *http.Client {
+	m.calls = append(m.calls, proxyConfig)
+	if m.mockClient != nil {
+		return m.mockClient
+	}
+	return &http.Client{}
+}
 
 func createTestTokens(count int) []ProviderToken {
 	tokens := make([]ProviderToken, count)
@@ -216,7 +232,7 @@ func TestTokenManager_SelectToken(t *testing.T) {
 			require.NoError(t, store.AddToken(token))
 		}
 
-		manager := NewTokenManager(store, NewRandomSelectionStrategy(), logger)
+		manager := NewTokenManager(store, NewRandomSelectionStrategy(), logger, nil, nil)
 
 		token, err := manager.SelectToken()
 		require.NoError(t, err)
@@ -226,7 +242,7 @@ func TestTokenManager_SelectToken(t *testing.T) {
 
 	t.Run("returns error when no tokens available", func(t *testing.T) {
 		store := NewMultiTokenStore("test-provider", filePath, logger)
-		manager := NewTokenManager(store, NewRandomSelectionStrategy(), logger)
+		manager := NewTokenManager(store, NewRandomSelectionStrategy(), logger, nil, nil)
 
 		_, err := manager.SelectToken()
 		assert.Error(t, err)
@@ -243,7 +259,7 @@ func TestTokenManager_SelectToken(t *testing.T) {
 			require.NoError(t, store.AddToken(token))
 		}
 
-		manager := NewTokenManager(store, NewRandomSelectionStrategy(), logger)
+		manager := NewTokenManager(store, NewRandomSelectionStrategy(), logger, nil, nil)
 
 		_, err := manager.SelectToken()
 		assert.Error(t, err)
@@ -257,7 +273,7 @@ func TestTokenManager_SelectToken(t *testing.T) {
 			require.NoError(t, store.AddToken(token))
 		}
 
-		manager := NewTokenManager(store, NewRandomSelectionStrategy(), logger)
+		manager := NewTokenManager(store, NewRandomSelectionStrategy(), logger, nil, nil)
 
 		token, err := manager.SelectToken()
 		require.NoError(t, err)
@@ -280,7 +296,7 @@ func TestTokenManager_SelectTokenByID(t *testing.T) {
 			require.NoError(t, store.AddToken(token))
 		}
 
-		manager := NewTokenManager(store, NewRandomSelectionStrategy(), logger)
+		manager := NewTokenManager(store, NewRandomSelectionStrategy(), logger, nil, nil)
 
 		token, err := manager.SelectTokenByID("b")
 		require.NoError(t, err)
@@ -295,7 +311,7 @@ func TestTokenManager_SelectTokenByID(t *testing.T) {
 			require.NoError(t, store.AddToken(token))
 		}
 
-		manager := NewTokenManager(store, NewRandomSelectionStrategy(), logger)
+		manager := NewTokenManager(store, NewRandomSelectionStrategy(), logger, nil, nil)
 
 		_, err := manager.SelectTokenByID("non-existent")
 		assert.Error(t, err)
@@ -310,7 +326,7 @@ func TestTokenManager_SelectTokenByID(t *testing.T) {
 			require.NoError(t, store.AddToken(token))
 		}
 
-		manager := NewTokenManager(store, NewRandomSelectionStrategy(), logger)
+		manager := NewTokenManager(store, NewRandomSelectionStrategy(), logger, nil, nil)
 
 		_, err := manager.SelectTokenByID("b")
 		assert.Error(t, err)
@@ -324,7 +340,7 @@ func TestTokenManager_SelectTokenByID(t *testing.T) {
 			require.NoError(t, store.AddToken(token))
 		}
 
-		manager := NewTokenManager(store, NewRandomSelectionStrategy(), logger)
+		manager := NewTokenManager(store, NewRandomSelectionStrategy(), logger, nil, nil)
 
 		token, err := manager.SelectTokenByID("a")
 		require.NoError(t, err)
@@ -347,7 +363,7 @@ func TestTokenManager_SetStrategy(t *testing.T) {
 			require.NoError(t, store.AddToken(token))
 		}
 
-		manager := NewTokenManager(store, NewRandomSelectionStrategy(), logger)
+		manager := NewTokenManager(store, NewRandomSelectionStrategy(), logger, nil, nil)
 
 		assert.Equal(t, "random", manager.GetStrategy().Name())
 
@@ -373,7 +389,7 @@ func TestTokenManager_GetValidTokens(t *testing.T) {
 			require.NoError(t, store.AddToken(token))
 		}
 
-		manager := NewTokenManager(store, NewRandomSelectionStrategy(), logger)
+		manager := NewTokenManager(store, NewRandomSelectionStrategy(), logger, nil, nil)
 
 		validTokens, err := manager.GetValidTokens()
 		require.NoError(t, err)
@@ -401,7 +417,7 @@ func TestTokenManager_GetTokenCount(t *testing.T) {
 			require.NoError(t, store.AddToken(token))
 		}
 
-		manager := NewTokenManager(store, NewRandomSelectionStrategy(), logger)
+		manager := NewTokenManager(store, NewRandomSelectionStrategy(), logger, nil, nil)
 
 		assert.Equal(t, 5, manager.GetTokenCount())
 	})
@@ -421,7 +437,7 @@ func TestTokenManager_GetValidTokenCount(t *testing.T) {
 			require.NoError(t, store.AddToken(token))
 		}
 
-		manager := NewTokenManager(store, NewRandomSelectionStrategy(), logger)
+		manager := NewTokenManager(store, NewRandomSelectionStrategy(), logger, nil, nil)
 
 		assert.Equal(t, 3, manager.GetValidTokenCount())
 	})
@@ -725,5 +741,298 @@ func TestFilterValidTokens(t *testing.T) {
 	t.Run("handles empty list", func(t *testing.T) {
 		valid := filterValidTokens([]ProviderToken{})
 		assert.Empty(t, valid)
+	})
+}
+
+func TestTokenManager_SelectTokenWithClient(t *testing.T) {
+	logger := logging.NewLogger()
+	tempDir := t.TempDir()
+	filePath := tempDir + "/store.json"
+
+	t.Run("selects token with direct connection (no proxy)", func(t *testing.T) {
+		store := NewMultiTokenStore("test-provider", filePath, logger)
+		tokens := createTestTokens(1)
+		for _, token := range tokens {
+			require.NoError(t, store.AddToken(token))
+		}
+
+		mockFactory := &mockProxyClientFactory{}
+		proxyTracker := NewProxyHealthTracker(logger, 5, 5*time.Minute)
+		manager := NewTokenManager(store, NewRandomSelectionStrategy(), logger, mockFactory, proxyTracker)
+
+		token, client, err := manager.SelectTokenWithClient()
+		require.NoError(t, err)
+		require.NotNil(t, token)
+		require.NotNil(t, client)
+		assert.Equal(t, "a", token.ID)
+		assert.Nil(t, token.Proxy)
+		assert.Len(t, mockFactory.calls, 1)
+		assert.Nil(t, mockFactory.calls[0])
+	})
+
+	t.Run("selects token with HTTP proxy", func(t *testing.T) {
+		store := NewMultiTokenStore("test-provider", filePath, logger)
+		tokens := createTestTokens(1)
+		tokens[0].Proxy = &ProxyConfig{
+			Type:    ProxyTypeHTTP,
+			Host:    "proxy.example.com",
+			Port:    8080,
+			Enabled: true,
+		}
+		for _, token := range tokens {
+			require.NoError(t, store.AddToken(token))
+		}
+
+		mockFactory := &mockProxyClientFactory{}
+		proxyTracker := NewProxyHealthTracker(logger, 5, 5*time.Minute)
+		manager := NewTokenManager(store, NewRandomSelectionStrategy(), logger, mockFactory, proxyTracker)
+
+		token, client, err := manager.SelectTokenWithClient()
+		require.NoError(t, err)
+		require.NotNil(t, token)
+		require.NotNil(t, client)
+		assert.Equal(t, "a", token.ID)
+		assert.NotNil(t, token.Proxy)
+		assert.Equal(t, ProxyTypeHTTP, token.Proxy.Type)
+		assert.Len(t, mockFactory.calls, 1)
+		assert.Equal(t, token.Proxy, mockFactory.calls[0])
+	})
+
+	t.Run("returns error when no tokens available", func(t *testing.T) {
+		store := NewMultiTokenStore("test-provider", filePath, logger)
+		mockFactory := &mockProxyClientFactory{}
+		proxyTracker := NewProxyHealthTracker(logger, 5, 5*time.Minute)
+		manager := NewTokenManager(store, NewRandomSelectionStrategy(), logger, mockFactory, proxyTracker)
+
+		_, _, err := manager.SelectTokenWithClient()
+		assert.Error(t, err)
+		assert.Equal(t, ErrNoTokensAvailable, err)
+	})
+
+	t.Run("returns error when no valid tokens", func(t *testing.T) {
+		store := NewMultiTokenStore("test-provider", filePath, logger)
+		tokens := createTestTokens(3)
+		for i := range tokens {
+			tokens[i].Healthy = false
+		}
+		for _, token := range tokens {
+			require.NoError(t, store.AddToken(token))
+		}
+
+		mockFactory := &mockProxyClientFactory{}
+		proxyTracker := NewProxyHealthTracker(logger, 5, 5*time.Minute)
+		manager := NewTokenManager(store, NewRandomSelectionStrategy(), logger, mockFactory, proxyTracker)
+
+		_, _, err := manager.SelectTokenWithClient()
+		assert.Error(t, err)
+		assert.Equal(t, ErrNoValidTokens, err)
+	})
+
+	t.Run("handles nil client factory gracefully", func(t *testing.T) {
+		store := NewMultiTokenStore("test-provider", filePath, logger)
+		tokens := createTestTokens(1)
+		for _, token := range tokens {
+			require.NoError(t, store.AddToken(token))
+		}
+
+		proxyTracker := NewProxyHealthTracker(logger, 5, 5*time.Minute)
+		manager := NewTokenManager(store, NewRandomSelectionStrategy(), logger, nil, proxyTracker)
+
+		token, client, err := manager.SelectTokenWithClient()
+		require.NoError(t, err)
+		require.NotNil(t, token)
+		assert.Nil(t, client)
+	})
+
+	t.Run("handles nil proxy health tracker gracefully", func(t *testing.T) {
+		store := NewMultiTokenStore("test-provider", filePath, logger)
+		tokens := createTestTokens(1)
+		for _, token := range tokens {
+			require.NoError(t, store.AddToken(token))
+		}
+
+		mockFactory := &mockProxyClientFactory{}
+		manager := NewTokenManager(store, NewRandomSelectionStrategy(), logger, mockFactory, nil)
+
+		token, client, err := manager.SelectTokenWithClient()
+		require.NoError(t, err)
+		require.NotNil(t, token)
+		require.NotNil(t, client)
+	})
+
+	t.Run("updates LastUsed timestamp", func(t *testing.T) {
+		store := NewMultiTokenStore("test-provider", filePath, logger)
+		tokens := createTestTokens(1)
+		for _, token := range tokens {
+			require.NoError(t, store.AddToken(token))
+		}
+
+		mockFactory := &mockProxyClientFactory{}
+		proxyTracker := NewProxyHealthTracker(logger, 5, 5*time.Minute)
+		manager := NewTokenManager(store, NewRandomSelectionStrategy(), logger, mockFactory, proxyTracker)
+
+		token, _, err := manager.SelectTokenWithClient()
+		require.NoError(t, err)
+
+		retrieved, err := store.GetToken(token.ID)
+		require.NoError(t, err)
+		assert.Greater(t, retrieved.LastUsed, tokens[0].LastUsed)
+	})
+}
+
+func TestTokenManager_GetTokenClient(t *testing.T) {
+	logger := logging.NewLogger()
+	tempDir := t.TempDir()
+	filePath := tempDir + "/store.json"
+
+	t.Run("returns client for token without proxy", func(t *testing.T) {
+		store := NewMultiTokenStore("test-provider", filePath, logger)
+		tokens := createTestTokens(1)
+		for _, token := range tokens {
+			require.NoError(t, store.AddToken(token))
+		}
+
+		mockFactory := &mockProxyClientFactory{}
+		proxyTracker := NewProxyHealthTracker(logger, 5, 5*time.Minute)
+		manager := NewTokenManager(store, NewRandomSelectionStrategy(), logger, mockFactory, proxyTracker)
+
+		client, err := manager.GetTokenClient("a")
+		require.NoError(t, err)
+		require.NotNil(t, client)
+		assert.Len(t, mockFactory.calls, 1)
+		assert.Nil(t, mockFactory.calls[0])
+	})
+
+	t.Run("returns client for token with proxy", func(t *testing.T) {
+		store := NewMultiTokenStore("test-provider", filePath, logger)
+		tokens := createTestTokens(1)
+		tokens[0].Proxy = &ProxyConfig{
+			Type:    ProxyTypeSOCKS5,
+			Host:    "socks.example.com",
+			Port:    1080,
+			Enabled: true,
+		}
+		for _, token := range tokens {
+			require.NoError(t, store.AddToken(token))
+		}
+
+		mockFactory := &mockProxyClientFactory{}
+		proxyTracker := NewProxyHealthTracker(logger, 5, 5*time.Minute)
+		manager := NewTokenManager(store, NewRandomSelectionStrategy(), logger, mockFactory, proxyTracker)
+
+		client, err := manager.GetTokenClient("a")
+		require.NoError(t, err)
+		require.NotNil(t, client)
+		assert.Len(t, mockFactory.calls, 1)
+		assert.Equal(t, tokens[0].Proxy, mockFactory.calls[0])
+	})
+
+	t.Run("returns error for non-existent token", func(t *testing.T) {
+		store := NewMultiTokenStore("test-provider", filePath, logger)
+		mockFactory := &mockProxyClientFactory{}
+		proxyTracker := NewProxyHealthTracker(logger, 5, 5*time.Minute)
+		manager := NewTokenManager(store, NewRandomSelectionStrategy(), logger, mockFactory, proxyTracker)
+
+		_, err := manager.GetTokenClient("non-existent")
+		assert.Error(t, err)
+		assert.Contains(t, err.Error(), "not found")
+	})
+
+	t.Run("returns error when client factory is nil", func(t *testing.T) {
+		store := NewMultiTokenStore("test-provider", filePath, logger)
+		tokens := createTestTokens(1)
+		for _, token := range tokens {
+			require.NoError(t, store.AddToken(token))
+		}
+
+		proxyTracker := NewProxyHealthTracker(logger, 5, 5*time.Minute)
+		manager := NewTokenManager(store, NewRandomSelectionStrategy(), logger, nil, proxyTracker)
+
+		_, err := manager.GetTokenClient("a")
+		assert.Error(t, err)
+		assert.Contains(t, err.Error(), "client factory not set")
+	})
+}
+
+func TestTokenManager_UpdateProxyHealth(t *testing.T) {
+	logger := logging.NewLogger()
+	tempDir := t.TempDir()
+	filePath := tempDir + "/store.json"
+
+	t.Run("updates proxy health to healthy", func(t *testing.T) {
+		store := NewMultiTokenStore("test-provider", filePath, logger)
+		tokens := createTestTokens(1)
+		for _, token := range tokens {
+			require.NoError(t, store.AddToken(token))
+		}
+
+		proxyTracker := NewProxyHealthTracker(logger, 5, 5*time.Minute)
+		manager := NewTokenManager(store, NewRandomSelectionStrategy(), logger, nil, proxyTracker)
+
+		err := manager.UpdateProxyHealth("a", true, nil)
+		require.NoError(t, err)
+
+		healthScore := proxyTracker.GetHealthScore("a")
+		assert.Equal(t, 1.0, healthScore)
+	})
+
+	t.Run("updates proxy health to unhealthy", func(t *testing.T) {
+		store := NewMultiTokenStore("test-provider", filePath, logger)
+		tokens := createTestTokens(1)
+		for _, token := range tokens {
+			require.NoError(t, store.AddToken(token))
+		}
+
+		proxyTracker := NewProxyHealthTracker(logger, 5, 5*time.Minute)
+		manager := NewTokenManager(store, NewRandomSelectionStrategy(), logger, nil, proxyTracker)
+
+		testErr := errors.New("proxy connection failed")
+		err := manager.UpdateProxyHealth("a", false, testErr)
+		require.NoError(t, err)
+
+		healthScore := proxyTracker.GetHealthScore("a")
+		assert.Less(t, healthScore, 1.0)
+	})
+
+	t.Run("updates token ProxyHealthScore in store", func(t *testing.T) {
+		store := NewMultiTokenStore("test-provider", filePath, logger)
+		tokens := createTestTokens(1)
+		for _, token := range tokens {
+			require.NoError(t, store.AddToken(token))
+		}
+
+		proxyTracker := NewProxyHealthTracker(logger, 5, 5*time.Minute)
+		manager := NewTokenManager(store, NewRandomSelectionStrategy(), logger, nil, proxyTracker)
+
+		err := manager.UpdateProxyHealth("a", false, errors.New("test error"))
+		require.NoError(t, err)
+
+		retrieved, err := store.GetToken("a")
+		require.NoError(t, err)
+		assert.Less(t, retrieved.ProxyHealthScore, 1.0)
+	})
+
+	t.Run("returns error for non-existent token", func(t *testing.T) {
+		store := NewMultiTokenStore("test-provider", filePath, logger)
+		proxyTracker := NewProxyHealthTracker(logger, 5, 5*time.Minute)
+		manager := NewTokenManager(store, NewRandomSelectionStrategy(), logger, nil, proxyTracker)
+
+		err := manager.UpdateProxyHealth("non-existent", true, nil)
+		assert.Error(t, err)
+		assert.Contains(t, err.Error(), "not found")
+	})
+
+	t.Run("returns error when proxy health tracker is nil", func(t *testing.T) {
+		store := NewMultiTokenStore("test-provider", filePath, logger)
+		tokens := createTestTokens(1)
+		for _, token := range tokens {
+			require.NoError(t, store.AddToken(token))
+		}
+
+		manager := NewTokenManager(store, NewRandomSelectionStrategy(), logger, nil, nil)
+
+		err := manager.UpdateProxyHealth("a", true, nil)
+		assert.Error(t, err)
+		assert.Contains(t, err.Error(), "proxy health tracker not set")
 	})
 }

@@ -347,7 +347,7 @@ func TestRefreshCoordination(t *testing.T) {
 		store, err := manager.GetTokenStore(providerID)
 		require.NoError(t, err)
 
-		coordinator := auth.NewRefreshCoordinator(store, 2, logging.NewLogger())
+		coordinator := auth.NewRefreshCoordinator(store, 2, logging.NewLogger(), nil)
 		coordinator.RegisterRefresher(mockRefresher)
 		err = coordinator.Start()
 		require.NoError(t, err)

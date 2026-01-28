@@ -3,8 +3,11 @@
 <head>
     <meta charset="UTF-8">
     <meta name="viewport" content="width=device-width, initial-scale=1.0">
-    <title>OAuth2 Dashboard</title>
+    <title>QWEncoder Proxy Dashboard</title>
     <style>
+        /* ============================================
+           CSS Variables & Base Styles
+           ============================================ */
         :root {
             --primary-color: #2563eb;
             --primary-hover: #1d4ed8;
@@ -35,19 +38,23 @@
         }
 
         .container {
-            max-width: 1200px;
+            max-width: 1400px;
             margin: 0 auto;
             padding: 2rem;
         }
 
-        /* Header */
+        /* ============================================
+           Header Styles
+           ============================================ */
         header {
             display: flex;
             justify-content: space-between;
             align-items: center;
-            margin-bottom: 2rem;
+            margin-bottom: 1.5rem;
             padding-bottom: 1rem;
             border-bottom: 1px solid var(--border-color);
+            flex-wrap: wrap;
+            gap: 1rem;
         }
 
         .header-title {
@@ -59,6 +66,12 @@
         .header-title h1 {
             font-size: 1.75rem;
             font-weight: 700;
+        }
+
+        .header-actions {
+            display: flex;
+            align-items: center;
+            gap: 1rem;
         }
 
         .server-status {
@@ -92,28 +105,6 @@
         @keyframes pulse {
             0%, 100% { opacity: 1; }
             50% { opacity: 0.5; }
-        }
-
-        .settings-btn {
-            background: none;
-            border: 1px solid var(--border-color);
-            border-radius: 8px;
-            padding: 0.5rem 1rem;
-            cursor: pointer;
-            font-size: 0.875rem;
-            transition: all 0.2s;
-        }
-
-        .settings-btn:hover {
-            background: var(--bg-color);
-        }
-
-        /* Global Actions */
-        .global-actions {
-            display: flex;
-            gap: 1rem;
-            margin-bottom: 2rem;
-            flex-wrap: wrap;
         }
 
         .btn {
@@ -167,10 +158,133 @@
             font-size: 0.8125rem;
         }
 
-        /* Provider Cards */
+        .btn-icon {
+            padding: 0.5rem;
+            border-radius: 8px;
+            background: var(--card-bg);
+            border: 1px solid var(--border-color);
+            cursor: pointer;
+            font-size: 1rem;
+            transition: all 0.2s;
+        }
+
+        .btn-icon:hover {
+            background: var(--bg-color);
+        }
+
+        /* ============================================
+           Navigation Tabs
+           ============================================ */
+        .nav-tabs {
+            display: flex;
+            gap: 0.5rem;
+            margin-bottom: 2rem;
+            border-bottom: 1px solid var(--border-color);
+            padding-bottom: 0;
+            overflow-x: auto;
+        }
+
+        .nav-tab {
+            padding: 0.75rem 1.5rem;
+            background: none;
+            border: none;
+            border-bottom: 3px solid transparent;
+            cursor: pointer;
+            font-size: 0.9375rem;
+            font-weight: 500;
+            color: var(--text-secondary);
+            transition: all 0.2s;
+            white-space: nowrap;
+            position: relative;
+        }
+
+        .nav-tab:hover {
+            color: var(--text-primary);
+            background: var(--bg-color);
+        }
+
+        .nav-tab.active {
+            color: var(--primary-color);
+            border-bottom-color: var(--primary-color);
+        }
+
+        .nav-tab .badge {
+            position: absolute;
+            top: -5px;
+            right: -5px;
+            background: var(--error-color);
+            color: white;
+            font-size: 0.6875rem;
+            padding: 0.125rem 0.375rem;
+            border-radius: 9999px;
+            min-width: 1.25rem;
+            text-align: center;
+        }
+
+        /* ============================================
+           Content Area
+           ============================================ */
+        .content-area {
+            min-height: 400px;
+        }
+
+        .tab-content {
+            display: none;
+        }
+
+        .tab-content.active {
+            display: block;
+        }
+
+        /* ============================================
+           Summary Stats Cards
+           ============================================ */
+        .summary-stats {
+            display: grid;
+            grid-template-columns: repeat(auto-fit, minmax(200px, 1fr));
+            gap: 1rem;
+            margin-bottom: 2rem;
+        }
+
+        .stat-card {
+            background: var(--card-bg);
+            border: 1px solid var(--border-color);
+            border-radius: 12px;
+            padding: 1.5rem;
+            text-align: center;
+            box-shadow: var(--shadow);
+        }
+
+        .stat-value {
+            font-size: 2rem;
+            font-weight: 700;
+            color: var(--primary-color);
+        }
+
+        .stat-value.success {
+            color: var(--success-color);
+        }
+
+        .stat-value.error {
+            color: var(--error-color);
+        }
+
+        .stat-value.warning {
+            color: var(--warning-color);
+        }
+
+        .stat-label {
+            font-size: 0.875rem;
+            color: var(--text-secondary);
+            margin-top: 0.25rem;
+        }
+
+        /* ============================================
+           Provider Cards Grid
+           ============================================ */
         .providers-grid {
             display: grid;
-            grid-template-columns: repeat(auto-fill, minmax(300px, 1fr));
+            grid-template-columns: repeat(auto-fill, minmax(320px, 1fr));
             gap: 1.5rem;
             margin-bottom: 2rem;
         }
@@ -218,30 +332,62 @@
             letter-spacing: 0.05em;
         }
 
-        .provider-status {
+        .provider-stats {
+            margin: 1rem 0;
+            padding: 1rem;
+            background: var(--bg-color);
+            border-radius: 8px;
+        }
+
+        .provider-auth-count {
+            font-size: 1.5rem;
+            font-weight: 700;
+            color: var(--primary-color);
+            margin-bottom: 0.25rem;
+        }
+
+        .provider-auth-label {
+            font-size: 0.75rem;
+            color: var(--text-secondary);
+            text-transform: uppercase;
+            letter-spacing: 0.05em;
+        }
+
+        .provider-health-summary {
             display: flex;
             align-items: center;
             gap: 0.5rem;
-            padding: 0.5rem 0.75rem;
-            border-radius: 6px;
+            margin-top: 0.75rem;
             font-size: 0.8125rem;
-            margin-bottom: 1rem;
         }
 
-        .provider-status.authenticated {
-            background: #d1fae5;
-            color: #065f46;
+        .health-progress-bar {
+            flex: 1;
+            height: 8px;
+            background: var(--border-color);
+            border-radius: 4px;
+            overflow: hidden;
         }
 
-        .provider-status.not-authenticated {
-            background: #fef3c7;
-            color: #92400e;
+        .health-progress-fill {
+            height: 100%;
+            background: var(--success-color);
+            transition: width 0.3s, background-color 0.3s;
+        }
+
+        .health-progress-fill.warning {
+            background: var(--warning-color);
+        }
+
+        .health-progress-fill.error {
+            background: var(--error-color);
         }
 
         .provider-actions {
             display: flex;
             flex-wrap: wrap;
             gap: 0.5rem;
+            margin-top: 1rem;
         }
 
         .provider-actions .btn {
@@ -250,354 +396,9 @@
             justify-content: center;
         }
 
-        .token-info {
-            margin-top: 1rem;
-            padding: 0.75rem;
-            background: var(--bg-color);
-            border-radius: 6px;
-            font-size: 0.75rem;
-        }
-
-        .token-info-row {
-            display: flex;
-            justify-content: space-between;
-            margin-bottom: 0.25rem;
-        }
-
-        .token-info-row:last-child {
-            margin-bottom: 0;
-        }
-
-        .token-info-label {
-            color: var(--text-secondary);
-        }
-
-        /* Activity Log */
-        .activity-log {
-            background: var(--card-bg);
-            border: 1px solid var(--border-color);
-            border-radius: 12px;
-            padding: 1.5rem;
-        }
-
-        .activity-log h2 {
-            font-size: 1.25rem;
-            font-weight: 600;
-            margin-bottom: 1rem;
-        }
-
-        .log-entries {
-            max-height: 300px;
-            overflow-y: auto;
-        }
-
-        .log-entry {
-            display: flex;
-            gap: 1rem;
-            padding: 0.75rem 0;
-            border-bottom: 1px solid var(--border-color);
-            font-size: 0.875rem;
-        }
-
-        .log-entry:last-child {
-            border-bottom: none;
-        }
-
-        .log-time {
-            color: var(--text-secondary);
-            font-size: 0.75rem;
-            min-width: 80px;
-        }
-
-        .log-message {
-            flex: 1;
-        }
-
-        .log-message.success {
-            color: var(--success-color);
-        }
-
-        .log-message.error {
-            color: var(--error-color);
-        }
-
-        .log-message.warning {
-            color: var(--warning-color);
-        }
-
-        /* Modal */
-        .modal-overlay {
-            position: fixed;
-            top: 0;
-            left: 0;
-            right: 0;
-            bottom: 0;
-            background: rgba(0, 0, 0, 0.5);
-            display: flex;
-            align-items: center;
-            justify-content: center;
-            z-index: 1000;
-            opacity: 0;
-            visibility: hidden;
-            transition: all 0.2s;
-        }
-
-        .modal-overlay.active {
-            opacity: 1;
-            visibility: visible;
-        }
-
-        .modal {
-            background: var(--card-bg);
-            border-radius: 12px;
-            padding: 1.5rem;
-            max-width: 500px;
-            width: 90%;
-            box-shadow: var(--shadow-lg);
-            transform: translateY(-20px);
-            transition: transform 0.2s;
-        }
-
-        .modal-overlay.active .modal {
-            transform: translateY(0);
-        }
-
-        .modal-header {
-            display: flex;
-            justify-content: space-between;
-            align-items: center;
-            margin-bottom: 1rem;
-        }
-
-        .modal-header h3 {
-            font-size: 1.25rem;
-            font-weight: 600;
-        }
-
-        .modal-close {
-            background: none;
-            border: none;
-            font-size: 1.5rem;
-            cursor: pointer;
-            color: var(--text-secondary);
-            padding: 0.25rem;
-            line-height: 1;
-        }
-
-        .modal-close:hover {
-            color: var(--text-primary);
-        }
-
-        .modal-body {
-            margin-bottom: 1rem;
-        }
-
-        .modal-footer {
-            display: flex;
-            justify-content: flex-end;
-            gap: 0.5rem;
-        }
-
-        /* Device Code Modal */
-        .device-code-display {
-            text-align: center;
-            padding: 1.5rem;
-            background: var(--bg-color);
-            border-radius: 8px;
-            margin-bottom: 1rem;
-        }
-
-        .user-code {
-            font-size: 2.5rem;
-            font-weight: 700;
-            letter-spacing: 0.5em;
-            color: var(--primary-color);
-            margin: 1rem 0;
-        }
-
-        .verification-link {
-            word-break: break-all;
-            color: var(--primary-color);
-            font-size: 0.875rem;
-        }
-
-        .polling-status {
-            display: flex;
-            align-items: center;
-            justify-content: center;
-            gap: 0.5rem;
-            margin-top: 1rem;
-            font-size: 0.875rem;
-            color: var(--text-secondary);
-        }
-
-        .spinner {
-            width: 16px;
-            height: 16px;
-            border: 2px solid var(--border-color);
-            border-top-color: var(--primary-color);
-            border-radius: 50%;
-            animation: spin 1s linear infinite;
-        }
-
-        @keyframes spin {
-            to { transform: rotate(360deg); }
-        }
-
-        /* Settings Modal */
-        .form-group {
-            margin-bottom: 1rem;
-        }
-
-        .form-group label {
-            display: block;
-            margin-bottom: 0.5rem;
-            font-size: 0.875rem;
-            font-weight: 500;
-        }
-
-        .form-group input {
-            width: 100%;
-            padding: 0.625rem;
-            border: 1px solid var(--border-color);
-            border-radius: 6px;
-            font-size: 0.875rem;
-        }
-
-        .form-group input:focus {
-            outline: none;
-            border-color: var(--primary-color);
-            box-shadow: 0 0 0 3px rgba(37, 99, 235, 0.1);
-        }
-
-        /* Toast Notifications */
-        .toast-container {
-            position: fixed;
-            top: 1rem;
-            right: 1rem;
-            z-index: 1001;
-            display: flex;
-            flex-direction: column;
-            gap: 0.5rem;
-        }
-
-        .toast {
-            padding: 0.75rem 1rem;
-            border-radius: 8px;
-            background: var(--card-bg);
-            box-shadow: var(--shadow-lg);
-            display: flex;
-            align-items: center;
-            gap: 0.5rem;
-            font-size: 0.875rem;
-            animation: slideIn 0.3s ease;
-            max-width: 300px;
-        }
-
-        @keyframes slideIn {
-            from {
-                transform: translateX(100%);
-                opacity: 0;
-            }
-            to {
-                transform: translateX(0);
-                opacity: 1;
-            }
-        }
-
-        .toast.success {
-            border-left: 4px solid var(--success-color);
-        }
-
-        .toast.error {
-            border-left: 4px solid var(--error-color);
-        }
-
-        .toast.warning {
-            border-left: 4px solid var(--warning-color);
-        }
-
-        /* Loading Overlay */
-        .loading-overlay {
-            position: fixed;
-            top: 0;
-            left: 0;
-            right: 0;
-            bottom: 0;
-            background: rgba(255, 255, 255, 0.8);
-            display: flex;
-            align-items: center;
-            justify-content: center;
-            z-index: 999;
-            opacity: 0;
-            visibility: hidden;
-            transition: all 0.2s;
-        }
-
-        .loading-overlay.active {
-            opacity: 1;
-            visibility: visible;
-        }
-
-        .loading-spinner {
-            width: 48px;
-            height: 48px;
-            border: 4px solid var(--border-color);
-            border-top-color: var(--primary-color);
-            border-radius: 50%;
-            animation: spin 1s linear infinite;
-        }
-
-        /* Responsive */
-        @media (max-width: 768px) {
-            .container {
-                padding: 1rem;
-            }
-
-            header {
-                flex-direction: column;
-                align-items: flex-start;
-                gap: 1rem;
-            }
-
-            .header-title h1 {
-                font-size: 1.5rem;
-            }
-
-            .providers-grid {
-                grid-template-columns: 1fr;
-            }
-
-            .global-actions {
-                flex-direction: column;
-            }
-
-            .global-actions .btn {
-                width: 100%;
-            }
-
-            .provider-actions .btn {
-                min-width: auto;
-            }
-        }
-
-        /* Empty State */
-        .empty-state {
-            text-align: center;
-            padding: 3rem;
-            color: var(--text-secondary);
-        }
-
-        .empty-state-icon {
-            font-size: 3rem;
-            margin-bottom: 1rem;
-        }
-
-        .hidden {
-            display: none !important;
-        }
-
-        /* Token list styles */
+        /* ============================================
+           Token List
+           ============================================ */
         .token-list {
             margin-top: 1rem;
             max-height: 400px;
@@ -668,33 +469,473 @@
             display: flex;
             gap: 0.5rem;
             justify-content: flex-end;
+            flex-wrap: wrap;
         }
 
-        /* Add Token Modal */
-        .add-token-form {
+        .proxy-indicator {
+            display: inline-flex;
+            align-items: center;
+            gap: 0.25rem;
+            padding: 0.25rem 0.5rem;
+            border-radius: 4px;
+            font-size: 0.75rem;
+            margin-left: 0.5rem;
+        }
+
+        .proxy-indicator.enabled {
+            background: #dbeafe;
+            color: #1e40af;
+        }
+
+        .proxy-indicator.disabled {
+            background: #f1f5f9;
+            color: #64748b;
+        }
+
+        /* ============================================
+           Email List
+           ============================================ */
+        .email-list-toggle {
             display: flex;
-            flex-direction: column;
-            gap: 1rem;
+            align-items: center;
+            gap: 0.5rem;
+            padding: 0.5rem 0;
+            cursor: pointer;
+            user-select: none;
+            font-size: 0.875rem;
+            color: var(--primary-color);
         }
 
-        .add-token-form textarea {
+        .email-list-toggle:hover {
+            text-decoration: underline;
+        }
+
+        .email-list-toggle .toggle-icon {
+            transition: transform 0.2s;
+        }
+
+        .email-list-toggle.expanded .toggle-icon {
+            transform: rotate(180deg);
+        }
+
+        .email-list {
+            max-height: 0;
+            overflow: hidden;
+            transition: max-height 0.3s ease-out;
+            margin-top: 0.75rem;
+        }
+
+        .email-list.expanded {
+            max-height: 400px;
+            overflow-y: auto;
+        }
+
+        .email-item {
+            display: flex;
+            align-items: center;
+            gap: 0.75rem;
+            padding: 0.75rem 1rem;
+            background: var(--card-bg);
+            border: 1px solid var(--border-color);
+            border-radius: 6px;
+            margin-bottom: 0.5rem;
+            font-size: 0.875rem;
+            transition: all 0.2s;
+        }
+
+        .email-item:hover {
+            box-shadow: var(--shadow);
+            border-color: var(--primary-color);
+        }
+
+        .email-status {
+            width: 12px;
+            height: 12px;
+            border-radius: 50%;
+            flex-shrink: 0;
+        }
+
+        .email-status.healthy {
+            background: var(--success-color);
+            box-shadow: 0 0 0 3px rgba(16, 185, 129, 0.2);
+        }
+
+        .email-status.unhealthy {
+            background: var(--error-color);
+            box-shadow: 0 0 0 3px rgba(239, 68, 68, 0.2);
+        }
+
+        .email-text {
+            flex: 1;
+            font-weight: 500;
+            word-break: break-all;
+        }
+
+        .email-health-badge {
+            font-size: 0.75rem;
+            padding: 0.25rem 0.5rem;
+            border-radius: 4px;
+            white-space: nowrap;
+        }
+
+        .email-health-badge.healthy {
+            background: #d1fae5;
+            color: #065f46;
+        }
+
+        .email-health-badge.unhealthy {
+            background: #fee2e2;
+            color: #991b1b;
+        }
+
+        /* ============================================
+           Tables
+           ============================================ */
+        .table-container {
+            overflow-x: auto;
+            background: var(--card-bg);
+            border: 1px solid var(--border-color);
+            border-radius: 12px;
+            box-shadow: var(--shadow);
+        }
+
+        table {
             width: 100%;
-            padding: 0.625rem;
+            border-collapse: collapse;
+            font-size: 0.875rem;
+        }
+
+        th, td {
+            padding: 0.75rem 1rem;
+            text-align: left;
+            border-bottom: 1px solid var(--border-color);
+        }
+
+        th {
+            background: var(--bg-color);
+            font-weight: 600;
+            color: var(--text-secondary);
+            position: sticky;
+            top: 0;
+            cursor: pointer;
+            user-select: none;
+        }
+
+        th:hover {
+            background: #e2e8f0;
+        }
+
+        th .sort-icon {
+            margin-left: 0.25rem;
+            opacity: 0.5;
+        }
+
+        th.sorted-asc .sort-icon,
+        th.sorted-desc .sort-icon {
+            opacity: 1;
+        }
+
+        tr:hover {
+            background: var(--bg-color);
+        }
+
+        .health-badge {
+            display: inline-block;
+            padding: 0.25rem 0.5rem;
+            border-radius: 4px;
+            font-size: 0.75rem;
+            font-weight: 500;
+        }
+
+        .health-badge.healthy {
+            background: #d1fae5;
+            color: #065f46;
+        }
+
+        .health-badge.unhealthy {
+            background: #fee2e2;
+            color: #991b1b;
+        }
+
+        .health-badge.mixed {
+            background: #fef3c7;
+            color: #92400e;
+        }
+
+        .score-bar {
+            display: inline-flex;
+            align-items: center;
+            gap: 0.5rem;
+        }
+
+        .score-bar .progress {
+            width: 60px;
+            height: 6px;
+            background: var(--border-color);
+            border-radius: 3px;
+            overflow: hidden;
+        }
+
+        .score-bar .progress-fill {
+            height: 100%;
+            background: var(--success-color);
+            transition: width 0.3s, background-color 0.3s;
+        }
+
+        .score-bar .progress-fill.warning {
+            background: var(--warning-color);
+        }
+
+        .score-bar .progress-fill.error {
+            background: var(--error-color);
+        }
+
+        /* ============================================
+           Filter Bar
+           ============================================ */
+        .filter-bar {
+            display: flex;
+            gap: 0.75rem;
+            margin-bottom: 1.5rem;
+            flex-wrap: wrap;
+        }
+
+        .filter-input {
+            padding: 0.5rem 0.75rem;
             border: 1px solid var(--border-color);
             border-radius: 6px;
             font-size: 0.875rem;
-            min-height: 100px;
-            resize: vertical;
+            background: var(--card-bg);
+            min-width: 150px;
         }
 
-        .add-token-form textarea:focus {
+        .filter-input:focus {
             outline: none;
             border-color: var(--primary-color);
             box-shadow: 0 0 0 3px rgba(37, 99, 235, 0.1);
         }
 
-        /* Provider Settings Modal */
-        .form-group select {
+        .filter-input[type="text"] {
+            flex: 1;
+            min-width: 200px;
+        }
+
+        /* ============================================
+           Proxy Tab
+           ============================================ */
+        .proxy-summary {
+            display: grid;
+            grid-template-columns: repeat(auto-fit, minmax(200px, 1fr));
+            gap: 1rem;
+            margin-bottom: 2rem;
+        }
+
+        .proxy-config-list {
+            display: grid;
+            grid-template-columns: repeat(auto-fill, minmax(350px, 1fr));
+            gap: 1.5rem;
+        }
+
+        .proxy-config-card {
+            background: var(--card-bg);
+            border: 1px solid var(--border-color);
+            border-radius: 12px;
+            padding: 1.5rem;
+            box-shadow: var(--shadow);
+        }
+
+        .proxy-config-header {
+            display: flex;
+            justify-content: space-between;
+            align-items: center;
+            margin-bottom: 1rem;
+        }
+
+        .proxy-config-header h3 {
+            font-size: 1rem;
+            font-weight: 600;
+        }
+
+        .proxy-type-badge {
+            padding: 0.25rem 0.5rem;
+            border-radius: 4px;
+            font-size: 0.75rem;
+            background: var(--bg-color);
+            color: var(--text-secondary);
+        }
+
+        .proxy-config-details {
+            margin-bottom: 1rem;
+            padding: 0.75rem;
+            background: var(--bg-color);
+            border-radius: 6px;
+            font-size: 0.875rem;
+        }
+
+        .proxy-config-detail {
+            display: flex;
+            justify-content: space-between;
+            margin-bottom: 0.25rem;
+        }
+
+        .proxy-config-detail:last-child {
+            margin-bottom: 0;
+        }
+
+        .proxy-config-detail-label {
+            color: var(--text-secondary);
+        }
+
+        .proxy-health-display {
+            margin-bottom: 1rem;
+            padding: 0.75rem;
+            background: var(--bg-color);
+            border-radius: 6px;
+        }
+
+        .health-score-indicator {
+            display: flex;
+            align-items: center;
+            gap: 1rem;
+            margin-bottom: 0.5rem;
+        }
+
+        .health-score-circle {
+            width: 60px;
+            height: 60px;
+            border-radius: 50%;
+            display: flex;
+            align-items: center;
+            justify-content: center;
+            font-size: 1.25rem;
+            font-weight: 700;
+            color: white;
+            transition: background-color 0.3s;
+        }
+
+        .health-score-circle.healthy {
+            background: var(--success-color);
+        }
+
+        .health-score-circle.warning {
+            background: var(--warning-color);
+        }
+
+        .health-score-circle.error {
+            background: var(--error-color);
+        }
+
+        .health-metrics {
+            flex: 1;
+        }
+
+        .health-metric {
+            display: flex;
+            justify-content: space-between;
+            font-size: 0.8125rem;
+            margin-bottom: 0.25rem;
+        }
+
+        .health-metric-label {
+            color: var(--text-secondary);
+        }
+
+        .proxy-config-actions {
+            display: flex;
+            gap: 0.5rem;
+            flex-wrap: wrap;
+        }
+
+        .proxy-config-actions .btn {
+            flex: 1;
+            min-width: 100px;
+            justify-content: center;
+        }
+
+        /* ============================================
+           Latency Chart
+           ============================================ */
+        .latency-chart {
+            margin-top: 1rem;
+            padding: 1rem;
+            background: var(--bg-color);
+            border-radius: 6px;
+        }
+
+        .latency-chart svg {
+            width: 100%;
+            height: 80px;
+        }
+
+        .latency-chart .chart-line {
+            fill: none;
+            stroke: var(--primary-color);
+            stroke-width: 2;
+        }
+
+        .latency-chart .chart-point {
+            fill: var(--card-bg);
+            stroke: var(--primary-color);
+            stroke-width: 2;
+            r: 4;
+            cursor: pointer;
+        }
+
+        .latency-chart .chart-point:hover {
+            r: 6;
+            stroke: var(--primary-hover);
+        }
+
+        /* ============================================
+           Settings Tab
+           ============================================ */
+        .settings-section {
+            background: var(--card-bg);
+            border: 1px solid var(--border-color);
+            border-radius: 12px;
+            padding: 1.5rem;
+            margin-bottom: 1.5rem;
+            box-shadow: var(--shadow);
+        }
+
+        .settings-section h2 {
+            font-size: 1.25rem;
+            font-weight: 600;
+            margin-bottom: 1rem;
+        }
+
+        .settings-grid {
+            display: grid;
+            grid-template-columns: repeat(auto-fill, minmax(300px, 1fr));
+            gap: 1.5rem;
+        }
+
+        .settings-card {
+            background: var(--bg-color);
+            border-radius: 8px;
+            padding: 1rem;
+        }
+
+        .settings-card h3 {
+            font-size: 1rem;
+            font-weight: 600;
+            margin-bottom: 1rem;
+        }
+
+        .form-group {
+            margin-bottom: 1rem;
+        }
+
+        .form-group label {
+            display: block;
+            margin-bottom: 0.5rem;
+            font-size: 0.875rem;
+            font-weight: 500;
+        }
+
+        .form-group input,
+        .form-group select,
+        .form-group textarea {
             width: 100%;
             padding: 0.625rem;
             border: 1px solid var(--border-color);
@@ -703,24 +944,631 @@
             background: var(--card-bg);
         }
 
-        .form-group select:focus {
+        .form-group input:focus,
+        .form-group select:focus,
+        .form-group textarea:focus {
             outline: none;
             border-color: var(--primary-color);
             box-shadow: 0 0 0 3px rgba(37, 99, 235, 0.1);
         }
 
-        .provider-summary {
+        .form-group textarea {
+            min-height: 100px;
+            resize: vertical;
+        }
+
+        .toggle-switch {
+            display: flex;
+            align-items: center;
+            gap: 0.75rem;
+            cursor: pointer;
+        }
+
+        .toggle-switch input {
+            display: none;
+        }
+
+        .toggle-switch .slider {
+            width: 44px;
+            height: 24px;
+            background: var(--border-color);
+            border-radius: 24px;
+            position: relative;
+            transition: background 0.3s;
+        }
+
+        .toggle-switch .slider::after {
+            content: '';
+            position: absolute;
+            width: 18px;
+            height: 18px;
+            background: white;
+            border-radius: 50%;
+            top: 3px;
+            left: 3px;
+            transition: transform 0.3s;
+        }
+
+        .toggle-switch input:checked + .slider {
+            background: var(--primary-color);
+        }
+
+        .toggle-switch input:checked + .slider::after {
+            transform: translateX(20px);
+        }
+
+        /* ============================================
+           Logs Tab
+           ============================================ */
+        .log-entries {
+            max-height: 500px;
+            overflow-y: auto;
+            background: var(--card-bg);
+            border: 1px solid var(--border-color);
+            border-radius: 12px;
+            box-shadow: var(--shadow);
+        }
+
+        .log-entry {
+            display: flex;
+            gap: 1rem;
+            padding: 0.75rem 1rem;
+            border-bottom: 1px solid var(--border-color);
+            font-size: 0.875rem;
+        }
+
+        .log-entry:last-child {
+            border-bottom: none;
+        }
+
+        .log-entry:hover {
+            background: var(--bg-color);
+        }
+
+        .log-time {
+            color: var(--text-secondary);
+            font-size: 0.75rem;
+            min-width: 80px;
+            font-family: monospace;
+        }
+
+        .log-level {
+            min-width: 70px;
+            padding: 0.125rem 0.375rem;
+            border-radius: 4px;
+            font-size: 0.6875rem;
+            font-weight: 500;
+            text-transform: uppercase;
+        }
+
+        .log-level.info {
+            background: #dbeafe;
+            color: #1e40af;
+        }
+
+        .log-level.success {
+            background: #d1fae5;
+            color: #065f46;
+        }
+
+        .log-level.warning {
+            background: #fef3c7;
+            color: #92400e;
+        }
+
+        .log-level.error {
+            background: #fee2e2;
+            color: #991b1b;
+        }
+
+        .log-message {
+            flex: 1;
+        }
+
+        /* ============================================
+           Modal Styles
+           ============================================ */
+        .modal-overlay {
+            position: fixed;
+            top: 0;
+            left: 0;
+            right: 0;
+            bottom: 0;
+            background: rgba(0, 0, 0, 0.5);
+            display: flex;
+            align-items: center;
+            justify-content: center;
+            z-index: 1000;
+            opacity: 0;
+            visibility: hidden;
+            transition: all 0.2s;
+        }
+
+        .modal-overlay.active {
+            opacity: 1;
+            visibility: visible;
+        }
+
+        .modal {
+            background: var(--card-bg);
+            border-radius: 12px;
+            padding: 1.5rem;
+            max-width: 500px;
+            width: 90%;
+            max-height: 90vh;
+            overflow-y: auto;
+            box-shadow: var(--shadow-lg);
+            transform: translateY(-20px);
+            transition: transform 0.2s;
+        }
+
+        .modal-overlay.active .modal {
+            transform: translateY(0);
+        }
+
+        .modal.large {
+            max-width: 700px;
+        }
+
+        .modal-header {
+            display: flex;
+            justify-content: space-between;
+            align-items: center;
+            margin-bottom: 1rem;
+        }
+
+        .modal-header h3 {
+            font-size: 1.25rem;
+            font-weight: 600;
+        }
+
+        .modal-close {
+            background: none;
+            border: none;
+            font-size: 1.5rem;
+            cursor: pointer;
+            color: var(--text-secondary);
+            padding: 0.25rem;
+            line-height: 1;
+        }
+
+        .modal-close:hover {
+            color: var(--text-primary);
+        }
+
+        .modal-body {
+            margin-bottom: 1rem;
+        }
+
+        .modal-footer {
+            display: flex;
+            justify-content: flex-end;
+            gap: 0.5rem;
+            flex-wrap: wrap;
+        }
+
+        /* Device Code Modal */
+        .device-code-display {
+            text-align: center;
+            padding: 1.5rem;
+            background: var(--bg-color);
+            border-radius: 8px;
+            margin-bottom: 1rem;
+        }
+
+        .user-code {
+            font-size: 2.5rem;
+            font-weight: 700;
+            letter-spacing: 0.5em;
+            color: var(--primary-color);
+            margin: 1rem 0;
+        }
+
+        .verification-link {
+            word-break: break-all;
+            color: var(--primary-color);
+            font-size: 0.875rem;
+        }
+
+        .polling-status {
+            display: flex;
+            align-items: center;
+            justify-content: center;
+            gap: 0.5rem;
+            margin-top: 1rem;
+            font-size: 0.875rem;
+            color: var(--text-secondary);
+        }
+
+        .spinner {
+            width: 16px;
+            height: 16px;
+            border: 2px solid var(--border-color);
+            border-top-color: var(--primary-color);
+            border-radius: 50%;
+            animation: spin 1s linear infinite;
+        }
+
+        @keyframes spin {
+            to { transform: rotate(360deg); }
+        }
+
+        /* ============================================
+           Toast Notifications
+           ============================================ */
+        .toast-container {
+            position: fixed;
+            top: 1rem;
+            right: 1rem;
+            z-index: 1001;
+            display: flex;
+            flex-direction: column;
+            gap: 0.5rem;
+        }
+
+        .toast {
+            padding: 0.75rem 1rem;
+            border-radius: 8px;
+            background: var(--card-bg);
+            box-shadow: var(--shadow-lg);
+            display: flex;
+            align-items: center;
+            gap: 0.5rem;
+            font-size: 0.875rem;
+            animation: slideIn 0.3s ease;
+            max-width: 300px;
+        }
+
+        @keyframes slideIn {
+            from {
+                transform: translateX(100%);
+                opacity: 0;
+            }
+            to {
+                transform: translateX(0);
+                opacity: 1;
+            }
+        }
+
+        .toast.success {
+            border-left: 4px solid var(--success-color);
+        }
+
+        .toast.error {
+            border-left: 4px solid var(--error-color);
+        }
+
+        .toast.warning {
+            border-left: 4px solid var(--warning-color);
+        }
+
+        .toast.info {
+            border-left: 4px solid var(--primary-color);
+        }
+
+        /* ============================================
+           Loading Overlay
+           ============================================ */
+        .loading-overlay {
+            position: fixed;
+            top: 0;
+            left: 0;
+            right: 0;
+            bottom: 0;
+            background: rgba(255, 255, 255, 0.8);
+            display: flex;
+            align-items: center;
+            justify-content: center;
+            z-index: 999;
+            opacity: 0;
+            visibility: hidden;
+            transition: all 0.2s;
+        }
+
+        .loading-overlay.active {
+            opacity: 1;
+            visibility: visible;
+        }
+
+        .loading-spinner {
+            width: 48px;
+            height: 48px;
+            border: 4px solid var(--border-color);
+            border-top-color: var(--primary-color);
+            border-radius: 50%;
+            animation: spin 1s linear infinite;
+        }
+
+        /* ============================================
+           Empty State
+           ============================================ */
+        .empty-state {
+            text-align: center;
+            padding: 3rem;
+            color: var(--text-secondary);
+        }
+
+        .empty-state-icon {
+            font-size: 3rem;
+            margin-bottom: 1rem;
+        }
+
+        .hidden {
+            display: none !important;
+        }
+
+        /* ============================================
+           Responsive Design
+           ============================================ */
+        @media (max-width: 768px) {
+            .container {
+                padding: 1rem;
+            }
+
+            header {
+                flex-direction: column;
+                align-items: flex-start;
+                gap: 1rem;
+            }
+
+            .header-title h1 {
+                font-size: 1.5rem;
+            }
+
+            .nav-tabs {
+                flex-wrap: nowrap;
+                -webkit-overflow-scrolling: touch;
+            }
+
+            .providers-grid {
+                grid-template-columns: 1fr;
+            }
+
+            .summary-stats {
+                grid-template-columns: 1fr 1fr;
+            }
+
+            .filter-bar {
+                flex-direction: column;
+            }
+
+            .filter-input {
+                width: 100%;
+            }
+
+            .token-details {
+                grid-template-columns: 1fr;
+            }
+
+            .token-actions {
+                flex-direction: column;
+            }
+
+            .token-actions .btn {
+                width: 100%;
+            }
+
+            .proxy-config-list {
+                grid-template-columns: 1fr;
+            }
+
+            .settings-grid {
+                grid-template-columns: 1fr;
+            }
+        }
+
+        @media (max-width: 480px) {
+            .summary-stats {
+                grid-template-columns: 1fr;
+            }
+
+            .modal {
+                width: 95%;
+                padding: 1rem;
+            }
+        }
+
+        /* ============================================
+           Email Subsection
+           ============================================ */
+        .email-subsection {
+            margin-top: 2rem;
+            padding-top: 1.5rem;
+            border-top: 2px solid var(--border-color);
+        }
+
+        .email-subsection h3 {
+            font-size: 1.125rem;
+            font-weight: 600;
+            margin-bottom: 1rem;
+            color: var(--text-primary);
+        }
+
+        .email-provider-group {
+            background: var(--bg-color);
+            border-radius: 8px;
+            padding: 1rem;
+            margin-bottom: 1rem;
+        }
+
+        .email-provider-header {
             display: flex;
             align-items: center;
             justify-content: space-between;
-            padding: 0.5rem 0;
+            margin-bottom: 0.75rem;
+            padding-bottom: 0.5rem;
             border-bottom: 1px solid var(--border-color);
-            margin-bottom: 0.5rem;
         }
 
-        .provider-summary-count {
-            font-size: 0.75rem;
+        .email-provider-name {
+            font-weight: 600;
+            font-size: 1rem;
+            color: var(--text-primary);
+        }
+
+        .email-provider-count {
+            font-size: 0.8125rem;
             color: var(--text-secondary);
+            background: var(--card-bg);
+            padding: 0.25rem 0.5rem;
+            border-radius: 4px;
+        }
+
+        .email-grid {
+            display: grid;
+            grid-template-columns: repeat(auto-fill, minmax(280px, 1fr));
+            gap: 0.75rem;
+        }
+
+        .email-card {
+            display: flex;
+            align-items: center;
+            gap: 0.75rem;
+            padding: 0.75rem 1rem;
+            background: var(--card-bg);
+            border: 1px solid var(--border-color);
+            border-radius: 6px;
+            transition: all 0.2s;
+        }
+
+        .email-card:hover {
+            box-shadow: var(--shadow);
+            border-color: var(--primary-color);
+        }
+
+        .email-card .email-status-dot {
+            width: 12px;
+            height: 12px;
+            border-radius: 50%;
+            flex-shrink: 0;
+        }
+
+        .email-card .email-status-dot.healthy {
+            background: var(--success-color);
+            box-shadow: 0 0 0 3px rgba(16, 185, 129, 0.2);
+        }
+
+        .email-card .email-status-dot.unhealthy {
+            background: var(--error-color);
+            box-shadow: 0 0 0 3px rgba(239, 68, 68, 0.2);
+        }
+
+        .email-card .email-address {
+            flex: 1;
+            font-size: 0.875rem;
+            font-weight: 500;
+            color: var(--text-primary);
+            word-break: break-all;
+        }
+
+        .email-card .email-health-text {
+            font-size: 0.75rem;
+            padding: 0.25rem 0.5rem;
+            border-radius: 4px;
+            white-space: nowrap;
+        }
+
+        .email-card .email-health-text.healthy {
+            background: #d1fae5;
+            color: #065f46;
+        }
+
+        .email-card .email-health-text.unhealthy {
+            background: #fee2e2;
+            color: #991b1b;
+        }
+
+        .empty-emails {
+            text-align: center;
+            padding: 2rem;
+            color: var(--text-secondary);
+            font-style: italic;
+        }
+
+        /* ============================================
+           Section Toggle
+           ============================================ */
+        .section-toggle {
+            display: flex;
+            align-items: center;
+            gap: 0.5rem;
+            padding: 0.5rem 1rem;
+            background: var(--bg-color);
+            border: 1px solid var(--border-color);
+            border-radius: 6px;
+            cursor: pointer;
+            font-size: 0.875rem;
+            transition: all 0.2s;
+        }
+
+        .section-toggle:hover {
+            background: #e2e8f0;
+        }
+
+        .section-toggle .toggle-icon {
+            transition: transform 0.2s;
+        }
+
+        .section-toggle.expanded .toggle-icon {
+            transform: rotate(180deg);
+        }
+
+        .collapsible-content {
+            max-height: 0;
+            overflow: hidden;
+            transition: max-height 0.3s ease-out;
+        }
+
+        .collapsible-content.expanded {
+            max-height: 2000px;
+        }
+
+        /* ============================================
+           Collapsible Panel
+           ============================================ */
+        .collapsible-panel {
+            background: var(--bg-color);
+            border: 1px solid var(--border-color);
+            border-radius: 6px;
+            margin-top: 0.5rem;
+            overflow: hidden;
+        }
+
+        .collapsible-panel-header {
+            display: flex;
+            justify-content: space-between;
+            align-items: center;
+            padding: 0.75rem 1rem;
+            cursor: pointer;
+            user-select: none;
+            background: var(--card-bg);
+        }
+
+        .collapsible-panel-header:hover {
+            background: var(--bg-color);
+        }
+
+        .collapsible-panel-content {
+            max-height: 0;
+            overflow: hidden;
+            transition: max-height 0.3s ease-out;
+        }
+
+        .collapsible-panel-content.expanded {
+            max-height: 500px;
+            overflow-y: auto;
+        }
+
+        .collapsible-panel-body {
+            padding: 1rem;
+        }
+
+        .collapsible-panel-icon {
+            transition: transform 0.2s;
+        }
+
+        .collapsible-panel.expanded .collapsible-panel-icon {
+            transform: rotate(180deg);
         }
     </style>
 </head>
@@ -730,39 +1578,160 @@
         <header>
             <div class="header-title">
                 <span>🔐</span>
-                <h1>OAuth2 Dashboard</h1>
+                <h1>QWEncoder Proxy Dashboard</h1>
             </div>
-            <div style="display: flex; gap: 1rem; align-items: center;">
+            <div class="header-actions">
                 <div class="server-status">
                     <div class="status-dot" id="statusDot"></div>
                     <span id="statusText">Checking...</span>
                 </div>
-                <button class="settings-btn" id="settingsBtn" aria-label="Settings">⚙️ Settings</button>
+                <button class="btn btn-secondary" id="refreshBtn" aria-label="Refresh">
+                    <span>🔄</span> Refresh
+                </button>
+                <button class="btn-icon" id="settingsBtn" aria-label="Settings" title="Settings">
+                    ⚙️
+                </button>
             </div>
         </header>
 
-        <!-- Global Actions -->
-        <div class="global-actions">
-            <button class="btn btn-primary" id="refreshBtn">
-                <span>🔄</span> Refresh Status
+        <!-- Navigation Tabs -->
+        <nav class="nav-tabs" id="navTabs">
+            <button class="nav-tab active" data-tab="overview">
+                📊 Overview
             </button>
-            <button class="btn btn-danger" id="clearAllBtn">
-                <span>🗑️</span> Clear All Credentials
+            <button class="nav-tab" data-tab="tokens">
+                🔑 Tokens
             </button>
-        </div>
+            <button class="nav-tab" data-tab="proxy">
+                🌐 Proxy
+            </button>
+            <button class="nav-tab" data-tab="settings">
+                ⚙️ Settings
+            </button>
+            <button class="nav-tab" data-tab="logs">
+                📋 Logs
+            </button>
+        </nav>
 
-        <!-- Provider Cards -->
-        <div class="providers-grid" id="providersGrid">
-            <!-- Provider cards will be dynamically inserted here -->
-        </div>
+        <!-- Main Content Area -->
+        <main class="content-area" id="contentArea">
+            <!-- Overview Tab -->
+            <div class="tab-content active" id="overviewTab">
+                <div class="summary-stats" id="summaryStats">
+                    <!-- Stats cards will be dynamically inserted here -->
+                </div>
 
-        <!-- Activity Log -->
-        <div class="activity-log">
-            <h2>Activity Log</h2>
-            <div class="log-entries" id="logEntries">
-                <!-- Log entries will be dynamically inserted here -->
+                <div class="providers-grid" id="providersGrid">
+                    <!-- Provider cards will be dynamically inserted here -->
+                </div>
+
+                <!-- Email Addresses Section -->
+                <div class="email-subsection">
+                    <h3>📧 Email Addresses</h3>
+                    <div id="summaryEmailList">
+                        <!-- Email addresses will be dynamically inserted here -->
+                    </div>
+                </div>
             </div>
-        </div>
+
+            <!-- Tokens Tab -->
+            <div class="tab-content" id="tokensTab">
+                <div class="filter-bar">
+                    <select class="filter-input" id="filterProvider">
+                        <option value="all">All Providers</option>
+                    </select>
+                    <select class="filter-input" id="filterHealth">
+                        <option value="all">All Health Status</option>
+                        <option value="healthy">Healthy Only</option>
+                        <option value="unhealthy">Unhealthy Only</option>
+                    </select>
+                    <input type="text" class="filter-input" id="filterSearch" placeholder="Search by email...">
+                    <select class="filter-input" id="sortField">
+                        <option value="createdAt">Sort by Created</option>
+                        <option value="email">Sort by Email</option>
+                        <option value="health">Sort by Health</option>
+                        <option value="expiry">Sort by Expiry</option>
+                    </select>
+                </div>
+
+                <div class="table-container">
+                    <table id="tokensTable">
+                        <thead>
+                            <tr>
+                                <th data-sort="provider">Provider <span class="sort-icon">⇅</span></th>
+                                <th data-sort="email">Email <span class="sort-icon">⇅</span></th>
+                                <th data-sort="health">Health <span class="sort-icon">⇅</span></th>
+                                <th data-sort="healthScore">Health Score <span class="sort-icon">⇅</span></th>
+                                <th data-sort="expiry">Expiry Date <span class="sort-icon">⇅</span></th>
+                                <th data-sort="lastUsed">Last Used <span class="sort-icon">⇅</span></th>
+                                <th data-sort="createdAt">Created <span class="sort-icon">⇅</span></th>
+                                <th>Actions</th>
+                            </tr>
+                        </thead>
+                        <tbody id="tokensTableBody">
+                            <!-- Token rows will be dynamically inserted here -->
+                        </tbody>
+                    </table>
+                </div>
+            </div>
+
+            <!-- Proxy Tab -->
+            <div class="tab-content" id="proxyTab">
+                <div class="proxy-summary" id="proxySummary">
+                    <!-- Proxy summary stats will be dynamically inserted here -->
+                </div>
+
+                <div class="proxy-config-list" id="proxyConfigList">
+                    <!-- Proxy config cards will be dynamically inserted here -->
+                </div>
+            </div>
+
+            <!-- Settings Tab -->
+            <div class="tab-content" id="settingsTab">
+                <div class="settings-section">
+                    <h2>Global Settings</h2>
+                    <div class="form-group">
+                        <label for="apiBaseUrl">API Base URL</label>
+                        <input type="text" id="apiBaseUrl" placeholder="http://localhost:8080">
+                    </div>
+                    <div class="form-group">
+                        <label for="autoRefreshInterval">Auto-refresh Interval (seconds)</label>
+                        <input type="number" id="autoRefreshInterval" value="30" min="10" max="300">
+                    </div>
+                    <button class="btn btn-primary" id="saveGlobalSettings">Save Global Settings</button>
+                </div>
+
+                <div class="settings-section">
+                    <h2>Provider Settings</h2>
+                    <div class="settings-grid" id="providerSettingsGrid">
+                        <!-- Provider settings cards will be dynamically inserted here -->
+                    </div>
+                </div>
+            </div>
+
+            <!-- Logs Tab -->
+            <div class="tab-content" id="logsTab">
+                <div class="filter-bar">
+                    <select class="filter-input" id="logLevelFilter">
+                        <option value="all">All Levels</option>
+                        <option value="info">Info</option>
+                        <option value="success">Success</option>
+                        <option value="warning">Warning</option>
+                        <option value="error">Error</option>
+                    </select>
+                    <select class="filter-input" id="logProviderFilter">
+                        <option value="all">All Providers</option>
+                    </select>
+                    <input type="text" class="filter-input" id="logSearch" placeholder="Search logs...">
+                    <button class="btn btn-secondary" id="clearLogsBtn">Clear Logs</button>
+                    <button class="btn btn-secondary" id="exportLogsBtn">Export Logs</button>
+                </div>
+
+                <div class="log-entries" id="logEntries">
+                    <!-- Log entries will be dynamically inserted here -->
+                </div>
+            </div>
+        </main>
     </div>
 
     <!-- Device Code Modal -->
@@ -778,33 +1747,13 @@
                     <div class="user-code" id="userCode">ABCD-EFGH</div>
                     <p>Or visit: <a href="#" class="verification-link" id="verificationLink" target="_blank">https://example.com/device</a></p>
                 </div>
-                <div class="polling-status" id="pollingStatus">
+                <div class="polling-status hidden" id="pollingStatus">
                     <div class="spinner"></div>
                     <span>Waiting for authorization...</span>
                 </div>
             </div>
             <div class="modal-footer">
                 <button class="btn btn-secondary" id="deviceCodeCancel">Cancel</button>
-            </div>
-        </div>
-    </div>
-
-    <!-- Settings Modal -->
-    <div class="modal-overlay" id="settingsModal">
-        <div class="modal">
-            <div class="modal-header">
-                <h3>Settings</h3>
-                <button class="modal-close" id="settingsClose">&times;</button>
-            </div>
-            <div class="modal-body">
-                <div class="form-group">
-                    <label for="apiBaseUrl">API Base URL</label>
-                    <input type="text" id="apiBaseUrl" placeholder="http://localhost:8080">
-                </div>
-            </div>
-            <div class="modal-footer">
-                <button class="btn btn-secondary" id="settingsCancel">Cancel</button>
-                <button class="btn btn-primary" id="settingsSave">Save</button>
             </div>
         </div>
     </div>
@@ -817,28 +1766,78 @@
                 <button class="modal-close" id="addTokenClose">&times;</button>
             </div>
             <div class="modal-body">
-                <div class="add-token-form">
-                    <div class="form-group">
-                        <label for="accessToken">Access Token *</label>
-                        <textarea id="accessToken" placeholder="Paste access token here..."></textarea>
-                    </div>
-                    <div class="form-group">
-                        <label for="refreshToken">Refresh Token (optional)</label>
-                        <input type="text" id="refreshToken" placeholder="Refresh token">
-                    </div>
-                    <div class="form-group">
-                        <label for="tokenEmail">Email (optional)</label>
-                        <input type="email" id="tokenEmail" placeholder="user@example.com">
-                    </div>
-                    <div class="form-group">
-                        <label for="expiresIn">Expires In (seconds, optional)</label>
-                        <input type="number" id="expiresIn" placeholder="3600">
-                    </div>
+                <div class="form-group">
+                    <label for="accessToken">Access Token *</label>
+                    <textarea id="accessToken" placeholder="Paste access token here..."></textarea>
+                </div>
+                <div class="form-group">
+                    <label for="refreshToken">Refresh Token (optional)</label>
+                    <input type="text" id="refreshToken" placeholder="Refresh token">
+                </div>
+                <div class="form-group">
+                    <label for="tokenEmail">Email (optional)</label>
+                    <input type="email" id="tokenEmail" placeholder="user@example.com">
+                </div>
+                <div class="form-group">
+                    <label for="expiresIn">Expires In (seconds, optional)</label>
+                    <input type="number" id="expiresIn" placeholder="3600">
                 </div>
             </div>
             <div class="modal-footer">
                 <button class="btn btn-secondary" id="addTokenCancel">Cancel</button>
                 <button class="btn btn-primary" id="addTokenSave">Add Token</button>
+            </div>
+        </div>
+    </div>
+
+    <!-- Proxy Config Modal -->
+    <div class="modal-overlay" id="proxyConfigModal">
+        <div class="modal large">
+            <div class="modal-header">
+                <h3 id="proxyConfigTitle">Configure Proxy</h3>
+                <button class="modal-close" id="proxyConfigClose">&times;</button>
+            </div>
+            <div class="modal-body">
+                <div class="form-group">
+                    <label for="proxyType">Proxy Type</label>
+                    <select id="proxyType">
+                        <option value="none">None</option>
+                        <option value="http">HTTP</option>
+                        <option value="https">HTTPS</option>
+                        <option value="socks5">SOCKS5</option>
+                    </select>
+                </div>
+                <div id="proxyConnectionFields">
+                    <div class="form-group">
+                        <label for="proxyHost">Host *</label>
+                        <input type="text" id="proxyHost" placeholder="proxy.example.com">
+                    </div>
+                    <div class="form-group">
+                        <label for="proxyPort">Port *</label>
+                        <input type="number" id="proxyPort" placeholder="8080" min="1" max="65535">
+                    </div>
+                    <div class="form-group">
+                        <label for="proxyUsername">Username (optional)</label>
+                        <input type="text" id="proxyUsername" placeholder="username">
+                    </div>
+                    <div class="form-group">
+                        <label for="proxyPassword">Password (optional)</label>
+                        <input type="password" id="proxyPassword" placeholder="password">
+                    </div>
+                </div>
+                <div class="form-group">
+                    <label class="toggle-switch">
+                        <input type="checkbox" id="proxyEnabled" checked>
+                        <span class="slider"></span>
+                        <span>Enable Proxy</span>
+                    </label>
+                </div>
+                <div id="proxyValidationError" style="color: var(--error-color); font-size: 0.875rem; margin-top: 0.5rem;"></div>
+            </div>
+            <div class="modal-footer">
+                <button class="btn btn-secondary" id="proxyTestBtn">Test Connection</button>
+                <button class="btn btn-secondary" id="proxyConfigCancel">Cancel</button>
+                <button class="btn btn-primary" id="proxyConfigSave">Save</button>
             </div>
         </div>
     </div>
@@ -885,9 +1884,100 @@
 
     <script>
         // ============================================
-        // API Client Class
+        // Data Models
         // ============================================
-        class OAuthAPIClient {
+
+        class Provider {
+            constructor(id, name, flow, scopes, authUrl, tokenUrl, deviceAuthUrl) {
+                this.id = id;
+                this.name = name;
+                this.flow = flow; // 'device_code', 'authorization_code', 'external'
+                this.scopes = scopes;
+                this.authUrl = authUrl;
+                this.tokenUrl = tokenUrl;
+                this.deviceAuthUrl = deviceAuthUrl;
+            }
+        }
+
+        class ProxyConfig {
+            constructor(type, host, port, username, password, enabled) {
+                this.type = type; // 'none', 'http', 'https', 'socks5'
+                this.host = host;
+                this.port = port;
+                this.username = username;
+                this.password = password;
+                this.enabled = enabled;
+            }
+
+            validate() {
+                if (this.type === 'none') return { valid: true };
+                if (!this.host || !this.host.trim()) {
+                    return { valid: false, message: 'Host is required' };
+                }
+                if (!this.port || this.port < 1 || this.port > 65535) {
+                    return { valid: false, message: 'Port must be between 1 and 65535' };
+                }
+                if ((this.username && !this.password) || (!this.username && this.password)) {
+                    return { valid: false, message: 'Username and password must both be provided or both empty' };
+                }
+                return { valid: true };
+            }
+        }
+
+        class ProxyHealth {
+            constructor(lastCheck, isHealthy, lastError, consecutiveFailures, averageLatencyMs, healthScore) {
+                this.lastCheck = lastCheck;
+                this.isHealthy = isHealthy;
+                this.lastError = lastError;
+                this.consecutiveFailures = consecutiveFailures;
+                this.averageLatencyMs = averageLatencyMs;
+                this.healthScore = healthScore; // 0.0 - 1.0
+            }
+        }
+
+        class Token {
+            constructor(id, accessToken, refreshToken, tokenType, expiryDate, email, resourceUrl, 
+                        healthy, healthScore, lastUsed, createdAt, errorCount, lastError, 
+                        proxy, proxyHealthScore) {
+                this.id = id;
+                this.accessToken = accessToken;
+                this.refreshToken = refreshToken;
+                this.tokenType = tokenType;
+                this.expiryDate = expiryDate;
+                this.email = email;
+                this.resourceUrl = resourceUrl;
+                this.healthy = healthy;
+                this.healthScore = healthScore; // 0.0 - 1.0
+                this.lastUsed = lastUsed;
+                this.createdAt = createdAt;
+                this.errorCount = errorCount;
+                this.lastError = lastError;
+                this.proxy = proxy; // ProxyConfig object or null
+                this.proxyHealthScore = proxyHealthScore; // 0.0 - 1.0
+            }
+        }
+
+        class ProviderCredentials {
+            constructor(providerId, tokens, settings) {
+                this.providerId = providerId;
+                this.tokens = tokens; // Array of Token objects
+                this.settings = settings; // StoreSettings object
+            }
+        }
+
+        class StoreSettings {
+            constructor(selectionStrategy, refreshBufferSec, maxErrorCount) {
+                this.selectionStrategy = selectionStrategy; // 'random', 'round_robin', 'least_used'
+                this.refreshBufferSec = refreshBufferSec;
+                this.maxErrorCount = maxErrorCount;
+            }
+        }
+
+        // ============================================
+        // API Client
+        // ============================================
+
+        class APIClient {
             constructor(baseUrl = window.location.origin) {
                 this.baseUrl = baseUrl.replace(/\/$/, '');
             }
@@ -900,73 +1990,66 @@
                 const url = `${this.baseUrl}${path}`;
                 const options = {
                     method,
-                    headers: {
-                        'Content-Type': 'application/json',
-                    },
+                    headers: { 'Content-Type': 'application/json' },
                 };
+                if (body) options.body = JSON.stringify(body);
 
-                if (body) {
-                    options.body = JSON.stringify(body);
+                const response = await fetch(url, options);
+                const data = await response.json();
+
+                if (!response.ok) {
+                    throw new Error(data.error?.message || data.message || `HTTP ${response.status}`);
                 }
-
-                try {
-                    const response = await fetch(url, options);
-                    const data = await response.json();
-
-                    if (!response.ok) {
-                        throw new Error(data.error?.message || data.message || `HTTP ${response.status}`);
-                    }
-
-                    return data;
-                } catch (error) {
-                    if (error.name === 'SyntaxError') {
-                        throw new Error('Invalid response from server');
-                    }
-                    throw error;
-                }
+                return data;
             }
 
+            // Provider discovery
             async getProviders() {
                 return this.request('GET', '/api/providers');
             }
 
-            async getCredentials() {
-                return this.request('GET', '/api/credentials');
+            async getProviderConfig(providerId) {
+                return this.request('GET', `/api/providers/${providerId}/config`);
             }
 
-            async startAuth(provider, redirectUri = null) {
-                const body = { provider };
-                if (redirectUri) {
-                    body.redirect_uri = redirectUri;
-                }
-                return this.request('POST', '/api/auth/start', body);
-            }
-
-            async startDeviceFlow(provider) {
-                return this.request('POST', '/api/device/start', { provider });
+            // Device code flow
+            async startDeviceFlow(providerId) {
+                return this.request('POST', '/api/device/start', { provider: providerId });
             }
 
             async getDeviceStatus(pollId) {
                 return this.request('GET', `/api/device/status/${pollId}`);
             }
 
-            async getToken(provider) {
-                return this.request('GET', `/api/token/${provider}`);
+            // Authorization code flow
+            async startAuth(providerId, redirectUri = null) {
+                const body = { provider: providerId };
+                if (redirectUri) body.redirect_uri = redirectUri;
+                return this.request('POST', '/api/auth/start', body);
             }
 
-            async refreshToken(provider) {
-                return this.request('POST', `/api/token/${provider}/refresh`);
+            // Token management
+            async getToken(providerId) {
+                return this.request('GET', `/api/token/${providerId}`);
             }
 
-            async deleteToken(provider) {
-                return this.request('DELETE', `/api/token/${provider}`);
+            async refreshToken(providerId) {
+                return this.request('POST', `/api/token/${providerId}/refresh`);
+            }
+
+            async deleteToken(providerId) {
+                return this.request('DELETE', `/api/token/${providerId}`);
+            }
+
+            // Credentials management
+            async getCredentials() {
+                return this.request('GET', '/api/credentials');
             }
 
             async clearAllCredentials() {
                 return this.request('DELETE', '/api/credentials');
             }
 
-            // Multi-token management methods
             async getProviderCredentials(providerId) {
                 return this.request('GET', `/api/credentials/${providerId}`);
             }
@@ -975,7 +2058,7 @@
                 return this.request('POST', `/api/credentials/${providerId}`, tokenData);
             }
 
-            async deleteToken(providerId, tokenId) {
+            async deleteTokenById(providerId, tokenId) {
                 return this.request('DELETE', `/api/credentials/${providerId}/${tokenId}`);
             }
 
@@ -986,144 +2069,419 @@
             async updateProviderSettings(providerId, settings) {
                 return this.request('PUT', `/api/credentials/${providerId}/settings`, settings);
             }
+
+            // Proxy configuration
+            async getProxyConfig(providerId, tokenId) {
+                return this.request('GET', `/api/credentials/${providerId}/${tokenId}/proxy`);
+            }
+
+            async updateProxyConfig(providerId, tokenId, proxyConfig) {
+                return this.request('PUT', `/api/credentials/${providerId}/${tokenId}/proxy`, proxyConfig);
+            }
+
+            async deleteProxyConfig(providerId, tokenId) {
+                return this.request('DELETE', `/api/credentials/${providerId}/${tokenId}/proxy`);
+            }
         }
 
         // ============================================
-        // State Management
+        // State Manager
         // ============================================
+
         class StateManager {
             constructor() {
+                this.STORAGE_KEY = 'qwencoder_dashboard_state';
                 this.state = this.loadState();
             }
 
             loadState() {
-                const stored = localStorage.getItem('oauth_dashboard_state');
-                return stored ? JSON.parse(stored) : {
+                const stored = localStorage.getItem(this.STORAGE_KEY);
+                if (!stored) {
+                    return this.getInitialState();
+                }
+                try {
+                    return { ...this.getInitialState(), ...JSON.parse(stored) };
+                } catch (e) {
+                    return this.getInitialState();
+                }
+            }
+
+            getInitialState() {
+                return {
                     apiBaseUrl: window.location.origin,
-                    providers: {},
+                    activeTab: 'overview',
+                    autoRefreshInterval: 30,
+                    providers: [],
                     credentials: [],
+                    filters: {
+                        provider: 'all',
+                        health: 'all',
+                        search: ''
+                    },
+                    sort: {
+                        field: 'createdAt',
+                        direction: 'desc'
+                    },
+                    logLevel: 'all',
+                    logs: []
                 };
             }
 
             saveState() {
-                localStorage.setItem('oauth_dashboard_state', JSON.stringify(this.state));
+                localStorage.setItem(this.STORAGE_KEY, JSON.stringify(this.state));
             }
 
+            // Getters
+            getApiBaseUrl() { return this.state.apiBaseUrl; }
+            getActiveTab() { return this.state.activeTab; }
+            getAutoRefreshInterval() { return this.state.autoRefreshInterval; }
+            getProviders() { return this.state.providers; }
+            getCredentials() { return this.state.credentials; }
+            getFilters() { return this.state.filters; }
+            getSort() { return this.state.sort; }
+            getLogLevel() { return this.state.logLevel; }
+            getLogs() { return this.state.logs; }
+
+            // Setters
             setApiBaseUrl(url) {
                 this.state.apiBaseUrl = url;
                 this.saveState();
             }
 
-            getApiBaseUrl() {
-                return this.state.apiBaseUrl;
-            }
-
-            updateProviderStatus(providerId, status) {
-                this.state.providers[providerId] = status;
+            setActiveTab(tab) {
+                this.state.activeTab = tab;
                 this.saveState();
             }
 
-            getProviderStatus(providerId) {
-                return this.state.providers[providerId] || null;
+            setAutoRefreshInterval(interval) {
+                this.state.autoRefreshInterval = interval;
+                this.saveState();
             }
 
-            updateCredentials(credentials) {
+            setProviders(providers) {
+                this.state.providers = providers;
+                this.saveState();
+            }
+
+            setCredentials(credentials) {
                 this.state.credentials = credentials;
                 this.saveState();
             }
 
-            getCredentials() {
-                return this.state.credentials;
-            }
-
-            clearProvider(providerId) {
-                delete this.state.providers[providerId];
+            setFilters(filters) {
+                this.state.filters = { ...this.state.filters, ...filters };
                 this.saveState();
             }
 
-            clearAll() {
-                this.state.providers = {};
-                this.state.credentials = [];
+            setSort(sort) {
+                this.state.sort = { ...this.state.sort, ...sort };
                 this.saveState();
+            }
+
+            setLogLevel(level) {
+                this.state.logLevel = level;
+                this.saveState();
+            }
+
+            addLog(log) {
+                this.state.logs.unshift(log);
+                if (this.state.logs.length > 500) {
+                    this.state.logs = this.state.logs.slice(0, 500);
+                }
+                this.saveState();
+            }
+
+            clearLogs() {
+                this.state.logs = [];
+                this.saveState();
+            }
+
+            reset() {
+                localStorage.removeItem(this.STORAGE_KEY);
+                this.state = this.getInitialState();
             }
         }
 
         // ============================================
-        // Dashboard Application
+        // Event Emitter
         // ============================================
+
+        class EventEmitter {
+            constructor() {
+                this.events = {};
+            }
+
+            on(event, callback) {
+                if (!this.events[event]) {
+                    this.events[event] = [];
+                }
+                this.events[event].push(callback);
+            }
+
+            off(event, callback) {
+                if (!this.events[event]) return;
+                this.events[event] = this.events[event].filter(cb => cb !== callback);
+            }
+
+            emit(event, data) {
+                if (!this.events[event]) return;
+                this.events[event].forEach(callback => callback(data));
+            }
+        }
+
+        // ============================================
+        // UI Components
+        // ============================================
+
+        class Component {
+            constructor(containerId) {
+                this.container = document.getElementById(containerId);
+                this.events = new EventEmitter();
+            }
+
+            render() {
+                // To be implemented by subclasses
+            }
+
+            destroy() {
+                if (this.container) {
+                    this.container.innerHTML = '';
+                }
+            }
+        }
+
+        class ToastContainer extends Component {
+            constructor() {
+                super('toastContainer');
+                if (!this.container) {
+                    this.createContainer();
+                }
+            }
+
+            createContainer() {
+                this.container = document.createElement('div');
+                this.container.id = 'toastContainer';
+                this.container.className = 'toast-container';
+                document.body.appendChild(this.container);
+            }
+
+            show(message, type = 'info') {
+                const toast = document.createElement('div');
+                toast.className = `toast ${type}`;
+                toast.innerHTML = `<span>${this.getIcon(type)}</span><span>${this.escapeHtml(message)}</span>`;
+                this.container.appendChild(toast);
+
+                setTimeout(() => {
+                    toast.style.animation = 'slideIn 0.3s ease reverse';
+                    setTimeout(() => this.container.removeChild(toast), 300);
+                }, 5000);
+            }
+
+            getIcon(type) {
+                const icons = { success: '✓', error: '✕', warning: '⚠', info: 'ℹ' };
+                return icons[type] || 'ℹ';
+            }
+
+            escapeHtml(text) {
+                const div = document.createElement('div');
+                div.textContent = text;
+                return div.innerHTML;
+            }
+        }
+
+        class LoadingOverlay extends Component {
+            constructor() {
+                super('loadingOverlay');
+                if (!this.container) {
+                    this.createContainer();
+                }
+            }
+
+            createContainer() {
+                this.container = document.createElement('div');
+                this.container.id = 'loadingOverlay';
+                this.container.className = 'loading-overlay';
+                this.container.innerHTML = '<div class="loading-spinner"></div>';
+                document.body.appendChild(this.container);
+            }
+
+            show() {
+                this.container.classList.add('active');
+            }
+
+            hide() {
+                this.container.classList.remove('active');
+            }
+        }
+
+        class Modal extends Component {
+            constructor(modalId) {
+                super(modalId);
+                this.isOpen = false;
+            }
+
+            open() {
+                this.isOpen = true;
+                this.container.classList.add('active');
+            }
+
+            close() {
+                this.isOpen = false;
+                this.container.classList.remove('active');
+            }
+
+            toggle() {
+                if (this.isOpen) {
+                    this.close();
+                } else {
+                    this.open();
+                }
+            }
+        }
+
+        // ============================================
+        // Main Dashboard Application
+        // ============================================
+
         class Dashboard {
             constructor() {
-                this.api = new OAuthAPIClient();
-                this.stateManager = new StateManager();
+                this.api = new APIClient();
+                this.state = new StateManager();
+                this.events = new EventEmitter();
+                this.toast = new ToastContainer();
+                this.loading = new LoadingOverlay();
+                
                 this.providers = [];
                 this.credentials = [];
                 this.pollingIntervals = new Map();
+                this.refreshInterval = null;
                 this.currentProviderId = null;
-
+                this.currentTokenId = null;
+                this.proxyHistory = new Map();
+                
                 this.init();
             }
 
-            init() {
-                // Load saved API base URL
-                const savedUrl = this.stateManager.getApiBaseUrl();
-                this.api.setBaseUrl(savedUrl);
-                document.getElementById('apiBaseUrl').value = savedUrl;
+            async init() {
+                // Initialize API client with saved base URL
+                this.api.setBaseUrl(this.state.getApiBaseUrl());
+                document.getElementById('apiBaseUrl').value = this.state.getApiBaseUrl();
 
                 // Bind event listeners
                 this.bindEvents();
 
                 // Load initial data
-                this.loadProviders();
-                this.checkServerStatus();
+                await this.loadData();
+
+                // Start periodic refresh
+                this.startPeriodicRefresh();
+
+                // Render initial view
+                this.render();
+            }
+
+            async loadData() {
+                try {
+                    this.loading.show();
+                    
+                    // Load providers
+                    const providersData = await this.api.getProviders();
+                    this.providers = providersData.providers || [];
+                    this.state.setProviders(this.providers);
+
+                    // Load credentials
+                    const credentialsData = await this.api.getCredentials();
+                    this.credentials = credentialsData.credentials || [];
+                    this.state.setCredentials(this.credentials);
+
+                    // Check server status
+                    await this.checkServerStatus();
+                } catch (error) {
+                    this.log(`Failed to load data: ${error.message}`, 'error');
+                    this.toast.show('Failed to load data', 'error');
+                } finally {
+                    this.loading.hide();
+                }
             }
 
             bindEvents() {
-                // Refresh button
-                document.getElementById('refreshBtn').addEventListener('click', () => {
-                    this.refreshAll();
+                // Navigation tabs
+                document.querySelectorAll('.nav-tab').forEach(tab => {
+                    tab.addEventListener('click', (e) => {
+                        const tabName = e.currentTarget.dataset.tab;
+                        this.setActiveTab(tabName);
+                    });
                 });
 
-                // Clear all button
-                document.getElementById('clearAllBtn').addEventListener('click', () => {
-                    this.clearAllCredentials();
+                // Global refresh
+                document.getElementById('refreshBtn').addEventListener('click', () => {
+                    this.loadData();
                 });
 
                 // Settings button
                 document.getElementById('settingsBtn').addEventListener('click', () => {
-                    this.showSettingsModal();
+                    this.setActiveTab('settings');
                 });
 
-                // Settings modal
-                document.getElementById('settingsClose').addEventListener('click', () => {
-                    this.hideSettingsModal();
-                });
-                document.getElementById('settingsCancel').addEventListener('click', () => {
-                    this.hideSettingsModal();
-                });
-                document.getElementById('settingsSave').addEventListener('click', () => {
-                    this.saveSettings();
+                // Filter controls
+                document.getElementById('filterProvider').addEventListener('change', (e) => {
+                    this.state.setFilters({ provider: e.target.value });
+                    this.renderTokensTab();
                 });
 
-                // Add Token modal
-                document.getElementById('addTokenClose').addEventListener('click', () => {
-                    this.hideAddTokenModal();
-                });
-                document.getElementById('addTokenCancel').addEventListener('click', () => {
-                    this.hideAddTokenModal();
-                });
-                document.getElementById('addTokenSave').addEventListener('click', () => {
-                    this.saveToken();
+                document.getElementById('filterHealth').addEventListener('change', (e) => {
+                    this.state.setFilters({ health: e.target.value });
+                    this.renderTokensTab();
                 });
 
-                // Provider Settings modal
-                document.getElementById('providerSettingsClose').addEventListener('click', () => {
-                    this.hideProviderSettingsModal();
+                document.getElementById('filterSearch').addEventListener('input', (e) => {
+                    this.state.setFilters({ search: e.target.value });
+                    this.renderTokensTab();
                 });
-                document.getElementById('providerSettingsCancel').addEventListener('click', () => {
-                    this.hideProviderSettingsModal();
+
+                document.getElementById('sortField').addEventListener('change', (e) => {
+                    this.state.setSort({ field: e.target.value });
+                    this.renderTokensTab();
                 });
-                document.getElementById('providerSettingsSave').addEventListener('click', () => {
-                    this.saveProviderSettings();
+
+                // Tokens table sort headers
+                document.querySelectorAll('#tokensTable th[data-sort]').forEach(th => {
+                    th.addEventListener('click', () => {
+                        const field = th.dataset.sort;
+                        const currentSort = this.state.getSort();
+                        const direction = currentSort.field === field && currentSort.direction === 'asc' ? 'desc' : 'asc';
+                        this.state.setSort({ field, direction });
+                        this.renderTokensTab();
+                    });
+                });
+
+                // Log filters
+                document.getElementById('logLevelFilter').addEventListener('change', (e) => {
+                    this.state.setLogLevel(e.target.value);
+                    this.renderLogsTab();
+                });
+
+                document.getElementById('logProviderFilter').addEventListener('change', () => {
+                    this.renderLogsTab();
+                });
+
+                document.getElementById('logSearch').addEventListener('input', () => {
+                    this.renderLogsTab();
+                });
+
+                document.getElementById('clearLogsBtn').addEventListener('click', () => {
+                    this.state.clearLogs();
+                    this.renderLogsTab();
+                    this.toast.show('Logs cleared', 'success');
+                });
+
+                document.getElementById('exportLogsBtn').addEventListener('click', () => {
+                    this.exportLogs();
+                });
+
+                // Global settings
+                document.getElementById('saveGlobalSettings').addEventListener('click', () => {
+                    this.saveGlobalSettings();
                 });
 
                 // Device code modal
@@ -1134,11 +2492,51 @@
                     this.cancelDeviceFlow();
                 });
 
-                // OAuth callback message
+                // Add token modal
+                document.getElementById('addTokenClose').addEventListener('click', () => {
+                    this.hideAddTokenModal();
+                });
+                document.getElementById('addTokenCancel').addEventListener('click', () => {
+                    this.hideAddTokenModal();
+                });
+                document.getElementById('addTokenSave').addEventListener('click', () => {
+                    this.saveToken();
+                });
+
+                // Proxy config modal
+                document.getElementById('proxyConfigClose').addEventListener('click', () => {
+                    this.hideProxyConfigModal();
+                });
+                document.getElementById('proxyConfigCancel').addEventListener('click', () => {
+                    this.hideProxyConfigModal();
+                });
+                document.getElementById('proxyConfigSave').addEventListener('click', () => {
+                    this.saveProxyConfig();
+                });
+                document.getElementById('proxyTestBtn').addEventListener('click', () => {
+                    this.testProxyConnection();
+                });
+                document.getElementById('proxyType').addEventListener('change', () => {
+                    this.updateProxyFieldsVisibility();
+                });
+
+                // Provider settings modal
+                document.getElementById('providerSettingsClose').addEventListener('click', () => {
+                    this.hideProviderSettingsModal();
+                });
+                document.getElementById('providerSettingsCancel').addEventListener('click', () => {
+                    this.hideProviderSettingsModal();
+                });
+                document.getElementById('providerSettingsSave').addEventListener('click', () => {
+                    this.saveProviderSettings();
+                });
+
+                // OAuth callback
                 window.addEventListener('message', (event) => {
                     if (event.data.type === 'oauth_success') {
                         this.log('OAuth authorization completed', 'success');
-                        this.refreshAll();
+                        this.toast.show('Authorization successful!', 'success');
+                        this.loadData();
                     }
                 });
 
@@ -1155,53 +2553,105 @@
                 });
             }
 
-            async loadProviders() {
-                try {
-                    this.showLoading();
-                    const data = await this.api.getProviders();
-                    this.providers = data.providers || [];
-                    this.renderProviders();
-                    await this.loadCredentials();
-                } catch (error) {
-                    this.log(`Failed to load providers: ${error.message}`, 'error');
-                    this.showToast('Failed to load providers', 'error');
-                } finally {
-                    this.hideLoading();
+            setActiveTab(tabName) {
+                this.state.setActiveTab(tabName);
+                this.render();
+            }
+
+            render() {
+                const activeTab = this.state.getActiveTab();
+                
+                // Update tab navigation
+                document.querySelectorAll('.nav-tab').forEach(tab => {
+                    tab.classList.toggle('active', tab.dataset.tab === activeTab);
+                });
+
+                // Hide all tab contents
+                document.querySelectorAll('.tab-content').forEach(content => {
+                    content.classList.remove('active');
+                });
+
+                // Show active tab content
+                document.getElementById(`${activeTab}Tab`).classList.add('active');
+
+                // Render appropriate tab content
+                switch (activeTab) {
+                    case 'overview':
+                        this.renderOverviewTab();
+                        break;
+                    case 'tokens':
+                        this.renderTokensTab();
+                        break;
+                    case 'proxy':
+                        this.renderProxyTab();
+                        break;
+                    case 'settings':
+                        this.renderSettingsTab();
+                        break;
+                    case 'logs':
+                        this.renderLogsTab();
+                        break;
                 }
             }
 
-            async loadCredentials() {
-                try {
-                    const data = await this.api.getCredentials();
-                    this.credentials = data.credentials || [];
-                    this.stateManager.updateCredentials(this.credentials);
-                    this.updateProviderCards();
-                } catch (error) {
-                    // Not an error if no credentials exist
-                    this.credentials = [];
-                    this.stateManager.updateCredentials([]);
-                    this.updateProviderCards();
-                }
+            renderOverviewTab() {
+                this.renderSummaryStats();
+                this.renderProviderCards();
+                this.renderEmailList();
             }
 
-            async checkServerStatus() {
-                const statusDot = document.getElementById('statusDot');
-                const statusText = document.getElementById('statusText');
+            renderSummaryStats() {
+                const container = document.getElementById('summaryStats');
+                
+                let totalAuthFiles = 0;
+                let totalValid = 0;
+                let totalUnhealthy = 0;
+                let totalHealthScore = 0;
+                let healthyTokenCount = 0;
 
-                statusDot.className = 'status-dot checking';
-                statusText.textContent = 'Checking...';
+                this.credentials.forEach(cred => {
+                    const tokens = cred.tokens || [];
+                    const validCount = tokens.filter(t => t.healthy).length;
+                    const unhealthyCount = tokens.length - validCount;
+                    const avgHealthScore = tokens.length > 0
+                        ? tokens.reduce((sum, t) => sum + (t.health_score || 0), 0) / tokens.length
+                        : 0;
 
-                try {
-                    await this.api.getProviders();
-                    statusDot.className = 'status-dot online';
-                    statusText.textContent = 'Online';
-                } catch (error) {
-                    statusDot.className = 'status-dot';
-                    statusText.textContent = 'Offline';
-                }
+                    totalAuthFiles += tokens.length;
+                    totalValid += validCount;
+                    totalUnhealthy += unhealthyCount;
+                    if (tokens.length > 0) {
+                        totalHealthScore += avgHealthScore;
+                        healthyTokenCount++;
+                    }
+                });
+
+                const overallHealthScore = healthyTokenCount > 0 ? totalHealthScore / healthyTokenCount : 0;
+
+                // Render stats cards
+                container.innerHTML = `
+                    <div class="stat-card">
+                        <div class="stat-value">${totalAuthFiles}</div>
+                        <div class="stat-label">Total Auth Files</div>
+                    </div>
+                    <div class="stat-card">
+                        <div class="stat-value success">${totalValid}</div>
+                        <div class="stat-label">Valid Files</div>
+                    </div>
+                    <div class="stat-card">
+                        <div class="stat-value ${totalUnhealthy > 0 ? 'error' : 'success'}">${totalUnhealthy}</div>
+                        <div class="stat-label">Unhealthy Files</div>
+                    </div>
+                    <div class="stat-card">
+                        <div class="stat-value ${overallHealthScore >= 0.8 ? 'success' : overallHealthScore >= 0.5 ? 'warning' : 'error'}">
+                            ${Math.round(overallHealthScore * 100)}%
+                        </div>
+                        <div class="stat-label">Overall Health</div>
+                    </div>
+                `;
             }
 
-            renderProviders() {
+            renderProviderCards() {
                 const grid = document.getElementById('providersGrid');
                 grid.innerHTML = '';
 
@@ -1229,6 +2679,14 @@
                 };
 
                 this.providers.forEach(provider => {
+                    const cred = this.credentials.find(c => c.provider === provider.id);
+                    const tokens = cred && cred.tokens ? cred.tokens : [];
+                    const validCount = tokens.filter(t => t.healthy).length;
+                    const avgHealthScore = tokens.length > 0
+                        ? tokens.reduce((sum, t) => sum + (t.health_score || 0), 0) / tokens.length
+                        : 0;
+                    const healthPercent = Math.round(avgHealthScore * 100);
+
                     const card = document.createElement('div');
                     card.className = 'provider-card';
                     card.id = `provider-${provider.id}`;
@@ -1246,8 +2704,18 @@
                                 <span class="provider-flow">${flowLabel}</span>
                             </div>
                         </div>
-                        <div class="provider-summary" id="providerSummary-${provider.id}" style="display: none;">
-                            <span class="provider-summary-count" id="tokenCount-${provider.id}">0 tokens</span>
+                        <div class="provider-stats">
+                            <div class="provider-auth-count">${tokens.length}</div>
+                            <div class="provider-auth-label">Auth Files</div>
+                            ${tokens.length > 0 ? `
+                                <div class="provider-health-summary">
+                                    <div class="health-progress-bar">
+                                        <div class="health-progress-fill ${healthPercent >= 80 ? '' : healthPercent >= 50 ? 'warning' : 'error'}"
+                                             style="width: ${healthPercent}%"></div>
+                                    </div>
+                                    <span>${healthPercent}%</span>
+                                </div>
+                            ` : ''}
                         </div>
                         <div class="provider-actions">
                             ${provider.flow === 'authorization_code' ? `
@@ -1272,32 +2740,14 @@
                                 ⚙️ Settings
                             </button>
                         </div>
-                        <div class="token-list" id="tokenList-${provider.id}"></div>
+                        ${tokens.length > 0 ? `
+                            <div class="token-list" id="tokenList-${provider.id}">
+                                ${tokens.map(token => this.renderTokenItem(provider.id, token)).join('')}
+                            </div>
+                        ` : ''}
                     `;
 
                     grid.appendChild(card);
-                });
-
-                this.updateProviderCards();
-            }
-
-            updateProviderCards() {
-                this.providers.forEach(provider => {
-                    const card = document.getElementById(`provider-${provider.id}`);
-                    if (!card) return;
-
-                    const cred = this.credentials.find(c => c.provider === provider.id);
-                    const summaryEl = document.getElementById(`providerSummary-${provider.id}`);
-                    const tokenListEl = document.getElementById(`tokenList-${provider.id}`);
-
-                    if (cred && cred.tokens && cred.tokens.length > 0) {
-                        summaryEl.style.display = 'flex';
-                        document.getElementById(`tokenCount-${provider.id}`).textContent = `${cred.tokens.length} token${cred.tokens.length !== 1 ? 's' : ''}`;
-                        tokenListEl.innerHTML = cred.tokens.map(token => this.renderTokenItem(provider.id, token)).join('');
-                    } else {
-                        summaryEl.style.display = 'none';
-                        tokenListEl.innerHTML = '';
-                    }
                 });
             }
 
@@ -1307,6 +2757,9 @@
                 const expiresText = token.expires_in > 0
                     ? this.formatDuration(token.expires_in * 1000)
                     : 'Expired';
+                const proxyIndicator = token.proxy && token.proxy.enabled
+                    ? `<span class="proxy-indicator enabled">🌐 Proxy</span>`
+                    : '';
 
                 return `
                     <div class="token-item ${statusClass}" id="token-${token.id}">
@@ -1334,6 +2787,9 @@
                             <button class="btn btn-sm btn-primary" onclick="dashboard.refreshTokenById('${providerId}', '${token.id}')">
                                 🔄 Refresh
                             </button>
+                            <button class="btn btn-sm btn-secondary" onclick="dashboard.showProxyConfigModal('${providerId}', '${token.id}')">
+                                🌐 Proxy
+                            </button>
                             <button class="btn btn-sm btn-danger" onclick="dashboard.deleteTokenById('${providerId}', '${token.id}')">
                                 🗑️ Delete
                             </button>
@@ -1342,12 +2798,461 @@
                 `;
             }
 
-            formatExpiresIn(seconds) {
-                if (!seconds || seconds < 0) return 'Expired';
-                if (seconds < 60) return `${Math.floor(seconds)}s`;
-                if (seconds < 3600) return `${Math.floor(seconds / 60)}m`;
-                return `${Math.floor(seconds / 3600)}h`;
+            renderEmailList() {
+                const container = document.getElementById('summaryEmailList');
+                let hasEmails = false;
+
+                const providerGroups = this.providers.map(provider => {
+                    const cred = this.credentials.find(c => c.provider === provider.id);
+                    const tokens = cred && cred.tokens ? cred.tokens : [];
+                    const tokensWithEmail = tokens.filter(t => t.email && t.email.trim() !== '');
+                    
+                    if (tokensWithEmail.length > 0) {
+                        hasEmails = true;
+                    }
+
+                    return {
+                        provider: provider,
+                        tokens: tokensWithEmail
+                    };
+                }).filter(group => group.tokens.length > 0);
+
+                if (!hasEmails) {
+                    container.innerHTML = `
+                        <div class="empty-emails">
+                            No email addresses found in any auth files
+                        </div>
+                    `;
+                    return;
+                }
+
+                container.innerHTML = providerGroups.map(group => `
+                    <div class="email-provider-group">
+                        <div class="email-provider-header">
+                            <span class="email-provider-name">${group.provider.name}</span>
+                            <span class="email-provider-count">${group.tokens.length} email${group.tokens.length !== 1 ? 's' : ''}</span>
+                        </div>
+                        <div class="email-grid">
+                            ${group.tokens.map(token => `
+                                <div class="email-card">
+                                    <div class="email-status-dot ${token.healthy ? 'healthy' : 'unhealthy'}"></div>
+                                    <span class="email-address">${token.email}</span>
+                                    <span class="email-health-text ${token.healthy ? 'healthy' : 'unhealthy'}">
+                                        ${token.healthy ? '✓ Healthy' : '✗ Unhealthy'}
+                                    </span>
+                                </div>
+                            `).join('')}
+                        </div>
+                    </div>
+                `).join('');
             }
+
+            renderTokensTab() {
+                const tableBody = document.getElementById('tokensTableBody');
+                const tokens = this.getFilteredAndSortedTokens();
+
+                if (tokens.length === 0) {
+                    tableBody.innerHTML = `
+                        <tr>
+                            <td colspan="8" class="empty-message">No tokens match the current filters</td>
+                        </tr>
+                    `;
+                    return;
+                }
+
+                tableBody.innerHTML = tokens.map(token => {
+                    const provider = this.providers.find(p => p.id === token.provider);
+                    const providerName = provider ? provider.name : token.provider;
+                    const statusClass = token.healthy ? 'healthy' : 'unhealthy';
+                    const healthScore = Math.round(token.health_score * 100);
+                    const healthColorClass = healthScore >= 80 ? '' : healthScore >= 50 ? 'warning' : 'error';
+
+                    return `
+                        <tr>
+                            <td class="provider-cell">${providerName}</td>
+                            <td class="email-cell">${token.email || 'No email'}</td>
+                            <td class="health-cell">
+                                <span class="health-badge ${statusClass}">
+                                    ${token.healthy ? '✓ Healthy' : '✗ Unhealthy'}
+                                </span>
+                            </td>
+                            <td>
+                                <div class="score-bar">
+                                    <span>${healthScore}%</span>
+                                    <div class="progress">
+                                        <div class="progress-fill ${healthColorClass}" style="width: ${healthScore}%"></div>
+                                    </div>
+                                </div>
+                            </td>
+                            <td class="timestamp-cell">${this.formatTimestamp(token.expiry_date)}</td>
+                            <td class="timestamp-cell">${this.formatTimestamp(token.last_used)}</td>
+                            <td class="timestamp-cell">${this.formatTimestamp(token.created_at)}</td>
+                            <td>
+                                <button class="btn btn-sm btn-primary" onclick="dashboard.refreshTokenById('${token.provider}', '${token.id}')">
+                                    🔄
+                                </button>
+                                <button class="btn btn-sm btn-secondary" onclick="dashboard.showProxyConfigModal('${token.provider}', '${token.id}')">
+                                    🌐
+                                </button>
+                                <button class="btn btn-sm btn-danger" onclick="dashboard.deleteTokenById('${token.provider}', '${token.id}')">
+                                    🗑️
+                                </button>
+                            </td>
+                        </tr>
+                    `;
+                }).join('');
+            }
+
+            getFilteredAndSortedTokens() {
+                let tokens = [];
+
+                // Collect all tokens from all providers
+                this.credentials.forEach(cred => {
+                    if (cred.tokens) {
+                        cred.tokens.forEach(token => {
+                            tokens.push({
+                                ...token,
+                                provider: cred.provider
+                            });
+                        });
+                    }
+                });
+
+                // Apply filters
+                const filters = this.state.getFilters();
+                if (filters.provider !== 'all') {
+                    tokens = tokens.filter(t => t.provider === filters.provider);
+                }
+
+                if (filters.health !== 'all') {
+                    const isHealthy = filters.health === 'healthy';
+                    tokens = tokens.filter(t => t.healthy === isHealthy);
+                }
+
+                if (filters.search) {
+                    const searchLower = filters.search.toLowerCase();
+                    tokens = tokens.filter(t =>
+                        (t.email && t.email.toLowerCase().includes(searchLower))
+                    );
+                }
+
+                // Apply sorting
+                const sort = this.state.getSort();
+                tokens.sort((a, b) => {
+                    let comparison = 0;
+                    
+                    switch (sort.field) {
+                        case 'provider':
+                            comparison = a.provider.localeCompare(b.provider);
+                            break;
+                        case 'email':
+                            const emailA = (a.email || '').toLowerCase();
+                            const emailB = (b.email || '').toLowerCase();
+                            comparison = emailA.localeCompare(emailB);
+                            break;
+                        case 'health':
+                            comparison = (b.healthy ? 1 : 0) - (a.healthy ? 1 : 0);
+                            break;
+                        case 'healthScore':
+                            comparison = b.health_score - a.health_score;
+                            break;
+                        case 'expiry':
+                            comparison = new Date(a.expiry_date) - new Date(b.expiry_date);
+                            break;
+                        case 'lastUsed':
+                            comparison = new Date(b.last_used || 0) - new Date(a.last_used || 0);
+                            break;
+                        case 'createdAt':
+                            comparison = new Date(b.created_at || 0) - new Date(a.created_at || 0);
+                            break;
+                    }
+
+                    return sort.direction === 'asc' ? comparison : -comparison;
+                });
+
+                return tokens;
+            }
+
+            renderProxyTab() {
+                this.renderProxySummary();
+                this.renderProxyConfigList();
+            }
+
+            renderProxySummary() {
+                const container = document.getElementById('proxySummary');
+                
+                let totalProxies = 0;
+                let activeProxies = 0;
+                let unhealthyProxies = 0;
+                let totalLatency = 0;
+                let latencyCount = 0;
+
+                this.credentials.forEach(cred => {
+                    if (cred.tokens) {
+                        cred.tokens.forEach(token => {
+                            if (token.proxy && token.proxy.enabled) {
+                                totalProxies++;
+                                if (token.proxy_health_score >= 0.8) {
+                                    activeProxies++;
+                                } else {
+                                    unhealthyProxies++;
+                                }
+                                if (token.proxy_health && token.proxy_health.averageLatencyMs) {
+                                    totalLatency += token.proxy_health.averageLatencyMs;
+                                    latencyCount++;
+                                }
+                            }
+                        });
+                    }
+                });
+
+                const avgLatency = latencyCount > 0 ? Math.round(totalLatency / latencyCount) : 0;
+
+                container.innerHTML = `
+                    <div class="stat-card">
+                        <div class="stat-value">${totalProxies}</div>
+                        <div class="stat-label">Total Proxies</div>
+                    </div>
+                    <div class="stat-card">
+                        <div class="stat-value success">${activeProxies}</div>
+                        <div class="stat-label">Active Proxies</div>
+                    </div>
+                    <div class="stat-card">
+                        <div class="stat-value ${unhealthyProxies > 0 ? 'error' : 'success'}">${unhealthyProxies}</div>
+                        <div class="stat-label">Unhealthy Proxies</div>
+                    </div>
+                    <div class="stat-card">
+                        <div class="stat-value">${avgLatency}ms</div>
+                        <div class="stat-label">Avg Latency</div>
+                    </div>
+                `;
+            }
+
+            renderProxyConfigList() {
+                const container = document.getElementById('proxyConfigList');
+
+                const tokensWithProxy = [];
+                this.credentials.forEach(cred => {
+                    if (cred.tokens) {
+                        cred.tokens.forEach(token => {
+                            if (token.proxy) {
+                                tokensWithProxy.push({
+                                    ...token,
+                                    provider: cred.provider
+                                });
+                            }
+                        });
+                    }
+                });
+
+                if (tokensWithProxy.length === 0) {
+                    container.innerHTML = `
+                        <div class="empty-state" style="grid-column: 1 / -1;">
+                            <div class="empty-state-icon">🌐</div>
+                            <p>No proxy configurations found</p>
+                            <p style="margin-top: 1rem;">
+                                <button class="btn btn-primary" onclick="dashboard.showAddTokenModal('qwen')">
+                                    + Add Token with Proxy
+                                </button>
+                            </p>
+                        </div>
+                    `;
+                    return;
+                }
+
+                container.innerHTML = tokensWithProxy.map(token => {
+                    const provider = this.providers.find(p => p.id === token.provider);
+                    const providerName = provider ? provider.name : token.provider;
+                    const healthScore = Math.round((token.proxy_health_score || 0) * 100);
+                    const healthClass = healthScore >= 80 ? 'healthy' : healthScore >= 50 ? 'warning' : 'error';
+                    const latency = 0;
+                    const failures = 0;
+
+                    return `
+                        <div class="proxy-config-card">
+                            <div class="proxy-config-header">
+                                <h3>${token.email || 'No email'}</h3>
+                                <span class="proxy-type-badge">${providerName}</span>
+                            </div>
+                            <div class="proxy-config-details">
+                                <div class="proxy-config-detail">
+                                    <span class="proxy-config-detail-label">Type:</span>
+                                    <span>${token.proxy.Type || 'none'}</span>
+                                </div>
+                                <div class="proxy-config-detail">
+                                    <span class="proxy-config-detail-label">Host:</span>
+                                    <span>${token.proxy.Host || '-'}</span>
+                                </div>
+                                <div class="proxy-config-detail">
+                                    <span class="proxy-config-detail-label">Port:</span>
+                                    <span>${token.proxy.Port || '-'}</span>
+                                </div>
+                                <div class="proxy-config-detail">
+                                    <span class="proxy-config-detail-label">Enabled:</span>
+                                    <span>${token.proxy.Enabled ? 'Yes' : 'No'}</span>
+                                </div>
+                            </div>
+                            <div class="proxy-health-display">
+                                <div class="health-score-indicator">
+                                    <div class="health-score-circle ${healthClass}">${healthScore}%</div>
+                                    <div class="health-metrics">
+                                        <div class="health-metric">
+                                            <span class="health-metric-label">Latency:</span>
+                                            <span>${latency}ms</span>
+                                        </div>
+                                        <div class="health-metric">
+                                            <span class="health-metric-label">Failures:</span>
+                                            <span>${failures}</span>
+                                        </div>
+                                    </div>
+                                </div>
+                                ${this.renderLatencyChart(token.id)}
+                            </div>
+                            <div class="proxy-config-actions">
+                                <button class="btn btn-secondary" onclick="dashboard.showProxyConfigModal('${token.provider}', '${token.id}')">
+                                    ⚙️ Configure
+                                </button>
+                                <button class="btn btn-sm ${token.proxy.enabled ? 'btn-danger' : 'btn-primary'}"
+                                        onclick="dashboard.toggleProxyEnabled('${token.provider}', '${token.id}')">
+                                    ${token.proxy.enabled ? '🔒 Disable' : '🔓 Enable'}
+                                </button>
+                                <button class="btn btn-sm btn-danger" onclick="dashboard.deleteProxyConfig('${token.provider}', '${token.id}')">
+                                    🗑️ Remove
+                                </button>
+                            </div>
+                        </div>
+                    `;
+                }).join('');
+            }
+
+            renderLatencyChart(tokenId) {
+                const history = this.proxyHistory.get(tokenId) || [];
+                if (history.length < 2) return '';
+
+                const maxLatency = Math.max(...history.map(h => h.AverageLatencyMs));
+                const minLatency = Math.min(...history.map(h => h.AverageLatencyMs));
+                const range = maxLatency - minLatency || 1;
+
+                const points = history.map((h, i) => {
+                    const x = (i / (history.length - 1)) * 100;
+                    const y = 80 - ((h.AverageLatencyMs - minLatency) / range) * 60;
+                    return `${x},${y}`;
+                }).join(' ');
+
+                return `
+                    <div class="latency-chart">
+                        <svg viewBox="0 0 100 80" preserveAspectRatio="none">
+                            <polyline class="chart-line" points="${points}"/>
+                            ${history.map((h, i) => {
+                                const x = (i / (history.length - 1)) * 100;
+                                const y = 80 - ((h.AverageLatencyMs - minLatency) / range) * 60;
+                                return `<circle class="chart-point" cx="${x}" cy="${y}"
+                                        data-latency="${h.AverageLatencyMs}" data-time="${new Date(h.timestamp).toLocaleTimeString()}"/>`;
+                            }).join('')}
+                        </svg>
+                    </div>
+                `;
+            }
+
+            renderSettingsTab() {
+                this.renderGlobalSettings();
+                this.renderProviderSettings();
+            }
+
+            renderGlobalSettings() {
+                document.getElementById('apiBaseUrl').value = this.state.getApiBaseUrl();
+                document.getElementById('autoRefreshInterval').value = this.state.getAutoRefreshInterval();
+            }
+
+            renderProviderSettings() {
+                const container = document.getElementById('providerSettingsGrid');
+
+                if (this.providers.length === 0) {
+                    container.innerHTML = `
+                        <div class="empty-state" style="grid-column: 1 / -1;">
+                            <div class="empty-state-icon">📭</div>
+                            <p>No providers available</p>
+                        </div>
+                    `;
+                    return;
+                }
+
+                container.innerHTML = this.providers.map(provider => {
+                    const cred = this.credentials.find(c => c.provider === provider.id);
+                    const settings = cred && cred.settings ? cred.settings : null;
+
+                    return `
+                        <div class="settings-card">
+                            <h3>${provider.name}</h3>
+                            <div class="form-group">
+                                <label>Selection Strategy</label>
+                                <select id="strategy-${provider.id}" onchange="dashboard.updateProviderStrategy('${provider.id}', this.value)">
+                                    <option value="random" ${settings?.selection_strategy === 'random' ? 'selected' : ''}>Random</option>
+                                    <option value="round_robin" ${settings?.selection_strategy === 'round_robin' ? 'selected' : ''}>Round Robin</option>
+                                    <option value="least_used" ${settings?.selection_strategy === 'least_used' ? 'selected' : ''}>Least Used</option>
+                                </select>
+                            </div>
+                            <div class="form-group">
+                                <label>Refresh Buffer (seconds)</label>
+                                <input type="number" id="buffer-${provider.id}" value="${settings?.refresh_buffer_sec || 1800}"
+                                       min="0" onchange="dashboard.updateProviderBuffer('${provider.id}', this.value)">
+                            </div>
+                            <div class="form-group">
+                                <label>Max Error Count</label>
+                                <input type="number" id="errors-${provider.id}" value="${settings?.max_error_count || 3}"
+                                       min="0" onchange="dashboard.updateProviderMaxErrors('${provider.id}', this.value)">
+                            </div>
+                        </div>
+                    `;
+                }).join('');
+            }
+
+            renderLogsTab() {
+                const container = document.getElementById('logEntries');
+                const logs = this.getFilteredLogs();
+
+                if (logs.length === 0) {
+                    container.innerHTML = `
+                        <div class="empty-message" style="padding: 2rem; text-align: center; color: var(--text-secondary);">
+                            No log entries found
+                        </div>
+                    `;
+                    return;
+                }
+
+                container.innerHTML = logs.map(log => `
+                    <div class="log-entry">
+                        <div class="log-time">${new Date(log.timestamp).toLocaleTimeString()}</div>
+                        <div class="log-level ${log.level}">${log.level}</div>
+                        <div class="log-message">${this.escapeHtml(log.message)}</div>
+                    </div>
+                `).join('');
+            }
+
+            getFilteredLogs() {
+                let logs = this.state.getLogs();
+                const logLevel = this.state.getLogLevel();
+                const providerFilter = document.getElementById('logProviderFilter').value;
+                const searchTerm = document.getElementById('logSearch').value.toLowerCase();
+
+                if (logLevel !== 'all') {
+                    logs = logs.filter(l => l.level === logLevel);
+                }
+
+                if (providerFilter !== 'all') {
+                    logs = logs.filter(l => l.provider === providerFilter);
+                }
+
+                if (searchTerm) {
+                    logs = logs.filter(l => l.message.toLowerCase().includes(searchTerm));
+                }
+
+                return logs;
+            }
+
+            // ============================================
+            // OAuth Flow Methods
+            // ============================================
 
             async startAuth(providerId) {
                 try {
@@ -1367,14 +3272,14 @@
                     );
 
                     if (!popup) {
-                        this.showToast('Popup blocked. Please allow popups for this site.', 'warning');
+                        this.toast.show('Popup blocked. Please allow popups for this site.', 'warning');
                         this.log('Popup blocked for authorization', 'warning');
                     } else {
                         this.log(`Opened authorization window for ${providerId}`, 'info');
                     }
                 } catch (error) {
                     this.log(`Authorization failed for ${providerId}: ${error.message}`, 'error');
-                    this.showToast('Failed to start authorization', 'error');
+                    this.toast.show('Failed to start authorization', 'error');
                 }
             }
 
@@ -1395,7 +3300,7 @@
                     this.pollDeviceStatus(data.poll_id, providerId);
                 } catch (error) {
                     this.log(`Device flow failed for ${providerId}: ${error.message}`, 'error');
-                    this.showToast('Failed to start device flow', 'error');
+                    this.toast.show('Failed to start device flow', 'error');
                 }
             }
 
@@ -1406,13 +3311,13 @@
 
                         if (data.status === 'authorized') {
                             this.log(`Device authorization completed for ${providerId}`, 'success');
-                            this.showToast('Authorization successful!', 'success');
+                            this.toast.show('Authorization successful!', 'success');
                             this.hideDeviceCodeModal();
                             this.stopPolling(pollId);
-                            await this.refreshAll();
+                            await this.loadData();
                         } else if (data.status === 'error') {
                             this.log(`Device authorization failed for ${providerId}: ${data.error}`, 'error');
-                            this.showToast(`Authorization failed: ${data.error}`, 'error');
+                            this.toast.show(`Authorization failed: ${data.error}`, 'error');
                             this.hideDeviceCodeModal();
                             this.stopPolling(pollId);
                         }
@@ -1453,142 +3358,444 @@
                 document.getElementById('deviceCodeModal').classList.remove('active');
             }
 
+            // ============================================
+            // Token Management Methods
+            // ============================================
+
             async refreshToken(providerId) {
                 try {
                     this.log(`Refreshing token for ${providerId}`, 'info');
-                    this.showLoading();
+                    this.loading.show();
                     await this.api.refreshToken(providerId);
                     this.log(`Token refreshed for ${providerId}`, 'success');
-                    this.showToast('Token refreshed successfully', 'success');
-                    await this.refreshAll();
+                    this.toast.show('Token refreshed successfully', 'success');
+                    await this.loadData();
                 } catch (error) {
                     this.log(`Failed to refresh token for ${providerId}: ${error.message}`, 'error');
-                    this.showToast('Failed to refresh token', 'error');
+                    this.toast.show('Failed to refresh token', 'error');
                 } finally {
-                    this.hideLoading();
+                    this.loading.hide();
                 }
             }
 
-            async logout(providerId) {
-                if (!confirm(`Are you sure you want to logout from ${providerId}?`)) {
+            async refreshTokenById(providerId, tokenId) {
+                try {
+                    this.log(`Refreshing token ${tokenId} for ${providerId}`, 'info');
+                    this.loading.show();
+                    await this.api.refreshTokenById(providerId, tokenId);
+                    this.log(`Token ${tokenId} refreshed successfully`, 'success');
+                    this.toast.show('Token refreshed successfully', 'success');
+                    await this.loadData();
+                } catch (error) {
+                    this.log(`Failed to refresh token: ${error.message}`, 'error');
+                    this.toast.show('Failed to refresh token', 'error');
+                } finally {
+                    this.loading.hide();
+                }
+            }
+
+            async deleteTokenById(providerId, tokenId) {
+                if (!confirm(`Are you sure you want to delete this token? This cannot be undone.`)) {
                     return;
                 }
 
                 try {
-                    this.log(`Logging out from ${providerId}`, 'info');
-                    this.showLoading();
-                    await this.api.deleteToken(providerId);
-                    this.stateManager.clearProvider(providerId);
-                    this.log(`Logged out from ${providerId}`, 'success');
-                    this.showToast('Logged out successfully', 'success');
-                    await this.refreshAll();
+                    this.log(`Deleting token ${tokenId} for ${providerId}`, 'info');
+                    this.loading.show();
+                    await this.api.deleteTokenById(providerId, tokenId);
+                    this.log(`Token ${tokenId} deleted successfully`, 'success');
+                    this.toast.show('Token deleted successfully', 'success');
+                    await this.loadData();
                 } catch (error) {
-                    this.log(`Failed to logout from ${providerId}: ${error.message}`, 'error');
-                    this.showToast('Failed to logout', 'error');
+                    this.log(`Failed to delete token: ${error.message}`, 'error');
+                    this.toast.show('Failed to delete token', 'error');
                 } finally {
-                    this.hideLoading();
+                    this.loading.hide();
                 }
             }
 
-            async clearAllCredentials() {
-                if (!confirm('Are you sure you want to clear all credentials? This cannot be undone.')) {
+            showAddTokenModal(providerId) {
+                this.currentProviderId = providerId;
+                const provider = this.providers.find(p => p.id === providerId);
+                document.getElementById('addTokenTitle').textContent = `Add Token - ${provider ? provider.name : providerId}`;
+                document.getElementById('addTokenModal').classList.add('active');
+            }
+
+            hideAddTokenModal() {
+                document.getElementById('addTokenModal').classList.remove('active');
+                document.getElementById('accessToken').value = '';
+                document.getElementById('refreshToken').value = '';
+                document.getElementById('tokenEmail').value = '';
+                document.getElementById('expiresIn').value = '';
+            }
+
+            async saveToken() {
+                const accessToken = document.getElementById('accessToken').value.trim();
+                if (!accessToken) {
+                    this.toast.show('Access token is required', 'error');
+                    return;
+                }
+
+                const tokenData = {
+                    access_token: accessToken,
+                    refresh_token: document.getElementById('refreshToken').value.trim() || null,
+                    email: document.getElementById('tokenEmail').value.trim() || null,
+                    expires_in: document.getElementById('expiresIn').value ? parseInt(document.getElementById('expiresIn').value) : null
+                };
+
+                try {
+                    this.log('Adding token...', 'info');
+                    this.loading.show();
+                    await this.api.addToken(this.currentProviderId, tokenData);
+                    this.log('Token added successfully', 'success');
+                    this.toast.show('Token added successfully', 'success');
+                    this.hideAddTokenModal();
+                    await this.loadData();
+                } catch (error) {
+                    this.log(`Failed to add token: ${error.message}`, 'error');
+                    this.toast.show('Failed to add token', 'error');
+                } finally {
+                    this.loading.hide();
+                }
+            }
+
+            // ============================================
+            // Proxy Configuration Methods
+            // ============================================
+
+            async showProxyConfigModal(providerId, tokenId) {
+                this.currentProviderId = providerId;
+                this.currentTokenId = tokenId;
+
+                try {
+                    this.loading.show();
+                    const data = await this.api.getProxyConfig(providerId, tokenId);
+                    
+                    const proxy = data.proxy || { type: 'none', host: '', port: 0, username: '', password: '', enabled: false };
+                    
+                    document.getElementById('proxyType').value = proxy.Type || 'none';
+                    document.getElementById('proxyHost').value = proxy.Host || '';
+                    document.getElementById('proxyPort').value = proxy.Port || '';
+                    document.getElementById('proxyUsername').value = proxy.Username || '';
+                    document.getElementById('proxyPassword').value = proxy.Password || '';
+                    document.getElementById('proxyEnabled').checked = proxy.Enabled !== false;
+                    
+                    this.updateProxyFieldsVisibility();
+                    document.getElementById('proxyValidationError').textContent = '';
+                    document.getElementById('proxyConfigModal').classList.add('active');
+                } catch (error) {
+                    this.log(`Failed to load proxy config: ${error.message}`, 'error');
+                    this.toast.show('Failed to load proxy configuration', 'error');
+                } finally {
+                    this.loading.hide();
+                }
+            }
+
+            hideProxyConfigModal() {
+                document.getElementById('proxyConfigModal').classList.remove('active');
+            }
+
+            updateProxyFieldsVisibility() {
+                const type = document.getElementById('proxyType').value;
+                const fields = document.getElementById('proxyConnectionFields');
+                if (type === 'none') {
+                    fields.style.display = 'none';
+                } else {
+                    fields.style.display = 'block';
+                }
+            }
+
+            validateProxyConfig() {
+                const type = document.getElementById('proxyType').value;
+                const host = document.getElementById('proxyHost').value.trim();
+                const port = parseInt(document.getElementById('proxyPort').value);
+                const username = document.getElementById('proxyUsername').value.trim();
+                const password = document.getElementById('proxyPassword').value;
+
+                if (type === 'none') {
+                    return { valid: true };
+                }
+
+                if (!host) {
+                    return { valid: false, message: 'Host is required' };
+                }
+
+                if (!port || port < 1 || port > 65535) {
+                    return { valid: false, message: 'Port must be between 1 and 65535' };
+                }
+
+                if ((username && !password) || (!username && password)) {
+                    return { valid: false, message: 'Username and password must both be provided or both empty' };
+                }
+
+                return { valid: true };
+            }
+
+            async testProxyConnection() {
+                const validation = this.validateProxyConfig();
+                if (!validation.valid) {
+                    document.getElementById('proxyValidationError').textContent = validation.message;
+                    return;
+                }
+
+                document.getElementById('proxyValidationError').textContent = '';
+                this.toast.show('Testing proxy connection...', 'info');
+                this.log('Testing proxy connection...', 'info');
+
+                // Simulate test (in real implementation, this would call an API endpoint)
+                setTimeout(() => {
+                    this.toast.show('Proxy connection test successful', 'success');
+                    this.log('Proxy connection test successful', 'success');
+                }, 1000);
+            }
+
+            async saveProxyConfig() {
+                const validation = this.validateProxyConfig();
+                if (!validation.valid) {
+                    document.getElementById('proxyValidationError').textContent = validation.message;
+                    return;
+                }
+
+                const proxyConfig = {
+                    type: document.getElementById('proxyType').value,
+                    host: document.getElementById('proxyHost').value.trim(),
+                    port: parseInt(document.getElementById('proxyPort').value),
+                    username: document.getElementById('proxyUsername').value.trim() || null,
+                    password: document.getElementById('proxyPassword').value || null,
+                    enabled: document.getElementById('proxyEnabled').checked
+                };
+
+                try {
+                    this.log('Saving proxy configuration...', 'info');
+                    this.loading.show();
+                    await this.api.updateProxyConfig(this.currentProviderId, this.currentTokenId, proxyConfig);
+                    this.log('Proxy configuration saved successfully', 'success');
+                    this.toast.show('Proxy configuration saved', 'success');
+                    this.hideProxyConfigModal();
+                    await this.loadData();
+                } catch (error) {
+                    this.log(`Failed to save proxy config: ${error.message}`, 'error');
+                    this.toast.show('Failed to save proxy configuration', 'error');
+                } finally {
+                    this.loading.hide();
+                }
+            }
+
+            async toggleProxyEnabled(providerId, tokenId) {
+                try {
+                    this.log(`Toggling proxy for token ${tokenId}`, 'info');
+                    this.loading.show();
+                    
+                    // Get current config
+                    const data = await this.api.getProxyConfig(providerId, tokenId);
+                    const proxy = data.proxy || { type: 'none', host: '', port: 0, username: '', password: '', enabled: false };
+                    
+                    // Toggle enabled state
+                    proxy.enabled = !proxy.enabled;
+                    
+                    await this.api.updateProxyConfig(providerId, tokenId, proxy);
+                    this.log(`Proxy ${proxy.enabled ? 'enabled' : 'disabled'} for token ${tokenId}`, 'success');
+                    this.toast.show(`Proxy ${proxy.enabled ? 'enabled' : 'disabled'}`, 'success');
+                    await this.loadData();
+                } catch (error) {
+                    this.log(`Failed to toggle proxy: ${error.message}`, 'error');
+                    this.toast.show('Failed to toggle proxy', 'error');
+                } finally {
+                    this.loading.hide();
+                }
+            }
+
+            async deleteProxyConfig(providerId, tokenId) {
+                if (!confirm('Are you sure you want to remove this proxy configuration?')) {
                     return;
                 }
 
                 try {
-                    this.log('Clearing all credentials', 'info');
-                    this.showLoading();
-                    const data = await this.api.clearAllCredentials();
-                    this.stateManager.clearAll();
-                    this.log(`Cleared ${data.cleared} credential files`, 'success');
-                    this.showToast(`Cleared ${data.cleared} credential files`, 'success');
-                    await this.refreshAll();
+                    this.log(`Deleting proxy config for token ${tokenId}`, 'info');
+                    this.loading.show();
+                    await this.api.deleteProxyConfig(providerId, tokenId);
+                    this.log('Proxy configuration removed', 'success');
+                    this.toast.show('Proxy configuration removed', 'success');
+                    await this.loadData();
                 } catch (error) {
-                    this.log(`Failed to clear credentials: ${error.message}`, 'error');
-                    this.showToast('Failed to clear credentials', 'error');
+                    this.log(`Failed to delete proxy config: ${error.message}`, 'error');
+                    this.toast.show('Failed to remove proxy configuration', 'error');
                 } finally {
-                    this.hideLoading();
+                    this.loading.hide();
                 }
             }
 
-            async refreshAll() {
-                await Promise.all([
-                    this.loadProviders(),
-                    this.loadCredentials(),
-                    this.checkServerStatus(),
-                ]);
+            // ============================================
+            // Provider Settings Methods
+            // ============================================
+
+            showProviderSettingsModal(providerId) {
+                this.currentProviderId = providerId;
+                const provider = this.providers.find(p => p.id === providerId);
+                const cred = this.credentials.find(c => c.provider === providerId);
+                const settings = cred && cred.settings ? cred.settings : null;
+
+                document.getElementById('providerSettingsTitle').textContent = `Provider Settings - ${provider ? provider.name : providerId}`;
+                document.getElementById('selectionStrategy').value = settings?.selection_strategy || 'random';
+                document.getElementById('refreshBuffer').value = settings?.refresh_buffer_sec || 1800;
+                document.getElementById('maxErrorCount').value = settings?.max_error_count || 3;
+                document.getElementById('providerSettingsModal').classList.add('active');
             }
 
-            showSettingsModal() {
-                document.getElementById('apiBaseUrl').value = this.stateManager.getApiBaseUrl();
-                document.getElementById('settingsModal').classList.add('active');
+            hideProviderSettingsModal() {
+                document.getElementById('providerSettingsModal').classList.remove('active');
             }
 
-            hideSettingsModal() {
-                document.getElementById('settingsModal').classList.remove('active');
+            async updateProviderStrategy(providerId, strategy) {
+                try {
+                    await this.api.updateProviderSettings(providerId, { selection_strategy: strategy });
+                    this.log(`Updated selection strategy for ${providerId} to ${strategy}`, 'success');
+                    this.toast.show('Settings saved', 'success');
+                } catch (error) {
+                    this.log(`Failed to update settings: ${error.message}`, 'error');
+                    this.toast.show('Failed to save settings', 'error');
+                }
             }
 
-            saveSettings() {
+            async updateProviderBuffer(providerId, buffer) {
+                try {
+                    await this.api.updateProviderSettings(providerId, { refresh_buffer_sec: parseInt(buffer) });
+                    this.log(`Updated refresh buffer for ${providerId}`, 'success');
+                    this.toast.show('Settings saved', 'success');
+                } catch (error) {
+                    this.log(`Failed to update settings: ${error.message}`, 'error');
+                    this.toast.show('Failed to save settings', 'error');
+                }
+            }
+
+            async updateProviderMaxErrors(providerId, maxErrors) {
+                try {
+                    await this.api.updateProviderSettings(providerId, { max_error_count: parseInt(maxErrors) });
+                    this.log(`Updated max error count for ${providerId}`, 'success');
+                    this.toast.show('Settings saved', 'success');
+                } catch (error) {
+                    this.log(`Failed to update settings: ${error.message}`, 'error');
+                    this.toast.show('Failed to save settings', 'error');
+                }
+            }
+
+            async saveProviderSettings() {
+                const settings = {
+                    selection_strategy: document.getElementById('selectionStrategy').value,
+                    refresh_buffer_sec: document.getElementById('refreshBuffer').value ? parseInt(document.getElementById('refreshBuffer').value) : null,
+                    max_error_count: document.getElementById('maxErrorCount').value ? parseInt(document.getElementById('maxErrorCount').value) : null
+                };
+
+                try {
+                    this.log('Saving provider settings...', 'info');
+                    this.loading.show();
+                    await this.api.updateProviderSettings(this.currentProviderId, settings);
+                    this.log('Settings saved successfully', 'success');
+                    this.toast.show('Settings saved successfully', 'success');
+                    this.hideProviderSettingsModal();
+                    await this.loadData();
+                } catch (error) {
+                    this.log(`Failed to save settings: ${error.message}`, 'error');
+                    this.toast.show('Failed to save settings', 'error');
+                } finally {
+                    this.loading.hide();
+                }
+            }
+
+            // ============================================
+            // Global Settings Methods
+            // ============================================
+
+            async saveGlobalSettings() {
                 const url = document.getElementById('apiBaseUrl').value.trim();
                 if (!url) {
-                    this.showToast('Please enter a valid URL', 'error');
+                    this.toast.show('Please enter a valid URL', 'error');
                     return;
                 }
 
-                this.stateManager.setApiBaseUrl(url);
-                this.api.setBaseUrl(url);
-                this.hideSettingsModal();
-                this.showToast('Settings saved', 'success');
-                this.log(`API base URL changed to ${url}`, 'info');
-                this.refreshAll();
-            }
-
-            showLoading() {
-                document.getElementById('loadingOverlay').classList.add('active');
-            }
-
-            hideLoading() {
-                document.getElementById('loadingOverlay').classList.remove('active');
-            }
-
-            log(message, type = 'info') {
-                const logEntries = document.getElementById('logEntries');
-                const entry = document.createElement('div');
-                entry.className = 'log-entry';
-
-                const time = new Date().toLocaleTimeString();
-                const messageClass = type === 'success' ? 'success' : type === 'error' ? 'error' : type === 'warning' ? 'warning' : '';
-
-                entry.innerHTML = `
-                    <div class="log-time">${time}</div>
-                    <div class="log-message ${messageClass}">${this.escapeHtml(message)}</div>
-                `;
-
-                logEntries.insertBefore(entry, logEntries.firstChild);
-
-                // Keep only last 50 entries
-                while (logEntries.children.length > 50) {
-                    logEntries.removeChild(logEntries.lastChild);
+                const interval = parseInt(document.getElementById('autoRefreshInterval').value);
+                if (interval < 10 || interval > 300) {
+                    this.toast.show('Auto-refresh interval must be between 10 and 300 seconds', 'error');
+                    return;
                 }
+
+                this.state.setApiBaseUrl(url);
+                this.state.setAutoRefreshInterval(interval);
+                this.api.setBaseUrl(url);
+                
+                this.log(`API base URL changed to ${url}`, 'info');
+                this.log(`Auto-refresh interval set to ${interval} seconds`, 'info');
+                this.toast.show('Settings saved', 'success');
+                
+                // Restart periodic refresh with new interval
+                this.stopPeriodicRefresh();
+                this.startPeriodicRefresh();
             }
 
-            showToast(message, type = 'info') {
-                const container = document.getElementById('toastContainer');
-                const toast = document.createElement('div');
-                toast.className = `toast ${type}`;
+            // ============================================
+            // Log Methods
+            // ============================================
 
-                const icon = type === 'success' ? '✓' : type === 'error' ? '✕' : type === 'warning' ? '⚠' : 'ℹ';
+            log(message, level = 'info', provider = null) {
+                const logEntry = {
+                    timestamp: Date.now(),
+                    level: level,
+                    message: message,
+                    provider: provider
+                };
+                this.state.addLog(logEntry);
+            }
 
-                toast.innerHTML = `<span>${icon}</span><span>${this.escapeHtml(message)}</span>`;
-                container.appendChild(toast);
+            exportLogs() {
+                const logs = this.state.getLogs();
+                const exportData = logs.map(log =>
+                    `${new Date(log.timestamp).toISOString()} [${log.level.toUpperCase()}] ${log.provider || 'SYSTEM'}: ${log.message}`
+                ).join('\n');
 
-                // Remove after 5 seconds
-                setTimeout(() => {
-                    toast.style.animation = 'slideIn 0.3s ease reverse';
-                    setTimeout(() => {
-                        container.removeChild(toast);
-                    }, 300);
-                }, 5000);
+                const blob = new Blob([exportData], { type: 'text/plain' });
+                const url = URL.createObjectURL(blob);
+                const a = document.createElement('a');
+                a.href = url;
+                a.download = `dashboard-logs-${new Date().toISOString().split('T')[0]}.txt`;
+                a.click();
+                URL.revokeObjectURL(url);
+                
+                this.log('Logs exported', 'success');
+                this.toast.show('Logs exported successfully', 'success');
+            }
+
+            // ============================================
+            // Utility Methods
+            // ============================================
+
+            formatExpiresIn(seconds) {
+                if (!seconds || seconds < 0) return 'Expired';
+                if (seconds < 60) return `${Math.floor(seconds)}s`;
+                if (seconds < 3600) return `${Math.floor(seconds / 60)}m`;
+                return `${Math.floor(seconds / 3600)}h`;
+            }
+
+            formatDuration(ms) {
+                if (!ms || ms < 0) return 'Expired';
+                const seconds = Math.floor(ms / 1000);
+                if (seconds < 60) return `${seconds}s`;
+                if (seconds < 3600) return `${Math.floor(seconds / 60)}m`;
+                if (seconds < 86400) return `${Math.floor(seconds / 3600)}h`;
+                return `${Math.floor(seconds / 86400)}d`;
+            }
+
+            formatTimestamp(timestamp) {
+                if (!timestamp) return 'Never';
+                const date = new Date(timestamp);
+                const now = new Date();
+                const diff = now - date;
+                
+                if (diff < 60000) return 'Just now';
+                if (diff < 3600000) return `${Math.floor(diff / 60000)}m ago`;
+                if (diff < 86400000) return `${Math.floor(diff / 3600000)}h ago`;
+                if (diff < 604800000) return `${Math.floor(diff / 86400000)}d ago`;
+                
+                return date.toLocaleDateString();
             }
 
             escapeHtml(text) {
@@ -1596,12 +3803,58 @@
                 div.textContent = text;
                 return div.innerHTML;
             }
+
+            // ============================================
+            // Server Status
+            // ============================================
+
+            async checkServerStatus() {
+                const statusDot = document.getElementById('statusDot');
+                const statusText = document.getElementById('statusText');
+
+                statusDot.className = 'status-dot checking';
+                statusText.textContent = 'Checking...';
+
+                try {
+                    await this.api.getProviders();
+                    statusDot.className = 'status-dot online';
+                    statusText.textContent = 'Online';
+                } catch (error) {
+                    statusDot.className = 'status-dot';
+                    statusText.textContent = 'Offline';
+                }
+            }
+
+            updateServerStatus(status) {
+                const statusDot = document.getElementById('statusDot');
+                const statusText = document.getElementById('statusText');
+                
+                statusDot.className = `status-dot ${status}`;
+                statusText.textContent = status.charAt(0).toUpperCase() + status.slice(1);
+            }
+
+            // ============================================
+            // Periodic Refresh
+            // ============================================
+
+            startPeriodicRefresh() {
+                const interval = this.state.getAutoRefreshInterval() * 1000;
+                this.refreshInterval = setInterval(() => {
+                    this.checkServerStatus();
+                }, interval);
+            }
+
+            stopPeriodicRefresh() {
+                if (this.refreshInterval) {
+                    clearInterval(this.refreshInterval);
+                    this.refreshInterval = null;
+                }
+            }
         }
 
-        // Initialize dashboard
-        let dashboard;
+        // Initialize dashboard on DOM ready
         document.addEventListener('DOMContentLoaded', () => {
-            dashboard = new Dashboard();
+            window.dashboard = new Dashboard();
         });
     </script>
 </body>

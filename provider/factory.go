@@ -8,6 +8,8 @@ import (
 	"math/rand"
 	"sync"
 	"time"
+
+	"github.com/sunbankio/qwencoder-proxy/auth"
 )
 
 // ModelProviderMap maps models to the providers that support them
@@ -44,6 +46,20 @@ func NewFactory() *Factory {
 func (f *Factory) Register(p Provider) {
 	f.mu.Lock()
 	defer f.mu.Unlock()
+	f.providers[p.Name()] = p
+}
+
+// RegisterWithTokenManager adds a provider to the factory and injects a TokenManager
+// if the provider implements the TokenManagerAware interface
+func (f *Factory) RegisterWithTokenManager(p Provider, tokenManager *auth.TokenManager) {
+	f.mu.Lock()
+	defer f.mu.Unlock()
+
+	// Inject TokenManager if the provider supports it
+	if tokenAware, ok := p.(TokenManagerAware); ok {
+		tokenAware.SetTokenManager(tokenManager)
+	}
+
 	f.providers[p.Name()] = p
 }
 

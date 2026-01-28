@@ -4,6 +4,9 @@ package provider
 import (
 	"context"
 	"io"
+	"net/http"
+
+	"github.com/sunbankio/qwencoder-proxy/auth"
 )
 
 // ProviderType identifies the provider
@@ -59,6 +62,15 @@ type Provider interface {
 	IsHealthy(ctx context.Context) bool
 }
 
+// TokenManagerAware is an optional interface that providers can implement
+// to receive a TokenManager for proxy-aware token selection.
+// This interface is separate from Provider to maintain backward compatibility.
+type TokenManagerAware interface {
+	// SetTokenManager sets the TokenManager for this provider.
+	// This enables proxy-aware token selection when making API requests.
+	SetTokenManager(manager *auth.TokenManager)
+}
+
 // Authenticator defines the interface for provider authentication
 type Authenticator interface {
 	// Authenticate performs the authentication flow
@@ -66,6 +78,12 @@ type Authenticator interface {
 
 	// GetToken returns a valid access token, refreshing if necessary
 	GetToken(ctx context.Context) (string, error)
+
+	// GetTokenWithClient returns a valid access token and an HTTP client configured
+	// with the token's proxy settings. The HTTP client may be nil if the authenticator
+	// does not support proxy-aware clients. This method maintains backward compatibility
+	// with GetToken() while enabling proxy-aware authentication operations.
+	GetTokenWithClient(ctx context.Context) (string, *http.Client, error)
 
 	// IsAuthenticated checks if valid credentials exist
 	IsAuthenticated() bool
@@ -75,6 +93,11 @@ type Authenticator interface {
 
 	// ClearCredentials removes stored credentials
 	ClearCredentials() error
+
+	// GetHTTPClient returns an HTTP client configured with the token's proxy settings.
+	// This is an optional method - authenticators that do not support proxy-aware clients
+	// should return an error indicating the method is not implemented.
+	GetHTTPClient() (*http.Client, error)
 }
 
 // Model represents a model in the provider's catalog

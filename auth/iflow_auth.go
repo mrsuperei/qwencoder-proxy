@@ -7,6 +7,7 @@ import (
 	"crypto/sha256"
 	"encoding/base64"
 	"encoding/json"
+	"errors"
 	"fmt"
 	"io"
 	"net/http"
@@ -314,6 +315,49 @@ func (a *IFlowAuthenticator) GetAPIKey() string {
 		return ""
 	}
 	return a.credentials.APIKey
+}
+
+// GetTokenWithClient returns a valid access token and an HTTP client.
+// The HTTP client is configured with the proxy settings from the selected token.
+func (a *IFlowAuthenticator) GetTokenWithClient(ctx context.Context) (string, *http.Client, error) {
+	a.mu.RLock()
+	tokenManager := a.tokenManager
+	a.mu.RUnlock()
+
+	if tokenManager == nil {
+		token, err := a.GetToken(ctx)
+		return token, nil, err
+	}
+
+	token, client, err := tokenManager.SelectTokenWithClient()
+	if err != nil {
+		return "", nil, fmt.Errorf("failed to select token with client: %w", err)
+	}
+
+	// Return API key if available, otherwise return access token
+	if token.APIKey != "" {
+		return token.APIKey, client, nil
+	}
+	return token.AccessToken, client, nil
+}
+
+// GetHTTPClient returns an HTTP client configured with proxy settings.
+// The client is configured with the proxy settings from the selected token.
+func (a *IFlowAuthenticator) GetHTTPClient() (*http.Client, error) {
+	a.mu.RLock()
+	tokenManager := a.tokenManager
+	a.mu.RUnlock()
+
+	if tokenManager == nil {
+		return nil, errors.New("token manager not initialized")
+	}
+
+	token, client, err := tokenManager.SelectTokenWithClient()
+	if err != nil {
+		return nil, fmt.Errorf("failed to select token with client: %w", err)
+	}
+	_ = token // Token is not needed for GetHTTPClient
+	return client, nil
 }
 
 // IsAuthenticated checks if valid credentials exist

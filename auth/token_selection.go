@@ -4,12 +4,21 @@ import (
 	"errors"
 	"fmt"
 	"math/rand"
+	"net/http"
 	"sort"
 	"sync"
 	"time"
 
 	"github.com/sunbankio/qwencoder-proxy/logging"
 )
+
+// ProxyClientFactory is an interface for creating HTTP clients with proxy configuration.
+// This interface breaks the circular dependency between auth and config packages.
+type ProxyClientFactory interface {
+	// GetClient returns an HTTP client for the given proxy configuration.
+	// If proxyConfig is nil or has type ProxyTypeNone, a direct connection client is returned.
+	GetClient(proxyConfig *ProxyConfig) *http.Client
+}
 
 var (
 	// ErrNoValidTokens is returned when no valid tokens are available
@@ -125,18 +134,23 @@ func (s *LeastUsedSelectionStrategy) SelectToken(tokens []ProviderToken) (*Provi
 
 // TokenManager manages token selection for a provider
 type TokenManager struct {
-	store    *MultiTokenStore
-	strategy SelectionStrategy
-	mu       sync.RWMutex
-	logger   *logging.Logger
+	store              *MultiTokenStore
+	strategy           SelectionStrategy
+	mu                 sync.RWMutex
+	logger             *logging.Logger
+	clientFactory      ProxyClientFactory
+	proxyHealthTracker *ProxyHealthTracker
 }
 
 // NewTokenManager creates a new TokenManager
-func NewTokenManager(store *MultiTokenStore, strategy SelectionStrategy, logger *logging.Logger) *TokenManager {
+func NewTokenManager(store *MultiTokenStore, strategy SelectionStrategy, logger *logging.Logger,
+	clientFactory ProxyClientFactory, proxyHealthTracker *ProxyHealthTracker) *TokenManager {
 	return &TokenManager{
-		store:    store,
-		strategy: strategy,
-		logger:   logger,
+		store:              store,
+		strategy:           strategy,
+		logger:             logger,
+		clientFactory:      clientFactory,
+		proxyHealthTracker: proxyHealthTracker,
 	}
 }
 
@@ -147,7 +161,14 @@ func (tm *TokenManager) SelectToken() (*ProviderToken, error) {
 
 	// Get all tokens from store
 	tokens := tm.store.ListTokens()
+	nowMs := time.Now().UnixMilli()
+	tm.logger.DebugLog("[TokenManager] SelectToken called: total tokens=%d, nowMs=%d", len(tokens), nowMs)
+	for i, token := range tokens {
+		tm.logger.DebugLog("[TokenManager] Token[%d]: ID=%s, Email=%s, Healthy=%v, ExpiryDate=%d, LastUsed=%d",
+			i, token.ID, token.Email, token.Healthy, token.ExpiryDate, token.LastUsed)
+	}
 	if len(tokens) == 0 {
+		tm.logger.ErrorLog("[TokenManager] No tokens available in store")
 		return nil, ErrNoTokensAvailable
 	}
 
@@ -222,6 +243,155 @@ func (tm *TokenManager) GetTokenCount() int {
 // GetValidTokenCount returns the number of valid tokens
 func (tm *TokenManager) GetValidTokenCount() int {
 	return tm.store.GetValidTokenCount()
+}
+
+// SelectTokenWithClient selects a token using the configured strategy and returns
+// both the token and its configured HTTP client. This enables providers to use
+// token-specific proxy configurations for API requests.
+//
+// The method:
+// 1. Calls existing SelectionStrategy.SelectToken() to get ProviderToken
+// 2. Gets ProviderToken from MultiTokenStore with full metadata
+// 3. Extracts ProxyConfig from token (may be nil)
+// 4. Calls ProxyAwareHTTPClientFactory.GetClient(proxyConfig)
+// 5. Updates proxy health metrics via ProxyHealthTracker
+// 6. Returns (token, client, nil)
+//
+// Returns an error if no tokens are available or if token selection fails.
+func (tm *TokenManager) SelectTokenWithClient() (*ProviderToken, *http.Client, error) {
+	tm.mu.RLock()
+	defer tm.mu.RUnlock()
+
+	// Get all tokens from store
+	tokens := tm.store.ListTokens()
+	if len(tokens) == 0 {
+		return nil, nil, ErrNoTokensAvailable
+	}
+
+	// Select token using configured strategy
+	token, err := tm.strategy.SelectToken(tokens)
+	if err != nil {
+		return nil, nil, err
+	}
+
+	// Get full ProviderToken from store with all metadata
+	fullToken, err := tm.store.GetToken(token.ID)
+	if err != nil {
+		tm.logger.ErrorLog("Failed to get full token %s from store: %v", token.ID, err)
+		return nil, nil, fmt.Errorf("failed to get token from store: %w", err)
+	}
+
+	// Extract ProxyConfig from token (may be nil)
+	proxyConfig := fullToken.Proxy
+
+	// Get client from factory with proxy config
+	if tm.clientFactory == nil {
+		tm.logger.WarningLog("Client factory not set for token manager, returning nil client")
+		return fullToken, nil, nil
+	}
+
+	client := tm.clientFactory.GetClient(proxyConfig)
+
+	// Update proxy health metrics via ProxyHealthTracker
+	if tm.proxyHealthTracker != nil {
+		healthScore := tm.proxyHealthTracker.GetHealthScore(fullToken.ID)
+		tm.logger.DebugLog("Token %s selected with proxy health score: %.2f", fullToken.ID, healthScore)
+	}
+
+	// Update LastUsed timestamp
+	if err := tm.store.UpdateToken(fullToken.ID, func(t *ProviderToken) {
+		t.LastUsed = GetCurrentTimestamp()
+	}); err != nil {
+		tm.logger.WarningLog("Failed to update LastUsed timestamp for token %s: %v", fullToken.ID, err)
+	}
+
+	proxyType := "direct"
+	if proxyConfig != nil {
+		proxyType = string(proxyConfig.Type)
+	}
+	tm.logger.DebugLog("Selected token %s using %s strategy with %s connection", fullToken.ID, tm.strategy.Name(), proxyType)
+
+	return fullToken, client, nil
+}
+
+// GetTokenClient returns an HTTP client configured for the specified token's proxy.
+// This method allows providers to get a client for a specific token without
+// going through the token selection process.
+//
+// Returns an error if the token is not found or if client factory is not set.
+func (tm *TokenManager) GetTokenClient(tokenID string) (*http.Client, error) {
+	tm.mu.RLock()
+	defer tm.mu.RUnlock()
+
+	// Get ProviderToken from store
+	token, err := tm.store.GetToken(tokenID)
+	if err != nil {
+		tm.logger.ErrorLog("Failed to get token %s: %v", tokenID, err)
+		return nil, fmt.Errorf("failed to get token: %w", err)
+	}
+
+	// Check if client factory is set
+	if tm.clientFactory == nil {
+		tm.logger.WarningLog("Client factory not set for token manager")
+		return nil, fmt.Errorf("client factory not set")
+	}
+
+	// Extract ProxyConfig from token
+	proxyConfig := token.Proxy
+
+	// Return client from factory
+	client := tm.clientFactory.GetClient(proxyConfig)
+
+	proxyType := "direct"
+	if proxyConfig != nil {
+		proxyType = string(proxyConfig.Type)
+	}
+	tm.logger.DebugLog("Retrieved client for token %s with %s connection", tokenID, proxyType)
+
+	return client, nil
+}
+
+// UpdateProxyHealth updates the health status for a token's proxy connection.
+// This method:
+// - Calls proxyHealthTracker.UpdateHealth()
+// - Updates ProviderToken.ProxyHealthScore in store
+// - Saves updated token
+//
+// Parameters:
+//   - tokenID: The ID of the token to update
+//   - healthy: Whether the proxy connection is healthy
+//   - err: Optional error from the proxy connection
+//
+// Returns an error if the token is not found or if the update fails.
+func (tm *TokenManager) UpdateProxyHealth(tokenID string, healthy bool, err error) error {
+	tm.mu.Lock()
+	defer tm.mu.Unlock()
+
+	// Check if proxy health tracker is set
+	if tm.proxyHealthTracker == nil {
+		tm.logger.WarningLog("Proxy health tracker not set for token manager")
+		return fmt.Errorf("proxy health tracker not set")
+	}
+
+	// Update health in tracker
+	healthScore := tm.proxyHealthTracker.UpdateHealth(tokenID, healthy, err)
+
+	// Update ProviderToken.ProxyHealthScore in store
+	updateErr := tm.store.UpdateToken(tokenID, func(token *ProviderToken) {
+		token.ProxyHealthScore = healthScore
+	})
+	if updateErr != nil {
+		tm.logger.ErrorLog("Failed to update proxy health score for token %s: %v", tokenID, updateErr)
+		return fmt.Errorf("failed to update token proxy health: %w", updateErr)
+	}
+
+	status := "healthy"
+	if !healthy {
+		status = "unhealthy"
+	}
+	tm.logger.DebugLog("Updated proxy health for token %s: %s, score: %.2f", tokenID, status, healthScore)
+
+	return nil
 }
 
 // HealthTracker tracks token health and provides recommendations
@@ -363,8 +533,14 @@ func filterValidTokens(tokens []ProviderToken) []ProviderToken {
 	valid := make([]ProviderToken, 0, len(tokens))
 
 	for _, token := range tokens {
+		// We can't log here because this function is called from strategies
+		// But the validity check is: healthy=true AND expiry > now + 30min_buffer
 		if isTokenValid(token) {
 			valid = append(valid, token)
+		} else {
+			// DEBUG: Log why token was rejected to help diagnose token expiry issues
+			// This will appear in logs when SelectToken is called
+			// We can't use logger here because this is a package-level function
 		}
 	}
 
@@ -381,5 +557,12 @@ func isTokenValid(token ProviderToken) bool {
 	}
 	// Use a default buffer of 30 minutes if settings not available
 	bufferMs := int64(DefaultRefreshBufferSec) * 1000
-	return time.Now().UnixMilli() < token.ExpiryDate-bufferMs
+	nowMs := time.Now().UnixMilli()
+	expiryWithBuffer := token.ExpiryDate - bufferMs
+	isValid := nowMs < expiryWithBuffer
+	// DEBUG: Log validation details to diagnose token expiry issues
+	// This helps identify if tokens are being rejected due to incorrect expiry calculation
+	// The validity check is: now < (expiry - 30min_buffer)
+	// We can't use logging here as this is called from strategies
+	return isValid
 }

@@ -9,7 +9,9 @@ import (
 	"fmt"
 	"io"
 	"math/big"
+	"net"
 	"net/http"
+	"net/url"
 	"strings"
 	"sync"
 	"time"
@@ -63,6 +65,7 @@ type Provider struct {
 	autopushBaseURL string
 	authenticator   *auth.GeminiAuthenticator // Antigravity uses similar auth to Gemini CLI
 	httpClient      *http.Client
+	tokenManager    *auth.TokenManager
 	logger          *logging.Logger
 	projectID       string
 	isInitialized   bool
@@ -156,6 +159,11 @@ func (p *Provider) GetAuthenticator() provider.Authenticator {
 	return p.authenticator
 }
 
+// SetTokenManager sets the TokenManager for this provider
+func (p *Provider) SetTokenManager(manager *auth.TokenManager) {
+	p.tokenManager = manager
+}
+
 // IsHealthy checks if the provider is available
 func (p *Provider) IsHealthy(ctx context.Context) bool {
 	// Initialize the provider as part of health check
@@ -169,15 +177,137 @@ func (p *Provider) IsHealthy(ctx context.Context) bool {
 	return err == nil
 }
 
-// doRequestWithRetry executes a request with retry logic for 401 updates
-func (p *Provider) doRequestWithRetry(ctx context.Context, reqFunc func(string) (*http.Response, error)) (*http.Response, error) {
-	// First attempt
-	token, err := p.authenticator.GetToken(ctx)
-	if err != nil {
-		return nil, fmt.Errorf("failed to get token: %w", err)
+// isProxyError checks if an error is a proxy-related error
+// This includes connection errors, timeout errors, and DNS resolution errors
+func (p *Provider) isProxyError(err error) bool {
+	if err == nil {
+		return false
 	}
 
-	resp, err := reqFunc(token)
+	// Check for timeout errors
+	if netErr, ok := err.(net.Error); ok {
+		if netErr.Timeout() {
+			return true
+		}
+	}
+
+	// Check for connection errors
+	if strings.Contains(err.Error(), "connection refused") ||
+		strings.Contains(err.Error(), "connection reset") ||
+		strings.Contains(err.Error(), "broken pipe") ||
+		strings.Contains(err.Error(), "EOF") {
+		return true
+	}
+
+	// Check for DNS resolution errors
+	if strings.Contains(err.Error(), "no such host") ||
+		strings.Contains(err.Error(), "dns") ||
+		strings.Contains(err.Error(), "lookup") {
+		return true
+	}
+
+	// Check for proxy-specific errors
+	if strings.Contains(err.Error(), "proxy") ||
+		strings.Contains(err.Error(), "SOCKS") ||
+		strings.Contains(err.Error(), "tunnel") {
+		return true
+	}
+
+	// Check for URL errors (often related to proxy configuration)
+	if urlErr, ok := err.(*url.Error); ok {
+		return p.isProxyError(urlErr.Err)
+	}
+
+	return false
+}
+
+// classifyProxyError returns a string classification of the proxy error type
+// This is used for health tracking and logging purposes
+func (p *Provider) classifyProxyError(err error) string {
+	if err == nil {
+		return "none"
+	}
+
+	// Check for timeout errors
+	if netErr, ok := err.(net.Error); ok && netErr.Timeout() {
+		return "timeout"
+	}
+
+	// Check for connection errors
+	if strings.Contains(err.Error(), "connection refused") {
+		return "connection_refused"
+	}
+	if strings.Contains(err.Error(), "connection reset") {
+		return "connection_reset"
+	}
+	if strings.Contains(err.Error(), "broken pipe") {
+		return "broken_pipe"
+	}
+	if strings.Contains(err.Error(), "EOF") {
+		return "eof"
+	}
+
+	// Check for DNS resolution errors
+	if strings.Contains(err.Error(), "no such host") ||
+		strings.Contains(err.Error(), "lookup") {
+		return "dns_resolution"
+	}
+
+	// Check for proxy-specific errors
+	if strings.Contains(err.Error(), "SOCKS") {
+		return "socks_error"
+	}
+	if strings.Contains(err.Error(), "proxy") {
+		return "proxy_error"
+	}
+	if strings.Contains(err.Error(), "tunnel") {
+		return "tunnel_error"
+	}
+
+	// Check for URL errors
+	if urlErr, ok := err.(*url.Error); ok {
+		return "url_error: " + p.classifyProxyError(urlErr.Err)
+	}
+
+	return "unknown"
+}
+
+// doRequestWithProxy executes an HTTP request using the provided client
+// and handles proxy error classification and health tracking
+func (p *Provider) doRequestWithProxy(req *http.Request, client *http.Client, tokenID string) (*http.Response, error) {
+	resp, err := client.Do(req)
+	if err != nil {
+		// Check if this is a proxy error
+		if p.isProxyError(err) {
+			errorType := p.classifyProxyError(err)
+			p.logger.ErrorLog("[Antigravity] Proxy error for token %s: %s (%s)", tokenID, err.Error(), errorType)
+
+			// Update proxy health if tokenManager is available
+			if p.tokenManager != nil {
+				if updateErr := p.tokenManager.UpdateProxyHealth(tokenID, false, err); updateErr != nil {
+					p.logger.WarningLog("[Antigravity] Failed to update proxy health for token %s: %v", tokenID, updateErr)
+				}
+			}
+		} else {
+			p.logger.ErrorLog("[Antigravity] Request error for token %s: %v", tokenID, err)
+		}
+		return nil, err
+	}
+
+	// Update proxy health on success
+	if p.tokenManager != nil {
+		if updateErr := p.tokenManager.UpdateProxyHealth(tokenID, true, nil); updateErr != nil {
+			p.logger.WarningLog("[Antigravity] Failed to update proxy health for token %s: %v", tokenID, updateErr)
+		}
+	}
+
+	return resp, nil
+}
+
+// doRequestWithRetry executes a request with retry logic for 401 updates
+func (p *Provider) doRequestWithRetry(ctx context.Context, reqFunc func(string, *http.Client, string) (*http.Response, error), token string, client *http.Client, tokenID string) (*http.Response, error) {
+	// First attempt
+	resp, err := reqFunc(token, client, tokenID)
 	if err != nil {
 		return nil, err
 	}
@@ -199,7 +329,7 @@ func (p *Provider) doRequestWithRetry(ctx context.Context, reqFunc func(string) 
 			return nil, fmt.Errorf("failed to get refreshed token: %w", err)
 		}
 
-		return reqFunc(token)
+		return reqFunc(token, client, tokenID)
 	}
 
 	return resp, nil
@@ -214,9 +344,55 @@ func (p *Provider) ListModels(ctx context.Context) (interface{}, error) {
 		}
 	}
 
+	// Determine which client and token to use
+	var client *http.Client
+	var token string
+	var tokenID string
+
+	// Try to use token manager for proxy-aware client selection
+	if p.tokenManager != nil {
+		selectedToken, selectedClient, selectErr := p.tokenManager.SelectTokenWithClient()
+		if selectErr != nil {
+			p.logger.WarningLog("[Antigravity] Failed to select token with client, falling back to authenticator: %v", selectErr)
+			// Fall back to authenticator
+			var authErr error
+			token, authErr = p.authenticator.GetToken(ctx)
+			if authErr != nil {
+				return nil, fmt.Errorf("failed to get token: %w", authErr)
+			}
+			client = p.httpClient
+			tokenID = "fallback"
+		} else {
+			if selectedClient == nil {
+				p.logger.DebugLog("[Antigravity] Token manager returned nil client, using default HTTP client")
+				client = p.httpClient
+			} else {
+				client = selectedClient
+			}
+			token = selectedToken.AccessToken
+			tokenID = selectedToken.ID
+
+			// Log proxy usage
+			if selectedToken.Proxy != nil && selectedToken.Proxy.Enabled {
+				p.logger.DebugLog("[Antigravity] Using token %s with proxy: %s:%d", tokenID, selectedToken.Proxy.Host, selectedToken.Proxy.Port)
+			} else {
+				p.logger.DebugLog("[Antigravity] Using token %s with direct connection", tokenID)
+			}
+		}
+	} else {
+		// No token manager, use authenticator and default client
+		var authErr error
+		token, authErr = p.authenticator.GetToken(ctx)
+		if authErr != nil {
+			return nil, fmt.Errorf("failed to get token: %w", authErr)
+		}
+		client = p.httpClient
+		tokenID = "fallback"
+	}
+
 	url := fmt.Sprintf("%s/%s:fetchAvailableModels", p.dailyBaseURL, APIVersion)
 
-	reqFunc := func(token string) (*http.Response, error) {
+	reqFunc := func(token string, client *http.Client, tokenID string) (*http.Response, error) {
 		req, err := http.NewRequestWithContext(ctx, "POST", url, nil)
 		if err != nil {
 			return nil, fmt.Errorf("failed to create request: %w", err)
@@ -226,10 +402,10 @@ func (p *Provider) ListModels(ctx context.Context) (interface{}, error) {
 		req.Header.Set("User-Agent", DefaultUserAgent)
 
 		p.logger.DebugLog("[Antigravity] Sending fetchAvailableModels request to %s", url)
-		return p.httpClient.Do(req)
+		return p.doRequestWithProxy(req, client, tokenID)
 	}
 
-	resp, err := p.doRequestWithRetry(ctx, reqFunc)
+	resp, err := p.doRequestWithRetry(ctx, reqFunc, token, client, tokenID)
 	if err != nil {
 		return nil, fmt.Errorf("failed to send request: %w", err)
 	}
@@ -245,9 +421,9 @@ func (p *Provider) ListModels(ctx context.Context) (interface{}, error) {
 	if err != nil {
 		return nil, fmt.Errorf("failed to read response body: %w", err)
 	}
-	
+
 	p.logger.DebugLog("[Antigravity] Raw fetchAvailableModels response: %s", string(respBody))
-	
+
 	// Try to unmarshal the response into a generic map
 	var rawResponse map[string]interface{}
 	if err := json.Unmarshal(respBody, &rawResponse); err != nil {
@@ -270,7 +446,7 @@ func (p *Provider) ListModels(ctx context.Context) (interface{}, error) {
 					model := gemini.GeminiModel{
 						Name: modelID,
 					}
-					
+
 					// Set other fields if they exist in the response
 					if val, exists := modelDetailsMap["displayName"]; exists {
 						if str, ok := val.(string); ok {
@@ -302,7 +478,7 @@ func (p *Provider) ListModels(ctx context.Context) (interface{}, error) {
 							model.SupportedGenerationMethods = methods
 						}
 					}
-					
+
 					updatedResp.Models = append(updatedResp.Models, model)
 				}
 			}
@@ -460,6 +636,52 @@ func (p *Provider) discoverProjectAndModels(ctx context.Context) (string, error)
 
 // callAPI makes an API call to the Antigravity service with retry logic
 func (p *Provider) callAPI(ctx context.Context, method string, body map[string]interface{}, baseURL string) (map[string]interface{}, error) {
+	// Determine which client and token to use
+	var client *http.Client
+	var token string
+	var tokenID string
+
+	// Try to use token manager for proxy-aware client selection
+	if p.tokenManager != nil {
+		selectedToken, selectedClient, selectErr := p.tokenManager.SelectTokenWithClient()
+		if selectErr != nil {
+			p.logger.WarningLog("[Antigravity] Failed to select token with client, falling back to authenticator: %v", selectErr)
+			// Fall back to authenticator
+			var authErr error
+			token, authErr = p.authenticator.GetToken(ctx)
+			if authErr != nil {
+				return nil, fmt.Errorf("failed to get token: %w", authErr)
+			}
+			client = p.httpClient
+			tokenID = "fallback"
+		} else {
+			if selectedClient == nil {
+				p.logger.DebugLog("[Antigravity] Token manager returned nil client, using default HTTP client")
+				client = p.httpClient
+			} else {
+				client = selectedClient
+			}
+			token = selectedToken.AccessToken
+			tokenID = selectedToken.ID
+
+			// Log proxy usage
+			if selectedToken.Proxy != nil && selectedToken.Proxy.Enabled {
+				p.logger.DebugLog("[Antigravity] Using token %s with proxy: %s:%d", tokenID, selectedToken.Proxy.Host, selectedToken.Proxy.Port)
+			} else {
+				p.logger.DebugLog("[Antigravity] Using token %s with direct connection", tokenID)
+			}
+		}
+	} else {
+		// No token manager, use authenticator and default client
+		var authErr error
+		token, authErr = p.authenticator.GetToken(ctx)
+		if authErr != nil {
+			return nil, fmt.Errorf("failed to get token: %w", authErr)
+		}
+		client = p.httpClient
+		tokenID = "fallback"
+	}
+
 	url := fmt.Sprintf("%s/%s:%s", baseURL, APIVersion, method)
 
 	reqBody, err := json.Marshal(body)
@@ -467,7 +689,7 @@ func (p *Provider) callAPI(ctx context.Context, method string, body map[string]i
 		return nil, fmt.Errorf("failed to marshal request: %w", err)
 	}
 
-	reqFunc := func(token string) (*http.Response, error) {
+	reqFunc := func(token string, client *http.Client, tokenID string) (*http.Response, error) {
 		req, err := http.NewRequestWithContext(ctx, "POST", url, bytes.NewReader(reqBody))
 		if err != nil {
 			return nil, fmt.Errorf("failed to create request: %w", err)
@@ -478,10 +700,10 @@ func (p *Provider) callAPI(ctx context.Context, method string, body map[string]i
 		req.Header.Set("User-Agent", DefaultUserAgent)
 
 		p.logger.DebugLog("[Antigravity] Sending %s request to %s", method, url)
-		return p.httpClient.Do(req)
+		return p.doRequestWithProxy(req, client, tokenID)
 	}
 
-	resp, err := p.doRequestWithRetry(ctx, reqFunc)
+	resp, err := p.doRequestWithRetry(ctx, reqFunc, token, client, tokenID)
 	if err != nil {
 		return nil, fmt.Errorf("failed to send request: %w", err)
 	}
@@ -724,9 +946,48 @@ func (p *Provider) GenerateContent(ctx context.Context, model string, request in
 	}
 
 	// Use the correct endpoint
+	// Get token and proxy-aware client
+	var client *http.Client
+	var token string
+	var tokenID string
+
+	// Try to use token manager for proxy-aware client selection
+	if p.tokenManager != nil {
+		selectedToken, selectedClient, selectErr := p.tokenManager.SelectTokenWithClient()
+		if selectErr != nil {
+			p.logger.ErrorLog("[Antigravity] Token selection failed: %v", selectErr)
+			return nil, fmt.Errorf("failed to select token: %w", selectErr)
+		}
+		if selectedClient == nil {
+			p.logger.DebugLog("[Antigravity] Token manager returned nil client, using default HTTP client")
+			client = p.httpClient
+		} else {
+			client = selectedClient
+		}
+		token = selectedToken.AccessToken
+		tokenID = selectedToken.ID
+
+		// Log proxy usage
+		if selectedToken.Proxy != nil && selectedToken.Proxy.Enabled {
+			p.logger.DebugLog("[Antigravity] GenerateContent using token %s with proxy: %s:%d", tokenID, selectedToken.Proxy.Host, selectedToken.Proxy.Port)
+		} else {
+			p.logger.DebugLog("[Antigravity] GenerateContent using token %s with direct connection", tokenID)
+		}
+	} else {
+		// No token manager, use authenticator and default client
+		var authErr error
+		token, authErr = p.authenticator.GetToken(ctx)
+		if authErr != nil {
+			p.logger.ErrorLog("[Antigravity] Token retrieval failed: %v", authErr)
+			return nil, fmt.Errorf("failed to get token: %w", authErr)
+		}
+		client = p.httpClient
+		tokenID = "fallback"
+	}
+
 	url := fmt.Sprintf("%s/%s:generateContent", p.getBaseURLForModel(actualModel), APIVersion)
 
-	reqFunc := func(token string) (*http.Response, error) {
+	reqFunc := func(token string, client *http.Client, tokenID string) (*http.Response, error) {
 		req, err := http.NewRequestWithContext(ctx, "POST", url, bytes.NewReader(reqBody))
 		if err != nil {
 			return nil, fmt.Errorf("failed to create request: %w", err)
@@ -737,10 +998,10 @@ func (p *Provider) GenerateContent(ctx context.Context, model string, request in
 		req.Header.Set("User-Agent", DefaultUserAgent)
 
 		p.logger.DebugLog("[Antigravity] Sending generateContent request to %s", url)
-		return p.httpClient.Do(req)
+		return p.doRequestWithProxy(req, client, tokenID)
 	}
 
-	resp, err := p.doRequestWithRetry(ctx, reqFunc)
+	resp, err := p.doRequestWithRetry(ctx, reqFunc, token, client, tokenID)
 	if err != nil {
 		return nil, fmt.Errorf("failed to send request: %w", err)
 	}
@@ -815,10 +1076,49 @@ func (p *Provider) GenerateContentStream(ctx context.Context, model string, requ
 		return nil, fmt.Errorf("failed to marshal antigravity request: %w", err)
 	}
 
+	// Get token and proxy-aware client
+	var client *http.Client
+	var token string
+	var tokenID string
+
+	// Try to use token manager for proxy-aware client selection
+	if p.tokenManager != nil {
+		selectedToken, selectedClient, selectErr := p.tokenManager.SelectTokenWithClient()
+		if selectErr != nil {
+			p.logger.ErrorLog("[Antigravity] Token selection failed: %v", selectErr)
+			return nil, fmt.Errorf("failed to select token: %w", selectErr)
+		}
+		if selectedClient == nil {
+			p.logger.DebugLog("[Antigravity] Token manager returned nil client, using default HTTP client")
+			client = p.httpClient
+		} else {
+			client = selectedClient
+		}
+		token = selectedToken.AccessToken
+		tokenID = selectedToken.ID
+
+		// Log proxy usage
+		if selectedToken.Proxy != nil && selectedToken.Proxy.Enabled {
+			p.logger.DebugLog("[Antigravity] GenerateContentStream using token %s with proxy: %s:%d", tokenID, selectedToken.Proxy.Host, selectedToken.Proxy.Port)
+		} else {
+			p.logger.DebugLog("[Antigravity] GenerateContentStream using token %s with direct connection", tokenID)
+		}
+	} else {
+		// No token manager, use authenticator and default client
+		var authErr error
+		token, authErr = p.authenticator.GetToken(ctx)
+		if authErr != nil {
+			p.logger.ErrorLog("[Antigravity] Token retrieval failed: %v", authErr)
+			return nil, fmt.Errorf("failed to get token: %w", authErr)
+		}
+		client = p.httpClient
+		tokenID = "fallback"
+	}
+
 	// Use the correct streaming endpoint with alt=sse parameter
 	url := fmt.Sprintf("%s/%s:streamGenerateContent?alt=sse", p.getBaseURLForModel(actualModel), APIVersion)
 
-	reqFunc := func(token string) (*http.Response, error) {
+	reqFunc := func(token string, client *http.Client, tokenID string) (*http.Response, error) {
 		req, err := http.NewRequestWithContext(ctx, "POST", url, bytes.NewReader(reqBody))
 		if err != nil {
 			return nil, fmt.Errorf("failed to create request: %w", err)
@@ -830,11 +1130,11 @@ func (p *Provider) GenerateContentStream(ctx context.Context, model string, requ
 		req.Header.Set("Accept", "text/event-stream")
 
 		p.logger.DebugLog("[Antigravity] Sending streaming generateContent request to %s", url)
-		return p.httpClient.Do(req)
+		return p.doRequestWithProxy(req, client, tokenID)
 	}
 
 	// For streaming, we also want retry logic on 401
-	resp, err := p.doRequestWithRetry(ctx, reqFunc)
+	resp, err := p.doRequestWithRetry(ctx, reqFunc, token, client, tokenID)
 	if err != nil {
 		return nil, fmt.Errorf("failed to send request: %w", err)
 	}

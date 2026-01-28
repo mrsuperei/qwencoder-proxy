@@ -188,7 +188,7 @@ func TestRefreshCoordinator_New(t *testing.T) {
 
 	t.Run("creates coordinator with defaults", func(t *testing.T) {
 		store := NewMultiTokenStore("test-provider", filePath, logger)
-		coordinator := NewRefreshCoordinator(store, 0, nil)
+		coordinator := NewRefreshCoordinator(store, 0, nil, nil)
 
 		assert.Equal(t, 3, coordinator.workers) // Default worker count
 		assert.NotNil(t, coordinator.logger)
@@ -199,7 +199,7 @@ func TestRefreshCoordinator_New(t *testing.T) {
 
 	t.Run("creates coordinator with custom workers", func(t *testing.T) {
 		store := NewMultiTokenStore("test-provider", filePath, logger)
-		coordinator := NewRefreshCoordinator(store, 5, logger)
+		coordinator := NewRefreshCoordinator(store, 5, logger, nil)
 
 		assert.Equal(t, 5, coordinator.workers)
 	})
@@ -210,7 +210,7 @@ func TestRefreshCoordinator_RegisterRefresher(t *testing.T) {
 	tempDir := t.TempDir()
 	filePath := tempDir + "/store.json"
 	store := NewMultiTokenStore("test-provider", filePath, logger)
-	coordinator := NewRefreshCoordinator(store, 3, logger)
+	coordinator := NewRefreshCoordinator(store, 3, logger, nil)
 
 	t.Run("registers refresher", func(t *testing.T) {
 		refresher := NewMockRefresher("test-provider")
@@ -225,7 +225,7 @@ func TestRefreshCoordinator_StartStop(t *testing.T) {
 	tempDir := t.TempDir()
 	filePath := tempDir + "/store.json"
 	store := NewMultiTokenStore("test-provider", filePath, logger)
-	coordinator := NewRefreshCoordinator(store, 2, logger)
+	coordinator := NewRefreshCoordinator(store, 2, logger, nil)
 
 	t.Run("starts and stops workers", func(t *testing.T) {
 		err := coordinator.Start()
@@ -239,7 +239,11 @@ func TestRefreshCoordinator_StartStop(t *testing.T) {
 		assert.True(t, status[0])
 		assert.True(t, status[1])
 
+		// Stop coordinator
 		coordinator.Stop()
+
+		// Give workers time to stop
+		time.Sleep(200 * time.Millisecond)
 
 		// Workers should be stopped
 		status = coordinator.GetWorkerStatus()
@@ -254,7 +258,7 @@ func TestRefreshCoordinator_ScheduleRefresh(t *testing.T) {
 	tempDir := t.TempDir()
 	filePath := tempDir + "/store.json"
 	store := NewMultiTokenStore("test-provider", filePath, logger)
-	coordinator := NewRefreshCoordinator(store, 2, logger)
+	coordinator := NewRefreshCoordinator(store, 2, logger, nil)
 	refresher := NewMockRefresher("test-provider")
 	coordinator.RegisterRefresher(refresher)
 
@@ -279,7 +283,7 @@ func TestRefreshCoordinator_RefreshToken(t *testing.T) {
 	tempDir := t.TempDir()
 	filePath := tempDir + "/store.json"
 	store := NewMultiTokenStore("test-provider", filePath, logger)
-	coordinator := NewRefreshCoordinator(store, 2, logger)
+	coordinator := NewRefreshCoordinator(store, 2, logger, nil)
 	refresher := NewMockRefresher("test-provider")
 	coordinator.RegisterRefresher(refresher)
 
@@ -313,7 +317,7 @@ func TestRefreshCoordinator_RefreshToken(t *testing.T) {
 
 	t.Run("returns error when no refresher registered", func(t *testing.T) {
 		store2 := NewMultiTokenStore("test-provider-2", tempDir+"/store2.json", logger)
-		coordinator2 := NewRefreshCoordinator(store2, 2, logger)
+		coordinator2 := NewRefreshCoordinator(store2, 2, logger, nil)
 		// Don't register a refresher
 
 		token := createTestToken("test-token")
@@ -348,7 +352,7 @@ func TestRefreshCoordinator_ProcessRequest(t *testing.T) {
 	tempDir := t.TempDir()
 	filePath := tempDir + "/store.json"
 	store := NewMultiTokenStore("test-provider", filePath, logger)
-	coordinator := NewRefreshCoordinator(store, 2, logger)
+	coordinator := NewRefreshCoordinator(store, 2, logger, nil)
 	refresher := NewMockRefresher("test-provider")
 	coordinator.RegisterRefresher(refresher)
 
@@ -380,7 +384,7 @@ func TestRefreshScheduler_New(t *testing.T) {
 	tempDir := t.TempDir()
 	filePath := tempDir + "/store.json"
 	store := NewMultiTokenStore("test-provider", filePath, logger)
-	coordinator := NewRefreshCoordinator(store, 2, logger)
+	coordinator := NewRefreshCoordinator(store, 2, logger, nil)
 
 	t.Run("creates scheduler with defaults", func(t *testing.T) {
 		scheduler := NewRefreshScheduler(coordinator, store, 0, nil)
@@ -401,7 +405,7 @@ func TestRefreshScheduler_StartStop(t *testing.T) {
 	tempDir := t.TempDir()
 	filePath := tempDir + "/store.json"
 	store := NewMultiTokenStore("test-provider", filePath, logger)
-	coordinator := NewRefreshCoordinator(store, 2, logger)
+	coordinator := NewRefreshCoordinator(store, 2, logger, nil)
 	scheduler := NewRefreshScheduler(coordinator, store, 100*time.Millisecond, logger)
 
 	t.Run("starts and stops scheduler", func(t *testing.T) {
@@ -416,7 +420,7 @@ func TestRefreshScheduler_CheckAndSchedule(t *testing.T) {
 	tempDir := t.TempDir()
 	filePath := tempDir + "/store.json"
 	store := NewMultiTokenStore("test-provider", filePath, logger)
-	coordinator := NewRefreshCoordinator(store, 2, logger)
+	coordinator := NewRefreshCoordinator(store, 2, logger, nil)
 	refresher := NewMockRefresher("test-provider")
 	coordinator.RegisterRefresher(refresher)
 
@@ -443,7 +447,7 @@ func TestRefreshScheduler_CheckAndSchedule(t *testing.T) {
 
 	t.Run("skips unhealthy tokens", func(t *testing.T) {
 		store2 := NewMultiTokenStore("test-provider-2", tempDir+"/store2.json", logger)
-		coordinator2 := NewRefreshCoordinator(store2, 2, logger)
+		coordinator2 := NewRefreshCoordinator(store2, 2, logger, nil)
 		scheduler2 := NewRefreshScheduler(coordinator2, store2, 1*time.Minute, logger)
 
 		now := time.Now()
@@ -464,7 +468,7 @@ func TestRefreshScheduler_CheckAndSchedule(t *testing.T) {
 
 func TestQwenRefresher(t *testing.T) {
 	logger := logging.NewLogger()
-	refresher := NewQwenRefresher(nil, logger)
+	refresher := NewQwenRefresher(nil, logger, nil, nil)
 
 	t.Run("returns provider ID", func(t *testing.T) {
 		assert.Equal(t, "qwen", refresher.ProviderID())
@@ -487,7 +491,7 @@ func TestQwenRefresher(t *testing.T) {
 func TestGeminiRefresher(t *testing.T) {
 	logger := logging.NewLogger()
 	config := DefaultGeminiOAuthConfig()
-	refresher := NewGeminiRefresher(config, nil, logger)
+	refresher := NewGeminiRefresher(config, nil, logger, nil, nil)
 
 	t.Run("returns provider ID", func(t *testing.T) {
 		assert.Equal(t, "gemini", refresher.ProviderID())
@@ -510,7 +514,7 @@ func TestGeminiRefresher(t *testing.T) {
 func TestKiroRefresher(t *testing.T) {
 	logger := logging.NewLogger()
 	config := DefaultKiroOAuthConfig()
-	refresher := NewKiroRefresher(config, nil, logger)
+	refresher := NewKiroRefresher(config, nil, logger, nil, nil)
 
 	t.Run("returns provider ID", func(t *testing.T) {
 		assert.Equal(t, "kiro", refresher.ProviderID())
@@ -533,7 +537,7 @@ func TestKiroRefresher(t *testing.T) {
 func TestIFlowRefresher(t *testing.T) {
 	logger := logging.NewLogger()
 	config := DefaultIFlowOAuthConfig()
-	refresher := NewIFlowRefresher(config, nil, logger)
+	refresher := NewIFlowRefresher(config, nil, logger, nil, nil)
 
 	t.Run("returns provider ID", func(t *testing.T) {
 		assert.Equal(t, "iflow", refresher.ProviderID())
@@ -558,7 +562,7 @@ func TestRefreshCoordinator_GetQueueSize(t *testing.T) {
 	tempDir := t.TempDir()
 	filePath := tempDir + "/store.json"
 	store := NewMultiTokenStore("test-provider", filePath, logger)
-	coordinator := NewRefreshCoordinator(store, 2, logger)
+	coordinator := NewRefreshCoordinator(store, 2, logger, nil)
 	refresher := NewMockRefresher("test-provider")
 	coordinator.RegisterRefresher(refresher)
 
@@ -583,7 +587,7 @@ func TestRefreshCoordinator_GetWorkerStatus(t *testing.T) {
 	tempDir := t.TempDir()
 	filePath := tempDir + "/store.json"
 	store := NewMultiTokenStore("test-provider", filePath, logger)
-	coordinator := NewRefreshCoordinator(store, 3, logger)
+	coordinator := NewRefreshCoordinator(store, 3, logger, nil)
 
 	t.Run("returns worker status", func(t *testing.T) {
 		// Before start

@@ -3,7 +3,9 @@ package auth
 import (
 	"context"
 	"encoding/json"
+	"errors"
 	"fmt"
+	"net"
 	"net/http"
 	"strings"
 	"sync"
@@ -41,21 +43,22 @@ type ProviderRefresh interface {
 
 // RefreshCoordinator manages token refresh operations with a worker pool
 type RefreshCoordinator struct {
-	store        *MultiTokenStore
-	refreshers   map[string]ProviderRefresh // ProviderID -> ProviderRefresh
-	requestQueue chan RefreshRequest
-	resultQueue  chan RefreshResult
-	workers      int
-	ctx          context.Context
-	cancel       context.CancelFunc
-	wg           sync.WaitGroup
-	mu           sync.RWMutex
-	logger       *logging.Logger
-	workerStatus map[int]bool // Worker ID -> Active status
+	store         *MultiTokenStore
+	refreshers    map[string]ProviderRefresh // ProviderID -> ProviderRefresh
+	requestQueue  chan RefreshRequest
+	resultQueue   chan RefreshResult
+	workers       int
+	ctx           context.Context
+	cancel        context.CancelFunc
+	wg            sync.WaitGroup
+	mu            sync.RWMutex
+	logger        *logging.Logger
+	workerStatus  map[int]bool // Worker ID -> Active status
+	clientFactory ProxyClientFactory
 }
 
 // NewRefreshCoordinator creates a new RefreshCoordinator
-func NewRefreshCoordinator(store *MultiTokenStore, workers int, logger *logging.Logger) *RefreshCoordinator {
+func NewRefreshCoordinator(store *MultiTokenStore, workers int, logger *logging.Logger, clientFactory ProxyClientFactory) *RefreshCoordinator {
 	if workers <= 0 {
 		workers = 3 // Default worker count
 	}
@@ -66,15 +69,16 @@ func NewRefreshCoordinator(store *MultiTokenStore, workers int, logger *logging.
 	ctx, cancel := context.WithCancel(context.Background())
 
 	return &RefreshCoordinator{
-		store:        store,
-		refreshers:   make(map[string]ProviderRefresh),
-		requestQueue: make(chan RefreshRequest, 100), // Buffered queue
-		resultQueue:  make(chan RefreshResult, 100),
-		workers:      workers,
-		ctx:          ctx,
-		cancel:       cancel,
-		logger:       logger,
-		workerStatus: make(map[int]bool),
+		store:         store,
+		refreshers:    make(map[string]ProviderRefresh),
+		requestQueue:  make(chan RefreshRequest, 100), // Buffered queue
+		resultQueue:   make(chan RefreshResult, 100),
+		workers:       workers,
+		ctx:           ctx,
+		cancel:        cancel,
+		logger:        logger,
+		workerStatus:  make(map[int]bool),
+		clientFactory: clientFactory,
 	}
 }
 
@@ -98,6 +102,7 @@ func (rc *RefreshCoordinator) Stop() {
 	rc.mu.Lock()
 	defer rc.mu.Unlock()
 
+	// Cancel context first to signal workers to stop
 	rc.cancel()
 
 	// Close queues to signal workers to stop
@@ -387,12 +392,14 @@ func (rs *RefreshScheduler) CheckAndSchedule() {
 
 // QwenRefresher implements ProviderRefresh for Qwen
 type QwenRefresher struct {
-	httpClient *http.Client
-	logger     *logging.Logger
+	httpClient    *http.Client
+	logger        *logging.Logger
+	clientFactory ProxyClientFactory
+	tokenManager  *TokenManager // For proxy health tracking
 }
 
 // NewQwenRefresher creates a new QwenRefresher
-func NewQwenRefresher(httpClient *http.Client, logger *logging.Logger) *QwenRefresher {
+func NewQwenRefresher(httpClient *http.Client, logger *logging.Logger, clientFactory ProxyClientFactory, tokenManager *TokenManager) *QwenRefresher {
 	if httpClient == nil {
 		httpClient = &http.Client{Timeout: 30 * time.Second}
 	}
@@ -400,8 +407,10 @@ func NewQwenRefresher(httpClient *http.Client, logger *logging.Logger) *QwenRefr
 		logger = logging.NewLogger()
 	}
 	return &QwenRefresher{
-		httpClient: httpClient,
-		logger:     logger,
+		httpClient:    httpClient,
+		logger:        logger,
+		clientFactory: clientFactory,
+		tokenManager:  tokenManager,
 	}
 }
 
@@ -410,6 +419,13 @@ func (qr *QwenRefresher) RefreshToken(ctx context.Context, token ProviderToken) 
 	if token.RefreshToken == "" {
 		return ProviderToken{}, fmt.Errorf("no refresh token available")
 	}
+
+	// Log token refresh with proxy info
+	proxyType := "direct"
+	if token.Proxy != nil {
+		proxyType = string(token.Proxy.Type)
+	}
+	qr.logger.InfoLog("[QwenRefresher] Refreshing token %s using %s connection", token.ID, proxyType)
 
 	// Create OAuthCreds from ProviderToken
 	creds := OAuthCreds{
@@ -423,6 +439,13 @@ func (qr *QwenRefresher) RefreshToken(ctx context.Context, token ProviderToken) 
 	// Use the existing RefreshAccessToken function
 	refreshedCreds, err := RefreshAccessToken(creds)
 	if err != nil {
+		// Check if this is a proxy error and update health
+		if isProxyError(err) && qr.tokenManager != nil {
+			qr.logger.ErrorLog("[QwenRefresher] Proxy error during token refresh for %s: %v", token.ID, err)
+			if updateErr := qr.tokenManager.UpdateProxyHealth(token.ID, false, err); updateErr != nil {
+				qr.logger.ErrorLog("[QwenRefresher] Failed to update proxy health: %v", updateErr)
+			}
+		}
 		return ProviderToken{}, fmt.Errorf("failed to refresh Qwen token: %w", err)
 	}
 
@@ -434,6 +457,14 @@ func (qr *QwenRefresher) RefreshToken(ctx context.Context, token ProviderToken) 
 	newToken.ExpiryDate = refreshedCreds.ExpiryDate
 	newToken.ResourceURL = refreshedCreds.ResourceURL
 
+	// Update proxy health on success
+	if qr.tokenManager != nil {
+		if updateErr := qr.tokenManager.UpdateProxyHealth(token.ID, true, nil); updateErr != nil {
+			qr.logger.ErrorLog("[QwenRefresher] Failed to update proxy health: %v", updateErr)
+		}
+	}
+
+	qr.logger.InfoLog("[QwenRefresher] Successfully refreshed token %s", token.ID)
 	return newToken, nil
 }
 
@@ -444,13 +475,15 @@ func (qr *QwenRefresher) ProviderID() string {
 
 // GeminiRefresher implements ProviderRefresh for Gemini
 type GeminiRefresher struct {
-	config     *GeminiOAuthConfig
-	httpClient *http.Client
-	logger     *logging.Logger
+	config        *GeminiOAuthConfig
+	httpClient    *http.Client
+	logger        *logging.Logger
+	clientFactory ProxyClientFactory
+	tokenManager  *TokenManager // For proxy health tracking
 }
 
 // NewGeminiRefresher creates a new GeminiRefresher
-func NewGeminiRefresher(config *GeminiOAuthConfig, httpClient *http.Client, logger *logging.Logger) *GeminiRefresher {
+func NewGeminiRefresher(config *GeminiOAuthConfig, httpClient *http.Client, logger *logging.Logger, clientFactory ProxyClientFactory, tokenManager *TokenManager) *GeminiRefresher {
 	if config == nil {
 		config = DefaultGeminiOAuthConfig()
 	}
@@ -461,9 +494,11 @@ func NewGeminiRefresher(config *GeminiOAuthConfig, httpClient *http.Client, logg
 		logger = logging.NewLogger()
 	}
 	return &GeminiRefresher{
-		config:     config,
-		httpClient: httpClient,
-		logger:     logger,
+		config:        config,
+		httpClient:    httpClient,
+		logger:        logger,
+		clientFactory: clientFactory,
+		tokenManager:  tokenManager,
 	}
 }
 
@@ -471,6 +506,20 @@ func NewGeminiRefresher(config *GeminiOAuthConfig, httpClient *http.Client, logg
 func (gr *GeminiRefresher) RefreshToken(ctx context.Context, token ProviderToken) (ProviderToken, error) {
 	if token.RefreshToken == "" {
 		return ProviderToken{}, fmt.Errorf("no refresh token available")
+	}
+
+	// Log token refresh with proxy info
+	proxyType := "direct"
+	if token.Proxy != nil {
+		proxyType = string(token.Proxy.Type)
+	}
+	gr.logger.InfoLog("[GeminiRefresher] Refreshing token %s using %s connection", token.ID, proxyType)
+
+	// Get proxy-aware client if factory is available
+	httpClient := gr.httpClient
+	if gr.clientFactory != nil {
+		httpClient = gr.clientFactory.GetClient(token.Proxy)
+		gr.logger.DebugLog("[GeminiRefresher] Using proxy-aware client for token %s", token.ID)
 	}
 
 	// Setup OAuth2 config
@@ -493,12 +542,19 @@ func (gr *GeminiRefresher) RefreshToken(ctx context.Context, token ProviderToken
 	}
 
 	// Create a context with the custom HTTP client
-	oauthCtx := context.WithValue(ctx, oauth2.HTTPClient, gr.httpClient)
+	oauthCtx := context.WithValue(ctx, oauth2.HTTPClient, httpClient)
 
 	// Create TokenSource and get new token
 	ts := conf.TokenSource(oauthCtx, oauthToken)
 	newToken, err := ts.Token()
 	if err != nil {
+		// Check if this is a proxy error and update health
+		if isProxyError(err) && gr.tokenManager != nil {
+			gr.logger.ErrorLog("[GeminiRefresher] Proxy error during token refresh for %s: %v", token.ID, err)
+			if updateErr := gr.tokenManager.UpdateProxyHealth(token.ID, false, err); updateErr != nil {
+				gr.logger.ErrorLog("[GeminiRefresher] Failed to update proxy health: %v", updateErr)
+			}
+		}
 		return ProviderToken{}, fmt.Errorf("failed to refresh Gemini token: %w", err)
 	}
 
@@ -516,6 +572,14 @@ func (gr *GeminiRefresher) RefreshToken(ctx context.Context, token ProviderToken
 		newProviderToken.Scope = scope
 	}
 
+	// Update proxy health on success
+	if gr.tokenManager != nil {
+		if updateErr := gr.tokenManager.UpdateProxyHealth(token.ID, true, nil); updateErr != nil {
+			gr.logger.ErrorLog("[GeminiRefresher] Failed to update proxy health: %v", updateErr)
+		}
+	}
+
+	gr.logger.InfoLog("[GeminiRefresher] Successfully refreshed token %s", token.ID)
 	return newProviderToken, nil
 }
 
@@ -526,13 +590,15 @@ func (gr *GeminiRefresher) ProviderID() string {
 
 // KiroRefresher implements ProviderRefresh for Kiro
 type KiroRefresher struct {
-	config     *KiroOAuthConfig
-	httpClient *http.Client
-	logger     *logging.Logger
+	config        *KiroOAuthConfig
+	httpClient    *http.Client
+	logger        *logging.Logger
+	clientFactory ProxyClientFactory
+	tokenManager  *TokenManager // For proxy health tracking
 }
 
 // NewKiroRefresher creates a new KiroRefresher
-func NewKiroRefresher(config *KiroOAuthConfig, httpClient *http.Client, logger *logging.Logger) *KiroRefresher {
+func NewKiroRefresher(config *KiroOAuthConfig, httpClient *http.Client, logger *logging.Logger, clientFactory ProxyClientFactory, tokenManager *TokenManager) *KiroRefresher {
 	if config == nil {
 		config = DefaultKiroOAuthConfig()
 	}
@@ -543,9 +609,11 @@ func NewKiroRefresher(config *KiroOAuthConfig, httpClient *http.Client, logger *
 		logger = logging.NewLogger()
 	}
 	return &KiroRefresher{
-		config:     config,
-		httpClient: httpClient,
-		logger:     logger,
+		config:        config,
+		httpClient:    httpClient,
+		logger:        logger,
+		clientFactory: clientFactory,
+		tokenManager:  tokenManager,
 	}
 }
 
@@ -553,6 +621,20 @@ func NewKiroRefresher(config *KiroOAuthConfig, httpClient *http.Client, logger *
 func (kr *KiroRefresher) RefreshToken(ctx context.Context, token ProviderToken) (ProviderToken, error) {
 	if token.RefreshToken == "" {
 		return ProviderToken{}, fmt.Errorf("no refresh token available")
+	}
+
+	// Log token refresh with proxy info
+	proxyType := "direct"
+	if token.Proxy != nil {
+		proxyType = string(token.Proxy.Type)
+	}
+	kr.logger.InfoLog("[KiroRefresher] Refreshing token %s using %s connection", token.ID, proxyType)
+
+	// Get proxy-aware client if factory is available
+	httpClient := kr.httpClient
+	if kr.clientFactory != nil {
+		httpClient = kr.clientFactory.GetClient(token.Proxy)
+		kr.logger.DebugLog("[KiroRefresher] Using proxy-aware client for token %s", token.ID)
 	}
 
 	// Determine refresh URL based on auth method
@@ -584,8 +666,15 @@ func (kr *KiroRefresher) RefreshToken(ctx context.Context, token ProviderToken) 
 	}
 	req.Header.Set("Content-Type", "application/json")
 
-	resp, err := kr.httpClient.Do(req)
+	resp, err := httpClient.Do(req)
 	if err != nil {
+		// Check if this is a proxy error and update health
+		if isProxyError(err) && kr.tokenManager != nil {
+			kr.logger.ErrorLog("[KiroRefresher] Proxy error during token refresh for %s: %v", token.ID, err)
+			if updateErr := kr.tokenManager.UpdateProxyHealth(token.ID, false, err); updateErr != nil {
+				kr.logger.ErrorLog("[KiroRefresher] Failed to update proxy health: %v", updateErr)
+			}
+		}
 		return ProviderToken{}, fmt.Errorf("failed to send refresh request: %w", err)
 	}
 	defer resp.Body.Close()
@@ -614,6 +703,14 @@ func (kr *KiroRefresher) RefreshToken(ctx context.Context, token ProviderToken) 
 		newToken.RefreshToken = tokenResp.RefreshToken
 	}
 
+	// Update proxy health on success
+	if kr.tokenManager != nil {
+		if updateErr := kr.tokenManager.UpdateProxyHealth(token.ID, true, nil); updateErr != nil {
+			kr.logger.ErrorLog("[KiroRefresher] Failed to update proxy health: %v", updateErr)
+		}
+	}
+
+	kr.logger.InfoLog("[KiroRefresher] Successfully refreshed token %s", token.ID)
 	return newToken, nil
 }
 
@@ -624,13 +721,15 @@ func (kr *KiroRefresher) ProviderID() string {
 
 // IFlowRefresher implements ProviderRefresh for iFlow
 type IFlowRefresher struct {
-	config     *IFlowOAuthConfig
-	httpClient *http.Client
-	logger     *logging.Logger
+	config        *IFlowOAuthConfig
+	httpClient    *http.Client
+	logger        *logging.Logger
+	clientFactory ProxyClientFactory
+	tokenManager  *TokenManager // For proxy health tracking
 }
 
 // NewIFlowRefresher creates a new IFlowRefresher
-func NewIFlowRefresher(config *IFlowOAuthConfig, httpClient *http.Client, logger *logging.Logger) *IFlowRefresher {
+func NewIFlowRefresher(config *IFlowOAuthConfig, httpClient *http.Client, logger *logging.Logger, clientFactory ProxyClientFactory, tokenManager *TokenManager) *IFlowRefresher {
 	if config == nil {
 		config = DefaultIFlowOAuthConfig()
 	}
@@ -641,9 +740,11 @@ func NewIFlowRefresher(config *IFlowOAuthConfig, httpClient *http.Client, logger
 		logger = logging.NewLogger()
 	}
 	return &IFlowRefresher{
-		config:     config,
-		httpClient: httpClient,
-		logger:     logger,
+		config:        config,
+		httpClient:    httpClient,
+		logger:        logger,
+		clientFactory: clientFactory,
+		tokenManager:  tokenManager,
 	}
 }
 
@@ -651,6 +752,20 @@ func NewIFlowRefresher(config *IFlowOAuthConfig, httpClient *http.Client, logger
 func (ifr *IFlowRefresher) RefreshToken(ctx context.Context, token ProviderToken) (ProviderToken, error) {
 	if token.RefreshToken == "" {
 		return ProviderToken{}, fmt.Errorf("no refresh token available")
+	}
+
+	// Log token refresh with proxy info
+	proxyType := "direct"
+	if token.Proxy != nil {
+		proxyType = string(token.Proxy.Type)
+	}
+	ifr.logger.InfoLog("[IFlowRefresher] Refreshing token %s using %s connection", token.ID, proxyType)
+
+	// Get proxy-aware client if factory is available
+	httpClient := ifr.httpClient
+	if ifr.clientFactory != nil {
+		httpClient = ifr.clientFactory.GetClient(token.Proxy)
+		ifr.logger.DebugLog("[IFlowRefresher] Using proxy-aware client for token %s", token.ID)
 	}
 
 	// Setup OAuth2 config
@@ -672,12 +787,19 @@ func (ifr *IFlowRefresher) RefreshToken(ctx context.Context, token ProviderToken
 	}
 
 	// Create a context with the custom HTTP client
-	oauthCtx := context.WithValue(ctx, oauth2.HTTPClient, ifr.httpClient)
+	oauthCtx := context.WithValue(ctx, oauth2.HTTPClient, httpClient)
 
 	// Create TokenSource and get new token
 	ts := conf.TokenSource(oauthCtx, oauthToken)
 	newToken, err := ts.Token()
 	if err != nil {
+		// Check if this is a proxy error and update health
+		if isProxyError(err) && ifr.tokenManager != nil {
+			ifr.logger.ErrorLog("[IFlowRefresher] Proxy error during token refresh for %s: %v", token.ID, err)
+			if updateErr := ifr.tokenManager.UpdateProxyHealth(token.ID, false, err); updateErr != nil {
+				ifr.logger.ErrorLog("[IFlowRefresher] Failed to update proxy health: %v", updateErr)
+			}
+		}
 		return ProviderToken{}, fmt.Errorf("failed to refresh iFlow token: %w", err)
 	}
 
@@ -695,12 +817,113 @@ func (ifr *IFlowRefresher) RefreshToken(ctx context.Context, token ProviderToken
 		newProviderToken.Scope = scope
 	}
 
+	// Update proxy health on success
+	if ifr.tokenManager != nil {
+		if updateErr := ifr.tokenManager.UpdateProxyHealth(token.ID, true, nil); updateErr != nil {
+			ifr.logger.ErrorLog("[IFlowRefresher] Failed to update proxy health: %v", updateErr)
+		}
+	}
+
+	ifr.logger.InfoLog("[IFlowRefresher] Successfully refreshed token %s", token.ID)
 	return newProviderToken, nil
 }
 
 // ProviderID returns the provider identifier
 func (ifr *IFlowRefresher) ProviderID() string {
 	return "iflow"
+}
+
+// isProxyError detects if an error is a proxy-related error
+func isProxyError(err error) bool {
+	if err == nil {
+		return false
+	}
+
+	// Check for common proxy-related error patterns
+	errStr := err.Error()
+
+	// Connection refused / timeout
+	if strings.Contains(errStr, "connection refused") ||
+		strings.Contains(errStr, "connect: connection refused") {
+		return true
+	}
+
+	// Timeout errors
+	if strings.Contains(errStr, "timeout") ||
+		strings.Contains(errStr, "i/o timeout") ||
+		strings.Contains(errStr, "deadline exceeded") {
+		return true
+	}
+
+	// DNS errors
+	if strings.Contains(errStr, "no such host") ||
+		strings.Contains(errStr, "lookup") ||
+		strings.Contains(errStr, "dns") {
+		return true
+	}
+
+	// Proxy-specific errors
+	if strings.Contains(errStr, "proxy") ||
+		strings.Contains(errStr, "socks") ||
+		strings.Contains(errStr, "tunnel") {
+		return true
+	}
+
+	// Check for net.OpError with specific types
+	var netErr net.Error
+	if errors.As(err, &netErr) {
+		if netErr.Timeout() {
+			return true
+		}
+	}
+
+	return false
+}
+
+// classifyProxyError returns the type of proxy error for health tracking
+func classifyProxyError(err error) string {
+	if err == nil {
+		return "none"
+	}
+
+	errStr := err.Error()
+
+	// Connection errors
+	if strings.Contains(errStr, "connection refused") ||
+		strings.Contains(errStr, "connect: connection refused") {
+		return "connection_refused"
+	}
+
+	// Timeout errors
+	if strings.Contains(errStr, "timeout") ||
+		strings.Contains(errStr, "i/o timeout") ||
+		strings.Contains(errStr, "deadline exceeded") {
+		return "timeout"
+	}
+
+	// DNS errors
+	if strings.Contains(errStr, "no such host") ||
+		strings.Contains(errStr, "lookup") ||
+		strings.Contains(errStr, "dns") {
+		return "dns"
+	}
+
+	// Authentication errors
+	if strings.Contains(errStr, "authentication") ||
+		strings.Contains(errStr, "unauthorized") ||
+		strings.Contains(errStr, "401") ||
+		strings.Contains(errStr, "407") {
+		return "authentication"
+	}
+
+	// Generic proxy error
+	if strings.Contains(errStr, "proxy") ||
+		strings.Contains(errStr, "socks") ||
+		strings.Contains(errStr, "tunnel") {
+		return "proxy_error"
+	}
+
+	return "unknown"
 }
 
 // calculateRefreshPriority calculates refresh priority based on expiry time
