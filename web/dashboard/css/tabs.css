@@ -1,0 +1,378 @@
+/**
+ * Tabs CSS
+ * 
+ * Contains tab-specific content styles for Overview, Proxy, Settings, and Logs tabs.
+ */
+
+/* ============================================
+   Summary Stats Cards
+   ============================================ */
+.summary-stats {
+    display: grid;
+    grid-template-columns: repeat(auto-fit, minmax(200px, 1fr));
+    gap: 1rem;
+    margin-bottom: 2rem;
+}
+
+/* ============================================
+   Provider Cards Grid
+   ============================================ */
+.providers-grid {
+    display: grid;
+    grid-template-columns: repeat(auto-fill, minmax(320px, 1fr));
+    gap: 1.5rem;
+    margin-bottom: 2rem;
+}
+
+/* ============================================
+   Proxy Tab
+   ============================================ */
+.proxy-summary {
+    display: grid;
+    grid-template-columns: repeat(auto-fit, minmax(200px, 1fr));
+    gap: 1rem;
+    margin-bottom: 2rem;
+}
+
+.proxy-config-list {
+    display: grid;
+    grid-template-columns: repeat(auto-fill, minmax(350px, 1fr));
+    gap: 1.5rem;
+}
+
+.proxy-config-card {
+    background: var(--card-bg);
+    border: 1px solid var(--border-color);
+    border-radius: 12px;
+    padding: 1.5rem;
+    box-shadow: var(--shadow);
+}
+
+.proxy-config-header {
+    display: flex;
+    justify-content: space-between;
+    align-items: center;
+    margin-bottom: 1rem;
+}
+
+.proxy-config-header h3 {
+    font-size: 1rem;
+    font-weight: 600;
+}
+
+.proxy-type-badge {
+    padding: 0.25rem 0.5rem;
+    border-radius: 4px;
+    font-size: 0.75rem;
+    background: var(--bg-color);
+    color: var(--text-secondary);
+}
+
+.proxy-config-details {
+    margin-bottom: 1rem;
+    padding: 0.75rem;
+    background: var(--bg-color);
+    border-radius: 6px;
+    font-size: 0.875rem;
+}
+
+.proxy-config-detail {
+    display: flex;
+    justify-content: space-between;
+    margin-bottom: 0.25rem;
+}
+
+.proxy-config-detail:last-child {
+    margin-bottom: 0;
+}
+
+.proxy-config-detail-label {
+    color: var(--text-secondary);
+}
+
+.proxy-health-display {
+    margin-bottom: 1rem;
+    padding: 0.75rem;
+    background: var(--bg-color);
+    border-radius: 6px;
+}
+
+.health-score-indicator {
+    display: flex;
+    align-items: center;
+    gap: 1rem;
+    margin-bottom: 0.5rem;
+}
+
+.health-score-circle {
+    width: 60px;
+    height: 60px;
+    border-radius: 50%;
+    display: flex;
+    align-items: center;
+    justify-content: center;
+    font-size: 1.25rem;
+    font-weight: 700;
+    color: white;
+    transition: background-color 0.3s;
+}
+
+.health-score-circle.healthy {
+    background: var(--success-color);
+}
+
+.health-score-circle.warning {
+    background: var(--warning-color);
+}
+
+.health-score-circle.error {
+    background: var(--error-color);
+}
+
+.health-metrics {
+    flex: 1;
+}
+
+.health-metric {
+    display: flex;
+    justify-content: space-between;
+    font-size: 0.8125rem;
+    margin-bottom: 0.25rem;
+}
+
+.health-metric-label {
+    color: var(--text-secondary);
+}
+
+.proxy-config-actions {
+    display: flex;
+    gap: 0.5rem;
+    flex-wrap: wrap;
+}
+
+.proxy-config-actions .btn {
+    flex: 1;
+    min-width: 100px;
+    justify-content: center;
+}
+
+/* ============================================
+   Settings Tab
+   ============================================ */
+.settings-section {
+    background: var(--card-bg);
+    border: 1px solid var(--border-color);
+    border-radius: 12px;
+    padding: 1.5rem;
+    margin-bottom: 1.5rem;
+    box-shadow: var(--shadow);
+}
+
+.settings-section h2 {
+    font-size: 1.25rem;
+    font-weight: 600;
+    margin-bottom: 1rem;
+}
+
+.settings-grid {
+    display: grid;
+    grid-template-columns: repeat(auto-fill, minmax(300px, 1fr));
+    gap: 1.5rem;
+}
+
+.settings-card {
+    background: var(--bg-color);
+    border-radius: 8px;
+    padding: 1rem;
+}
+
+.settings-card h3 {
+    font-size: 1rem;
+    font-weight: 600;
+    margin-bottom: 1rem;
+}
+
+/* ============================================
+   Logs Tab
+   ============================================ */
+.log-entries {
+    max-height: 500px;
+    overflow-y: auto;
+    background: var(--card-bg);
+    border: 1px solid var(--border-color);
+    border-radius: 12px;
+    box-shadow: var(--shadow);
+}
+
+.log-entry {
+    display: flex;
+    gap: 1rem;
+    padding: 0.75rem 1rem;
+    border-bottom: 1px solid var(--border-color);
+    font-size: 0.875rem;
+}
+
+.log-entry:last-child {
+    border-bottom: none;
+}
+
+.log-entry:hover {
+    background: var(--bg-color);
+}
+
+.log-time {
+    color: var(--text-secondary);
+    font-size: 0.75rem;
+    min-width: 80px;
+    font-family: monospace;
+}
+
+.log-level {
+    min-width: 70px;
+    padding: 0.125rem 0.375rem;
+    border-radius: 4px;
+    font-size: 0.6875rem;
+    font-weight: 500;
+    text-transform: uppercase;
+}
+
+.log-level.info {
+    background: #dbeafe;
+    color: #1e40af;
+}
+
+.log-level.success {
+    background: #d1fae5;
+    color: #065f46;
+}
+
+.log-level.warning {
+    background: #fef3c7;
+    color: #92400e;
+}
+
+.log-level.error {
+    background: #fee2e2;
+    color: #991b1b;
+}
+
+.log-message {
+    flex: 1;
+}
+
+/* ============================================
+   Email Subsection
+   ============================================ */
+.email-subsection {
+    margin-top: 2rem;
+    padding-top: 1.5rem;
+    border-top: 2px solid var(--border-color);
+}
+
+.email-subsection h3 {
+    font-size: 1.125rem;
+    font-weight: 600;
+    margin-bottom: 1rem;
+    color: var(--text-primary);
+}
+
+.email-provider-group {
+    background: var(--bg-color);
+    border-radius: 8px;
+    padding: 1rem;
+    margin-bottom: 1rem;
+}
+
+.email-provider-header {
+    display: flex;
+    align-items: center;
+    justify-content: space-between;
+    margin-bottom: 0.75rem;
+    padding-bottom: 0.5rem;
+    border-bottom: 1px solid var(--border-color);
+}
+
+.email-provider-name {
+    font-weight: 600;
+    font-size: 1rem;
+    color: var(--text-primary);
+}
+
+.email-provider-count {
+    font-size: 0.8125rem;
+    color: var(--text-secondary);
+    background: var(--card-bg);
+    padding: 0.25rem 0.5rem;
+    border-radius: 4px;
+}
+
+.email-grid {
+    display: grid;
+    grid-template-columns: repeat(auto-fill, minmax(280px, 1fr));
+    gap: 0.75rem;
+}
+
+.email-card {
+    display: flex;
+    align-items: center;
+    gap: 0.75rem;
+    padding: 0.75rem 1rem;
+    background: var(--card-bg);
+    border: 1px solid var(--border-color);
+    border-radius: 6px;
+    transition: all 0.2s;
+}
+
+.email-card:hover {
+    box-shadow: var(--shadow);
+    border-color: var(--primary-color);
+}
+
+.email-card .email-status-dot {
+    width: 12px;
+    height: 12px;
+    border-radius: 50%;
+    flex-shrink: 0;
+}
+
+.email-card .email-status-dot.healthy {
+    background: var(--success-color);
+    box-shadow: 0 0 0 3px rgba(16, 185, 129, 0.2);
+}
+
+.email-card .email-status-dot.unhealthy {
+    background: var(--error-color);
+    box-shadow: 0 0 0 3px rgba(239, 68, 68, 0.2);
+}
+
+.email-card .email-address {
+    flex: 1;
+    font-size: 0.875rem;
+    font-weight: 500;
+    color: var(--text-primary);
+    word-break: break-all;
+}
+
+.email-card .email-health-text {
+    font-size: 0.75rem;
+    padding: 0.25rem 0.5rem;
+    border-radius: 4px;
+    white-space: nowrap;
+}
+
+.email-card .email-health-text.healthy {
+    background: #d1fae5;
+    color: #065f46;
+}
+
+.email-card .email-health-text.unhealthy {
+    background: #fee2e2;
+    color: #991b1b;
+}
+
+.empty-emails {
+    text-align: center;
+    padding: 2rem;
+    color: var(--text-secondary);
+    font-style: italic;
+}

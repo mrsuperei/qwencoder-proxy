@@ -85,6 +85,16 @@ func (c *GeminiConverter) ToOpenAIResponse(native interface{}, model string) (in
 
 	openAIResp["choices"] = choices
 
+	// DIAGNOSTIC: Log raw parts from Gemini response
+	for i, candidate := range geminiResp.Candidates {
+		if candidate.Content != nil {
+			fmt.Printf("[GeminiConverter DIAGNOSTIC] Candidate %d has %d parts\n", i, len(candidate.Content.Parts))
+			for j, part := range candidate.Content.Parts {
+				fmt.Printf("[GeminiConverter DIAGNOSTIC] Part %d - Text: '%s', InlineData: %v, FileData: %v\n", j, part.Text, part.InlineData != nil, part.FileData != nil)
+			}
+		}
+	}
+
 	return openAIResp, nil
 }
 
@@ -132,22 +142,22 @@ func (c *GeminiConverter) ToOpenAIStreamChunk(native interface{}, model string) 
 			}
 			// Only send role on first chunk? Gemini sends full structure often.
 			// Ideally we track state, but for now sending role in every chunk is often tolerated or we check emptiness.
-			// Gemini candidates often contain the whole accumulated content or just the delta? 
+			// Gemini candidates often contain the whole accumulated content or just the delta?
 			// The API docs say "Response stream... Returns the generated content...".
 			// Native Gemini stream chunks usually contain the *delta* text in `text`.
 		}
-		
+
 		choice["delta"] = delta
-		
+
 		if candidate.FinishReason != "" {
 			choice["finish_reason"] = convertFinishReason(candidate.FinishReason)
 		}
-		
+
 		choices = append(choices, choice)
 	}
 
 	openAIChunk["choices"] = choices
-	
+
 	// Handle usage if present (Gemini sends it at the end)
 	if geminiResp.UsageMetadata != nil {
 		openAIChunk["usage"] = map[string]interface{}{
@@ -159,12 +169,23 @@ func (c *GeminiConverter) ToOpenAIStreamChunk(native interface{}, model string) 
 
 	return openAIChunk, nil
 }
+
 // FromOpenAIRequest converts OpenAI format to Gemini format
 func (c *GeminiConverter) FromOpenAIRequest(req interface{}) (interface{}, error) {
 	// Convert OpenAI request format to Gemini format
 	openAIReq, ok := req.(map[string]interface{})
 	if !ok {
 		return nil, fmt.Errorf("unexpected request type: %T", req)
+	}
+
+	// DIAGNOSTIC: Log if tools are present in the OpenAI request
+	if tools, hasTools := openAIReq["tools"]; hasTools {
+		fmt.Printf("[GeminiConverter DIAGNOSTIC] Tools found in OpenAI request: %+v\n", tools)
+	} else {
+		fmt.Printf("[GeminiConverter DIAGNOSTIC] No tools found in OpenAI request\n")
+	}
+	if toolChoice, hasToolChoice := openAIReq["tool_choice"]; hasToolChoice {
+		fmt.Printf("[GeminiConverter DIAGNOSTIC] tool_choice in OpenAI request: %+v\n", toolChoice)
 	}
 
 	// Create Gemini request
@@ -223,6 +244,12 @@ func (c *GeminiConverter) FromOpenAIRequest(req interface{}) (interface{}, error
 			geminiReq.GenerationConfig = &gemini.GenerationConfig{}
 		}
 		geminiReq.GenerationConfig.MaxOutputTokens = &maxTokensInt
+	}
+
+	// DIAGNOSTIC: Log the Gemini request structure
+	fmt.Printf("[GeminiConverter DIAGNOSTIC] Gemini request after conversion - Tools: %d, ToolConfig: %+v\n", len(geminiReq.Tools), geminiReq.ToolConfig)
+	if len(geminiReq.Tools) > 0 {
+		fmt.Printf("[GeminiConverter DIAGNOSTIC] First tool: %+v\n", geminiReq.Tools[0])
 	}
 
 	return geminiReq, nil

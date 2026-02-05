@@ -71,15 +71,29 @@ func (c *QwenConverter) ToOpenAIResponse(native interface{}, model string) (inte
 		return nil, false
 	}
 
+	// DIAGNOSTIC: Log raw Qwen response structure
+	fmt.Printf("[QwenConverter DIAGNOSTIC] Raw Qwen response: %+v\n", qwenResp)
+
 	if choices, ok := extractChoices(qwenResp); ok {
 		var openAIChoices []interface{}
 		for i, choice := range choices {
 			if choiceMap, ok := choice.(map[string]interface{}); ok {
+				// DIAGNOSTIC: Log each choice
+				fmt.Printf("[QwenConverter DIAGNOSTIC] Choice %d: %+v\n", i, choiceMap)
+
 				content := ""
 				if msg, exists := choiceMap["message"]; exists {
 					if msgMap, msgOk := msg.(map[string]interface{}); msgOk {
+						// DIAGNOSTIC: Log message structure
+						fmt.Printf("[QwenConverter DIAGNOSTIC] Choice %d message: %+v\n", i, msgMap)
 						if c, ok := msgMap["content"].(string); ok {
 							content = c
+						}
+						// DIAGNOSTIC: Check for tool_calls
+						if toolCalls, hasToolCalls := msgMap["tool_calls"]; hasToolCalls {
+							fmt.Printf("[QwenConverter DIAGNOSTIC] Tool calls found in choice %d: %+v\n", i, toolCalls)
+						} else {
+							fmt.Printf("[QwenConverter DIAGNOSTIC] No tool_calls found in choice %d message\n", i)
 						}
 					}
 				}

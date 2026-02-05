@@ -1,0 +1,128 @@
+<!--
+    QWEncoder Proxy Dashboard - Tab Content Templates
+    This file contains all tab content HTML structures used in the dashboard.
+    
+    Tabs included:
+    - Overview Tab: Summary stats, provider cards, email addresses
+    - Tokens Tab: Token list with filters and table
+    - Proxy Tab: Proxy summary and configuration list
+    - Settings Tab: Global settings and provider settings
+    - Logs Tab: Log entries with filters
+-->
+
+<!-- Overview Tab -->
+<div class="tab-content active" id="overviewTab">
+    <div class="summary-stats" id="summaryStats">
+        <!-- Stats cards will be dynamically inserted here -->
+    </div>
+
+    <div class="providers-grid" id="providersGrid">
+        <!-- Provider cards will be dynamically inserted here -->
+    </div>
+
+    <!-- Email Addresses Section -->
+    <div class="email-subsection">
+        <h3>📧 Email Addresses</h3>
+        <div id="summaryEmailList">
+            <!-- Email addresses will be dynamically inserted here -->
+        </div>
+    </div>
+</div>
+
+<!-- Tokens Tab -->
+<div class="tab-content" id="tokensTab">
+    <div class="filter-bar">
+        <select class="filter-input" id="filterProvider">
+            <option value="all">All Providers</option>
+        </select>
+        <select class="filter-input" id="filterHealth">
+            <option value="all">All Health Status</option>
+            <option value="healthy">Healthy Only</option>
+            <option value="unhealthy">Unhealthy Only</option>
+        </select>
+        <input type="text" class="filter-input" id="filterSearch" placeholder="Search by email...">
+        <select class="filter-input" id="sortField">
+            <option value="createdAt">Sort by Created</option>
+            <option value="email">Sort by Email</option>
+            <option value="health">Sort by Health</option>
+            <option value="expiry">Sort by Expiry</option>
+        </select>
+    </div>
+
+    <div class="table-container">
+        <table id="tokensTable">
+            <thead>
+                <tr>
+                    <th data-sort="provider">Provider <span class="sort-icon">⇅</span></th>
+                    <th data-sort="email">Email <span class="sort-icon">⇅</span></th>
+                    <th data-sort="health">Health <span class="sort-icon">⇅</span></th>
+                    <th data-sort="healthScore">Health Score <span class="sort-icon">⇅</span></th>
+                    <th data-sort="expiry">Expiry Date <span class="sort-icon">⇅</span></th>
+                    <th data-sort="lastUsed">Last Used <span class="sort-icon">⇅</span></th>
+                    <th data-sort="createdAt">Created <span class="sort-icon">⇅</span></th>
+                    <th>Actions</th>
+                </tr>
+            </thead>
+            <tbody id="tokensTableBody">
+                <!-- Token rows will be dynamically inserted here -->
+            </tbody>
+        </table>
+    </div>
+</div>
+
+<!-- Proxy Tab -->
+<div class="tab-content" id="proxyTab">
+    <div class="proxy-summary" id="proxySummary">
+        <!-- Proxy summary stats will be dynamically inserted here -->
+    </div>
+
+    <div class="proxy-config-list" id="proxyConfigList">
+        <!-- Proxy config cards will be dynamically inserted here -->
+    </div>
+</div>
+
+<!-- Settings Tab -->
+<div class="tab-content" id="settingsTab">
+    <div class="settings-section">
+        <h2>Global Settings</h2>
+        <div class="form-group">
+            <label for="apiBaseUrl">API Base URL</label>
+            <input type="text" id="apiBaseUrl" placeholder="http://localhost:8080">
+        </div>
+        <div class="form-group">
+            <label for="autoRefreshInterval">Auto-refresh Interval (seconds)</label>
+            <input type="number" id="autoRefreshInterval" value="30" min="10" max="300">
+        </div>
+        <button class="btn btn-primary" id="saveGlobalSettings">Save Global Settings</button>
+    </div>
+
+    <div class="settings-section">
+        <h2>Provider Settings</h2>
+        <div class="settings-grid" id="providerSettingsGrid">
+            <!-- Provider settings cards will be dynamically inserted here -->
+        </div>
+    </div>
+</div>
+
+<!-- Logs Tab -->
+<div class="tab-content" id="logsTab">
+    <div class="filter-bar">
+        <select class="filter-input" id="logLevelFilter">
+            <option value="all">All Levels</option>
+            <option value="info">Info</option>
+            <option value="success">Success</option>
+            <option value="warning">Warning</option>
+            <option value="error">Error</option>
+        </select>
+        <select class="filter-input" id="logProviderFilter">
+            <option value="all">All Providers</option>
+        </select>
+        <input type="text" class="filter-input" id="logSearch" placeholder="Search logs...">
+        <button class="btn btn-secondary" id="clearLogsBtn">Clear Logs</button>
+        <button class="btn btn-secondary" id="exportLogsBtn">Export Logs</button>
+    </div>
+
+    <div class="log-entries" id="logEntries">
+        <!-- Log entries will be dynamically inserted here -->
+    </div>
+</div>

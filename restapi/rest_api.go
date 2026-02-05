@@ -194,6 +194,8 @@ func (s *Server) registerRoutes(mux *http.ServeMux) {
 				return
 			}
 
+			// Set proper Content-Type header for HTML
+			w.Header().Set("Content-Type", "text/html; charset=utf-8")
 			http.ServeFile(w, r, filePath)
 			return
 		}
@@ -202,6 +204,21 @@ func (s *Server) registerRoutes(mux *http.ServeMux) {
 		s.logger.InfoLog("Attempting to serve file: %s", filePath)
 		http.ServeFile(w, r, filePath)
 	})
+
+	// Serve CSS files from /css/ path with proper MIME type and cache headers
+	// Uses http.FileServer with http.StripPrefix for efficient static file serving
+	cssDir := filepath.Join(dashboardDir, "css")
+	mux.Handle("/css/", http.StripPrefix("/css/", s.createStaticFileHandler(cssDir, "text/css; charset=utf-8", 3600)))
+
+	// Serve JavaScript files from /js/ path with proper MIME type and cache headers
+	// Uses http.FileServer with http.StripPrefix for efficient static file serving
+	jsDir := filepath.Join(dashboardDir, "js")
+	mux.Handle("/js/", http.StripPrefix("/js/", s.createStaticFileHandler(jsDir, "application/javascript; charset=utf-8", 3600)))
+
+	// Serve template files from /templates/ path with proper MIME type and cache headers
+	// Uses http.FileServer with http.StripPrefix for efficient static file serving
+	templatesDir := filepath.Join(dashboardDir, "templates")
+	mux.Handle("/templates/", http.StripPrefix("/templates/", s.createStaticFileHandler(templatesDir, "text/html; charset=utf-8", 1800)))
 
 	// Provider discovery
 	mux.HandleFunc("/api/providers", s.handleProviders)
@@ -221,6 +238,28 @@ func (s *Server) registerRoutes(mux *http.ServeMux) {
 	// Credentials management
 	mux.HandleFunc("/api/credentials", s.handleCredentials)
 	mux.HandleFunc("/api/credentials/", s.handleProviderCredentials)
+}
+
+// createStaticFileHandler creates a handler for serving static files with proper MIME types and cache headers
+// This wrapper ensures proper Content-Type headers and cache-control for static assets
+func (s *Server) createStaticFileHandler(dir, contentType string, maxAge int) http.Handler {
+	// Create a file server for the directory
+	fileServer := http.FileServer(http.Dir(dir))
+
+	// Wrap the file server to add custom headers
+	return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		// Set the Content-Type header
+		w.Header().Set("Content-Type", contentType)
+
+		// Set cache-control headers for static assets
+		w.Header().Set("Cache-Control", fmt.Sprintf("public, max-age=%d", maxAge))
+
+		// Log the request for debugging
+		s.logger.InfoLog("Serving static asset: %s (type: %s)", r.URL.Path, contentType)
+
+		// Serve the file
+		fileServer.ServeHTTP(w, r)
+	})
 }
 
 // getTokenStore gets or creates a token store for a provider
@@ -1269,7 +1308,7 @@ func (s *Server) handleProviderCredentials(w http.ResponseWriter, r *http.Reques
 		if len(parts) == 4 {
 			// GET /api/credentials/{provider} - List all tokens for a provider
 			s.handleGetProviderCredentials(w, r, providerID)
-		} else if len(parts) == 6 && parts[5] == "proxy" {
+		} else if len(parts) == 5 && parts[4] == "proxy" {
 			// GET /api/credentials/{provider}/{tokenID}/proxy - Get proxy config for a token
 			tokenID := parts[4]
 			s.getProxyConfigHandler(w, r, providerID, tokenID)
@@ -1292,7 +1331,7 @@ func (s *Server) handleProviderCredentials(w http.ResponseWriter, r *http.Reques
 			// DELETE /api/credentials/{provider}/{tokenID} - Delete a specific token
 			tokenID := parts[4]
 			s.handleDeleteTokenByID(w, r, providerID, tokenID)
-		} else if len(parts) == 6 && parts[5] == "proxy" {
+		} else if len(parts) == 5 && parts[4] == "proxy" {
 			// DELETE /api/credentials/{provider}/{tokenID}/proxy - Remove proxy config for a token
 			tokenID := parts[4]
 			s.deleteProxyConfigHandler(w, r, providerID, tokenID)
@@ -1303,7 +1342,7 @@ func (s *Server) handleProviderCredentials(w http.ResponseWriter, r *http.Reques
 		if len(parts) == 5 && parts[4] == "settings" {
 			// PUT /api/credentials/{provider}/settings - Update provider settings
 			s.handleUpdateProviderSettings(w, r, providerID)
-		} else if len(parts) == 6 && parts[5] == "proxy" {
+		} else if len(parts) == 5 && parts[4] == "proxy" {
 			// PUT /api/credentials/{provider}/{tokenID}/proxy - Update proxy config for a token
 			tokenID := parts[4]
 			s.updateProxyConfigHandler(w, r, providerID, tokenID)
