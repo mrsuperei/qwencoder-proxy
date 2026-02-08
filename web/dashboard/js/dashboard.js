@@ -1132,8 +1132,10 @@ export class Dashboard {
     // ============================================
 
     async showProxyConfigModal(providerId, tokenId) {
+        this.log(`[DEBUG] showProxyConfigModal called with providerId: ${providerId}, tokenId: ${tokenId}`, 'info');
         this.currentProviderId = providerId;
         this.currentTokenId = tokenId;
+        this.log(`[DEBUG] After assignment - currentProviderId: ${this.currentProviderId}, currentTokenId: ${this.currentTokenId}`, 'info');
 
         try {
             this.loading.show();
@@ -1155,13 +1157,17 @@ export class Dashboard {
             if (tokenSelector && tokenSelectorGroup) {
                 if (providerId === null && tokenId === null) {
                     // Show and populate token selector with all available tokens
+                    this.log('[DEBUG] Populating token selector with all available tokens', 'info');
                     let tokenOptions = '<option value="">Select a token...</option>';
                     this.credentials.forEach(cred => {
                         const provider = this.providers.find(p => p.id === cred.provider);
                         const providerName = provider ? provider.name : cred.provider;
+                        this.log(`[DEBUG] Processing credentials - provider: ${cred.provider}, providerName: ${providerName}`, 'info');
                         if (cred.tokens) {
                             cred.tokens.forEach(token => {
-                                tokenOptions += `<option value="${cred.provider}:${token.id}">${providerName} - ${token.email || token.id}</option>`;
+                                const optionValue = `${cred.provider}:${token.id}`;
+                                this.log(`[DEBUG] Adding token option - value: ${optionValue}, email: ${token.email}`, 'info');
+                                tokenOptions += `<option value="${optionValue}">${providerName} - ${token.email || token.id}</option>`;
                             });
                         }
                     });
@@ -1295,15 +1301,34 @@ export class Dashboard {
             return;
         }
 
+        // Gather proxy configuration
+        const proxyConfig = {
+            type: document.getElementById('proxyType').value,
+            host: document.getElementById('proxyHost').value.trim(),
+            port: parseInt(document.getElementById('proxyPort').value),
+            username: document.getElementById('proxyUsername').value.trim(),
+            password: document.getElementById('proxyPassword').value
+        };
+
         document.getElementById('proxyValidationError').textContent = '';
         this.toast.show('Testing proxy connection...', 'info');
-        this.log('Testing proxy connection...', 'info');
+        this.log(`Testing proxy connection - Type: ${proxyConfig.type}, Host: ${proxyConfig.host}, Port: ${proxyConfig.port}`, 'info');
 
-        // Simulate test (in real implementation, this would call an API endpoint)
-        setTimeout(() => {
-            this.toast.show('Proxy connection test successful', 'success');
-            this.log('Proxy connection test successful', 'success');
-        }, 1000);
+        try {
+            const result = await this.api.testProxyConnection(proxyConfig);
+            
+            if (result.success) {
+                const latencyMsg = result.latency_ms ? ` (${result.latency_ms}ms)` : '';
+                this.toast.show(`Proxy connection successful${latencyMsg}`, 'success');
+                this.log(`Proxy connection test successful - Latency: ${result.latency_ms}ms`, 'success');
+            } else {
+                this.toast.show(`Proxy connection failed: ${result.error || 'Unknown error'}`, 'error');
+                this.log(`Proxy connection test failed: ${result.error || 'Unknown error'}`, 'error');
+            }
+        } catch (error) {
+            this.toast.show(`Proxy connection test error: ${error.message}`, 'error');
+            this.log(`Proxy connection test error: ${error.message}`, 'error');
+        }
     }
 
     async saveProxyConfig() {
@@ -1316,19 +1341,23 @@ export class Dashboard {
         // Validate token selection when adding new proxy without specific token
         const tokenSelector = document.getElementById('proxyTokenSelector');
         const tokenSelectorGroup = document.getElementById('proxyTokenSelectorGroup');
+        this.log(`[DEBUG] saveProxyConfig - currentProviderId: ${this.currentProviderId}, currentTokenId: ${this.currentTokenId}`, 'info');
         if (tokenSelectorGroup && tokenSelectorGroup.style.display !== 'none') {
             if (!tokenSelector || !tokenSelector.value) {
                 document.getElementById('proxyValidationError').textContent = 'Please select a token to associate the proxy with';
                 return;
             }
             const selectedValue = tokenSelector.value;
+            this.log(`[DEBUG] Token selector value: ${selectedValue}`, 'info');
             const [providerId, tokenId] = selectedValue.split(':');
+            this.log(`[DEBUG] Split result - providerId: ${providerId}, tokenId: ${tokenId}`, 'info');
             if (!providerId || !tokenId) {
                 document.getElementById('proxyValidationError').textContent = 'Please select a valid token';
                 return;
             }
             this.currentProviderId = providerId;
             this.currentTokenId = tokenId;
+            this.log(`[DEBUG] After assignment - currentProviderId: ${this.currentProviderId}, currentTokenId: ${this.currentTokenId}`, 'info');
         }
 
         const proxyConfig = {

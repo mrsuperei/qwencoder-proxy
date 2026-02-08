@@ -3,12 +3,12 @@ package gemini
 
 // GeminiRequest represents a Gemini API generateContent request
 type GeminiRequest struct {
-	Contents          []Content          `json:"contents"`
-	SystemInstruction *Content           `json:"systemInstruction,omitempty"`
-	GenerationConfig  *GenerationConfig  `json:"generationConfig,omitempty"`
-	SafetySettings    []SafetySetting    `json:"safetySettings,omitempty"`
-	Tools             []Tool             `json:"tools,omitempty"`
-	ToolConfig        *ToolConfig        `json:"toolConfig,omitempty"`
+	Contents          []Content         `json:"contents"`
+	SystemInstruction *Content          `json:"systemInstruction,omitempty"`
+	GenerationConfig  *GenerationConfig `json:"generationConfig,omitempty"`
+	SafetySettings    []SafetySetting   `json:"safetySettings,omitempty"`
+	Tools             []Tool            `json:"tools,omitempty"`
+	ToolConfig        *ToolConfig       `json:"toolConfig,omitempty"`
 }
 
 // Content represents a content block in Gemini format
@@ -19,9 +19,10 @@ type Content struct {
 
 // Part represents a part of content (text, image, etc.)
 type Part struct {
-	Text       string      `json:"text,omitempty"`
-	InlineData *InlineData `json:"inlineData,omitempty"`
-	FileData   *FileData   `json:"fileData,omitempty"`
+	Text         string        `json:"text,omitempty"`
+	InlineData   *InlineData   `json:"inlineData,omitempty"`
+	FileData     *FileData     `json:"fileData,omitempty"`
+	FunctionCall *FunctionCall `json:"functionCall,omitempty"` // NEW: Added for tool calls
 }
 
 // InlineData represents inline binary data (e.g., images)
@@ -34,6 +35,12 @@ type InlineData struct {
 type FileData struct {
 	MimeType string `json:"mimeType"`
 	FileURI  string `json:"fileUri"`
+}
+
+// FunctionCall represents a function call in a response part
+type FunctionCall struct {
+	Name string                 `json:"name"`
+	Args map[string]interface{} `json:"args"`
 }
 
 // GenerationConfig contains generation parameters

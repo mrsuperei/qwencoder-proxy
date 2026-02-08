@@ -103,14 +103,28 @@ func (c *QwenConverter) ToOpenAIResponse(native interface{}, model string) (inte
 					finishReason = reason
 				}
 
-				openAIChoices = append(openAIChoices, map[string]interface{}{
+				openAIChoice := map[string]interface{}{
 					"index": i,
 					"message": map[string]interface{}{
 						"role":    "assistant",
 						"content": content,
 					},
 					"finish_reason": finishReason,
-				})
+				}
+
+				// Extract tool_calls from Qwen response
+				if msg, exists := choiceMap["message"]; exists {
+					if msgMap, msgOk := msg.(map[string]interface{}); msgOk {
+						if toolCalls, hasToolCalls := msgMap["tool_calls"]; hasToolCalls {
+							// Update the choice with tool_calls
+							openAIChoice["message"].(map[string]interface{})["tool_calls"] = toolCalls
+							// Clear content if tool_calls are present
+							openAIChoice["message"].(map[string]interface{})["content"] = nil
+						}
+					}
+				}
+
+				openAIChoices = append(openAIChoices, openAIChoice)
 			}
 		}
 		openAIResp["choices"] = openAIChoices

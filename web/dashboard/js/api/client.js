@@ -230,6 +230,8 @@ export class APIClient {
      * @returns {Promise<Object>} Confirmation of update
      */
     async updateProxyConfig(providerId, tokenId, proxyConfig) {
+        console.log(`[DEBUG API] updateProxyConfig called - providerId: ${providerId}, tokenId: ${tokenId}`);
+        console.log(`[DEBUG API] Endpoint: ${ENDPOINTS.UPDATE_PROXY_CONFIG(providerId, tokenId)}`);
         return this.request('PUT', ENDPOINTS.UPDATE_PROXY_CONFIG(providerId, tokenId), proxyConfig);
     }
 
@@ -241,5 +243,19 @@ export class APIClient {
      */
     async deleteProxyConfig(providerId, tokenId) {
         return this.request('DELETE', ENDPOINTS.DELETE_PROXY_CONFIG(providerId, tokenId));
+    }
+
+    /**
+     * Test a proxy connection without saving the configuration
+     * @param {Object} proxyConfig - The proxy configuration to test
+     * @param {string} proxyConfig.type - Type of proxy (none, http, https, socks5)
+     * @param {string} proxyConfig.host - Proxy server hostname or IP address
+     * @param {number} proxyConfig.port - Proxy server port number
+     * @param {string} proxyConfig.username - Optional username for authentication
+     * @param {string} proxyConfig.password - Optional password for authentication
+     * @returns {Promise<Object>} Test result with success status and latency
+     */
+    async testProxyConnection(proxyConfig) {
+        return this.request('POST', ENDPOINTS.TEST_PROXY_CONNECTION, proxyConfig);
     }
 }

@@ -238,6 +238,9 @@ func (s *Server) registerRoutes(mux *http.ServeMux) {
 	// Credentials management
 	mux.HandleFunc("/api/credentials", s.handleCredentials)
 	mux.HandleFunc("/api/credentials/", s.handleProviderCredentials)
+
+	// Proxy connection test
+	mux.HandleFunc("/api/proxy/test", s.handleProxyTest)
 }
 
 // createStaticFileHandler creates a handler for serving static files with proper MIME types and cache headers
@@ -1293,15 +1296,18 @@ func (s *Server) GetRegistry() *ProviderRegistry {
 
 // handleProviderCredentials handles provider-specific credential operations
 func (s *Server) handleProviderCredentials(w http.ResponseWriter, r *http.Request) {
+	s.logger.InfoLog("[handleProviderCredentials] Path: %s, Method: %s", r.URL.Path, r.Method)
 	// Extract provider ID and action from path
 	// Path format: /api/credentials/{provider} or /api/credentials/{provider}/{action}
 	parts := strings.Split(strings.Trim(r.URL.Path, "/"), "/")
+	s.logger.InfoLog("[handleProviderCredentials] Parts: %v, Length: %d", parts, len(parts))
 	if len(parts) < 4 {
 		WriteError(w, http.StatusNotFound, "not_found", "Endpoint not found")
 		return
 	}
 
-	providerID := parts[3]
+	providerID := parts[2]
+	s.logger.InfoLog("[handleProviderCredentials] providerID: %s (from parts[2])", providerID)
 
 	switch r.Method {
 	case http.MethodGet:
@@ -1310,7 +1316,7 @@ func (s *Server) handleProviderCredentials(w http.ResponseWriter, r *http.Reques
 			s.handleGetProviderCredentials(w, r, providerID)
 		} else if len(parts) == 5 && parts[4] == "proxy" {
 			// GET /api/credentials/{provider}/{tokenID}/proxy - Get proxy config for a token
-			tokenID := parts[4]
+			tokenID := parts[3]
 			s.getProxyConfigHandler(w, r, providerID, tokenID)
 		} else {
 			WriteError(w, http.StatusNotFound, "not_found", "Endpoint not found")
@@ -1319,9 +1325,9 @@ func (s *Server) handleProviderCredentials(w http.ResponseWriter, r *http.Reques
 		if len(parts) == 4 {
 			// POST /api/credentials/{provider} - Add a new token
 			s.handleAddToken(w, r, providerID)
-		} else if len(parts) == 6 && parts[5] == "refresh" {
+		} else if len(parts) == 5 && parts[4] == "refresh" {
 			// POST /api/credentials/{provider}/{tokenID}/refresh - Refresh a specific token
-			tokenID := parts[4]
+			tokenID := parts[3]
 			s.handleRefreshTokenByID(w, r, providerID, tokenID)
 		} else {
 			WriteError(w, http.StatusNotFound, "not_found", "Endpoint not found")
@@ -1329,11 +1335,11 @@ func (s *Server) handleProviderCredentials(w http.ResponseWriter, r *http.Reques
 	case http.MethodDelete:
 		if len(parts) == 5 {
 			// DELETE /api/credentials/{provider}/{tokenID} - Delete a specific token
-			tokenID := parts[4]
+			tokenID := parts[3]
 			s.handleDeleteTokenByID(w, r, providerID, tokenID)
 		} else if len(parts) == 5 && parts[4] == "proxy" {
 			// DELETE /api/credentials/{provider}/{tokenID}/proxy - Remove proxy config for a token
-			tokenID := parts[4]
+			tokenID := parts[3]
 			s.deleteProxyConfigHandler(w, r, providerID, tokenID)
 		} else {
 			WriteError(w, http.StatusNotFound, "not_found", "Endpoint not found")
@@ -1344,7 +1350,7 @@ func (s *Server) handleProviderCredentials(w http.ResponseWriter, r *http.Reques
 			s.handleUpdateProviderSettings(w, r, providerID)
 		} else if len(parts) == 5 && parts[4] == "proxy" {
 			// PUT /api/credentials/{provider}/{tokenID}/proxy - Update proxy config for a token
-			tokenID := parts[4]
+			tokenID := parts[3]
 			s.updateProxyConfigHandler(w, r, providerID, tokenID)
 		} else {
 			WriteError(w, http.StatusNotFound, "not_found", "Endpoint not found")
@@ -1585,6 +1591,23 @@ type ProxyConfigResponse struct {
 	HealthStatus *auth.ProxyHealth `json:"health_status,omitempty"`
 }
 
+// TestProxyRequest represents a request to test a proxy connection
+type TestProxyRequest struct {
+	Type     string `json:"type"`               // Type of proxy (none, http, https, socks5)
+	Host     string `json:"host"`               // Proxy server hostname or IP address
+	Port     int    `json:"port"`               // Proxy server port number
+	Username string `json:"username,omitempty"` // Optional username for authentication
+	Password string `json:"password,omitempty"` // Optional password for authentication
+}
+
+// TestProxyResponse represents the response from a proxy test
+type TestProxyResponse struct {
+	Success   bool   `json:"success"`           // Whether the connection test succeeded
+	LatencyMs int    `json:"latency_ms"`        // Connection latency in milliseconds
+	Error     string `json:"error,omitempty"`   // Error message if test failed
+	Message   string `json:"message,omitempty"` // Human-readable message
+}
+
 // getProxyConfigHandler handles GET /api/credentials/{provider}/{tokenID}/proxy
 // Returns proxy configuration with masked password and health status
 func (s *Server) getProxyConfigHandler(w http.ResponseWriter, r *http.Request, providerID, tokenID string) {
@@ -1645,6 +1668,7 @@ func (s *Server) getProxyConfigHandler(w http.ResponseWriter, r *http.Request, p
 // Updates proxy configuration for a token
 func (s *Server) updateProxyConfigHandler(w http.ResponseWriter, r *http.Request, providerID, tokenID string) {
 	s.logger.InfoLog("[updateProxyConfig] PUT request - provider: %s, tokenID: %s", providerID, tokenID)
+	s.logger.InfoLog("[updateProxyConfig] DEBUG - providerID length: %d, tokenID length: %d", len(providerID), len(tokenID))
 
 	// Validate provider type
 	if err := s.validateProvider(providerID); err != nil {
@@ -1810,6 +1834,90 @@ func (s *Server) refreshProviderToken(config *ProviderConfig, token *auth.Provid
 	}
 
 	return refreshed, nil
+}
+
+// handleProxyTest handles POST /api/proxy/test
+// Tests a proxy connection without saving the configuration
+func (s *Server) handleProxyTest(w http.ResponseWriter, r *http.Request) {
+	s.logger.InfoLog("[ProxyTest] POST request received")
+
+	// Only allow POST method
+	if r.Method != http.MethodPost {
+		s.logger.WarningLog("[ProxyTest] Method not allowed: %s", r.Method)
+		WriteError(w, http.StatusMethodNotAllowed, "method_not_allowed", "Only POST method is allowed")
+		return
+	}
+
+	// Parse request body
+	var req TestProxyRequest
+	if err := ParseJSON(r, &req); err != nil {
+		s.logger.ErrorLog("[ProxyTest] Failed to parse request: %v", err)
+		WriteErrorWithDetails(w, http.StatusBadRequest, "invalid_request", "Failed to parse request body", map[string]interface{}{
+			"details": err.Error(),
+		})
+		return
+	}
+
+	// Validate required fields
+	if req.Host == "" {
+		s.logger.ErrorLog("[ProxyTest] Missing required field: host")
+		WriteError(w, http.StatusBadRequest, "invalid_request", "Host is required")
+		return
+	}
+
+	if req.Port <= 0 || req.Port > 65535 {
+		s.logger.ErrorLog("[ProxyTest] Invalid port: %d", req.Port)
+		WriteError(w, http.StatusBadRequest, "invalid_request", "Port must be between 1 and 65535")
+		return
+	}
+
+	if req.Type == "" {
+		req.Type = "http" // Default to HTTP proxy
+	}
+
+	// Validate proxy type
+	proxyType := auth.ProxyType(req.Type)
+	if err := proxyType.Validate(); err != nil {
+		s.logger.ErrorLog("[ProxyTest] Invalid proxy type: %s", req.Type)
+		WriteError(w, http.StatusBadRequest, "invalid_request", fmt.Sprintf("Invalid proxy type: %s", req.Type))
+		return
+	}
+
+	// Create proxy configuration
+	proxyConfig := &auth.ProxyConfig{
+		Type:     proxyType,
+		Host:     req.Host,
+		Port:     req.Port,
+		Username: req.Username,
+		Password: req.Password,
+		Enabled:  true,
+	}
+
+	// Create proxy tester and test connection
+	proxyTester := auth.NewProxyTester(s.logger)
+	result, err := proxyTester.TestConnection(r.Context(), proxyConfig)
+	if err != nil {
+		s.logger.ErrorLog("[ProxyTest] Test failed: %v", err)
+		WriteError(w, http.StatusInternalServerError, "test_failed", err.Error())
+		return
+	}
+
+	// Build response
+	response := TestProxyResponse{
+		Success:   result.Success,
+		LatencyMs: result.LatencyMs,
+		Error:     result.Error,
+	}
+
+	if result.Success {
+		response.Message = fmt.Sprintf("Proxy connection successful (%dms)", result.LatencyMs)
+		s.logger.InfoLog("[ProxyTest] Test successful - Host: %s:%d, Latency: %dms", req.Host, req.Port, result.LatencyMs)
+	} else {
+		response.Message = "Proxy connection failed"
+		s.logger.WarningLog("[ProxyTest] Test failed - Host: %s:%d, Error: %s", req.Host, req.Port, result.Error)
+	}
+
+	WriteJSON(w, http.StatusOK, response)
 }
 
 // GetStateManager returns the state manager (for use by other packages)

@@ -65,9 +65,23 @@ func (c *GeminiConverter) ToOpenAIResponse(native interface{}, model string) (in
 	for i, candidate := range geminiResp.Candidates {
 		if candidate.Content != nil {
 			var content string
+			var toolCalls []interface{}
+
 			for _, part := range candidate.Content.Parts {
 				if part.Text != "" {
 					content += part.Text
+				}
+				// Check for function calls
+				if part.FunctionCall != nil {
+					toolCall := map[string]interface{}{
+						"id":   fmt.Sprintf("call_%d", time.Now().UnixNano()),
+						"type": "function",
+						"function": map[string]interface{}{
+							"name":      part.FunctionCall.Name,
+							"arguments": part.FunctionCall.Args,
+						},
+					}
+					toolCalls = append(toolCalls, toolCall)
 				}
 			}
 
@@ -79,6 +93,14 @@ func (c *GeminiConverter) ToOpenAIResponse(native interface{}, model string) (in
 				},
 				"finish_reason": convertFinishReason(candidate.FinishReason),
 			}
+
+			// If we have tool calls, update the message
+			if len(toolCalls) > 0 {
+				choice["message"].(map[string]interface{})["content"] = nil
+				choice["message"].(map[string]interface{})["tool_calls"] = toolCalls
+				choice["finish_reason"] = "tool_calls"
+			}
+
 			choices = append(choices, choice)
 		}
 	}
@@ -246,6 +268,45 @@ func (c *GeminiConverter) FromOpenAIRequest(req interface{}) (interface{}, error
 		geminiReq.GenerationConfig.MaxOutputTokens = &maxTokensInt
 	}
 
+	// Convert tools from OpenAI format to Gemini format
+	if tools, hasTools := openAIReq["tools"]; hasTools {
+		if toolsArray, ok := tools.([]interface{}); ok {
+			var geminiTools []gemini.Tool
+			for _, tool := range toolsArray {
+				if toolMap, ok := tool.(map[string]interface{}); ok {
+					if function, hasFunction := toolMap["function"]; hasFunction {
+						if funcMap, ok := function.(map[string]interface{}); ok {
+							functionDecl := gemini.FunctionDeclaration{
+								Name:        getString(funcMap, "name"),
+								Description: getString(funcMap, "description"),
+							}
+							if params, hasParams := funcMap["parameters"]; hasParams {
+								if paramsMap, ok := params.(map[string]interface{}); ok {
+									functionDecl.Parameters = paramsMap
+								}
+							}
+							geminiTools = append(geminiTools, gemini.Tool{
+								FunctionDeclarations: []gemini.FunctionDeclaration{functionDecl},
+							})
+						}
+					}
+				}
+			}
+			geminiReq.Tools = geminiTools
+		}
+	}
+
+	// Convert tool_choice to ToolConfig
+	if toolChoice, hasToolChoice := openAIReq["tool_choice"]; hasToolChoice {
+		if choiceStr, ok := toolChoice.(string); ok && choiceStr != "none" {
+			geminiReq.ToolConfig = &gemini.ToolConfig{
+				FunctionCallingConfig: &gemini.FunctionCallingConfig{
+					Mode: "AUTO", // Could be "ANY" depending on tool_choice value
+				},
+			}
+		}
+	}
+
 	// DIAGNOSTIC: Log the Gemini request structure
 	fmt.Printf("[GeminiConverter DIAGNOSTIC] Gemini request after conversion - Tools: %d, ToolConfig: %+v\n", len(geminiReq.Tools), geminiReq.ToolConfig)
 	if len(geminiReq.Tools) > 0 {
@@ -267,6 +328,17 @@ func (c *GeminiConverter) Protocol() provider.ProtocolType {
 }
 
 // Helper functions
+
+// getString safely extracts a string value from a map
+func getString(m map[string]interface{}, key string) string {
+	if val, ok := m[key]; ok {
+		if str, ok := val.(string); ok {
+			return str
+		}
+	}
+	return ""
+}
+
 func convertContent(content interface{}) string {
 	if contentStr, ok := content.(string); ok {
 		return contentStr
