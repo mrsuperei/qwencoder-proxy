@@ -18,14 +18,14 @@ type StreamConverter struct {
 	stream    io.ReadCloser
 	converter converter.Converter
 	model     string
-	logger    *logging.Logger
+	logger    logging.Logger
 	scanner   *bufio.Scanner
 	done      bool
 	sentData  bool
 }
 
 // NewStreamConverter creates a new stream converter
-func NewStreamConverter(stream io.ReadCloser, conv converter.Converter, model string, logger *logging.Logger) *StreamConverter {
+func NewStreamConverter(stream io.ReadCloser, conv converter.Converter, model string, logger logging.Logger) *StreamConverter {
 	return &StreamConverter{
 		stream:    stream,
 		converter: conv,
@@ -146,7 +146,7 @@ func (sc *StreamConverter) readNextSSEChunk() ([]byte, error) {
 }
 
 // ConvertedStreamResponse handles streaming with format conversion
-func ConvertedStreamResponse(w http.ResponseWriter, r *http.Request, factory *provider.Factory, p provider.Provider, nativeReq interface{}, model string, logger *logging.Logger) error {
+func ConvertedStreamResponse(w http.ResponseWriter, r *http.Request, factory *provider.Factory, p provider.Provider, nativeReq interface{}, model string, logger logging.Logger) error {
 	ctx := r.Context()
 	stream, err := p.GenerateContentStream(ctx, model, nativeReq)
 	if err != nil {

@@ -137,13 +137,13 @@ type TokenManager struct {
 	store              *MultiTokenStore
 	strategy           SelectionStrategy
 	mu                 sync.RWMutex
-	logger             *logging.Logger
+	logger             logging.Logger
 	clientFactory      ProxyClientFactory
 	proxyHealthTracker *ProxyHealthTracker
 }
 
 // NewTokenManager creates a new TokenManager
-func NewTokenManager(store *MultiTokenStore, strategy SelectionStrategy, logger *logging.Logger,
+func NewTokenManager(store *MultiTokenStore, strategy SelectionStrategy, logger logging.Logger,
 	clientFactory ProxyClientFactory, proxyHealthTracker *ProxyHealthTracker) *TokenManager {
 	return &TokenManager{
 		store:              store,
@@ -182,7 +182,7 @@ func (tm *TokenManager) SelectToken() (*ProviderToken, error) {
 	if err := tm.store.UpdateToken(token.ID, func(t *ProviderToken) {
 		t.LastUsed = GetCurrentTimestamp()
 	}); err != nil {
-		tm.logger.WarningLog("Failed to update LastUsed timestamp for token %s: %v", token.ID, err)
+		tm.logger.WarnLog("Failed to update LastUsed timestamp for token %s: %v", token.ID, err)
 	}
 
 	tm.logger.DebugLog("Selected token %s using %s strategy", token.ID, tm.strategy.Name())
@@ -208,7 +208,7 @@ func (tm *TokenManager) SelectTokenByID(tokenID string) (*ProviderToken, error) 
 	if err := tm.store.UpdateToken(tokenID, func(t *ProviderToken) {
 		t.LastUsed = GetCurrentTimestamp()
 	}); err != nil {
-		tm.logger.WarningLog("Failed to update LastUsed timestamp for token %s: %v", tokenID, err)
+		tm.logger.WarnLog("Failed to update LastUsed timestamp for token %s: %v", tokenID, err)
 	}
 
 	tm.logger.DebugLog("Selected token %s by ID", tokenID)
@@ -286,7 +286,7 @@ func (tm *TokenManager) SelectTokenWithClient() (*ProviderToken, *http.Client, e
 
 	// Get client from factory with proxy config
 	if tm.clientFactory == nil {
-		tm.logger.WarningLog("Client factory not set for token manager, returning nil client")
+		tm.logger.WarnLog("Client factory not set for token manager, returning nil client")
 		return fullToken, nil, nil
 	}
 
@@ -302,7 +302,7 @@ func (tm *TokenManager) SelectTokenWithClient() (*ProviderToken, *http.Client, e
 	if err := tm.store.UpdateToken(fullToken.ID, func(t *ProviderToken) {
 		t.LastUsed = GetCurrentTimestamp()
 	}); err != nil {
-		tm.logger.WarningLog("Failed to update LastUsed timestamp for token %s: %v", fullToken.ID, err)
+		tm.logger.WarnLog("Failed to update LastUsed timestamp for token %s: %v", fullToken.ID, err)
 	}
 
 	proxyType := "direct"
@@ -332,7 +332,7 @@ func (tm *TokenManager) GetTokenClient(tokenID string) (*http.Client, error) {
 
 	// Check if client factory is set
 	if tm.clientFactory == nil {
-		tm.logger.WarningLog("Client factory not set for token manager")
+		tm.logger.WarnLog("Client factory not set for token manager")
 		return nil, fmt.Errorf("client factory not set")
 	}
 
@@ -369,7 +369,7 @@ func (tm *TokenManager) UpdateProxyHealth(tokenID string, healthy bool, err erro
 
 	// Check if proxy health tracker is set
 	if tm.proxyHealthTracker == nil {
-		tm.logger.WarningLog("Proxy health tracker not set for token manager")
+		tm.logger.WarnLog("Proxy health tracker not set for token manager")
 		return fmt.Errorf("proxy health tracker not set")
 	}
 
@@ -398,11 +398,11 @@ func (tm *TokenManager) UpdateProxyHealth(tokenID string, healthy bool, err erro
 type HealthTracker struct {
 	store  *MultiTokenStore
 	mu     sync.RWMutex
-	logger *logging.Logger
+	logger logging.Logger
 }
 
 // NewHealthTracker creates a new HealthTracker
-func NewHealthTracker(store *MultiTokenStore, logger *logging.Logger) *HealthTracker {
+func NewHealthTracker(store *MultiTokenStore, logger logging.Logger) *HealthTracker {
 	return &HealthTracker{
 		store:  store,
 		logger: logger,

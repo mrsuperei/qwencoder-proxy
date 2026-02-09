@@ -17,7 +17,7 @@ import (
 
 // AuthenticateWithDeviceFlow handles the OAuth 2.0 device authorization flow using the golang.org/x/oauth2 package.
 // It requires a MultiTokenManager to save the token using the multi-token store.
-func AuthenticateWithDeviceFlow(ctx context.Context, logger *logging.Logger, multiTokenMgr *MultiTokenManager) error {
+func AuthenticateWithDeviceFlow(ctx context.Context, logger logging.Logger, multiTokenMgr *MultiTokenManager) error {
 	conf := &oauth2.Config{
 		ClientID: QwenOAuthClientID,
 		Scopes:   []string{QwenOAuthScope},
@@ -62,7 +62,7 @@ func AuthenticateWithDeviceFlow(ctx context.Context, logger *logging.Logger, mul
 
 	// Try to open the verification URI in the browser
 	if err := openBrowser(verificationURL); err != nil {
-		logger.WarningLog("Failed to open browser automatically: %v. Please open the URL manually.", err)
+		logger.WarnLog("Failed to open browser automatically: %v. Please open the URL manually.", err)
 	}
 
 	fmt.Printf("\n=== Qwen OAuth Authentication ===\n")
@@ -93,7 +93,7 @@ func AuthenticateWithDeviceFlow(ctx context.Context, logger *logging.Logger, mul
 
 	email, err := multiTokenMgr.ExtractEmail(ctx, "qwen", tokenResponse, token.AccessToken)
 	if err != nil {
-		logger.WarningLog("[Qwen OAuth] Failed to extract email: %v", err)
+		logger.WarnLog("[Qwen OAuth] Failed to extract email: %v", err)
 		email = ""
 	}
 

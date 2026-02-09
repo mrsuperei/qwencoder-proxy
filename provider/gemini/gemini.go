@@ -35,26 +35,26 @@ var SupportedModels = []string{
 }
 
 // Provider implements the provider.Provider interface for Gemini CLI
+// Embeds BaseProvider for common functionality
 type Provider struct {
-	baseURL          string
-	authenticator    *auth.GeminiAuthenticator
-	httpClient       *http.Client
-	tokenManager     *auth.TokenManager
-	logger           *logging.Logger
-	projectID        string
-	projectInitError error // Store any initialization error to prevent repeated attempts
+	*provider.BaseProvider // Embedded base provider provides common fields and methods
+	baseURL                string
+	authenticator          *auth.GeminiAuthenticator
+	projectID              string
+	projectInitError       error // Store any initialization error to prevent repeated attempts
 }
 
 // NewProvider creates a new Gemini provider
+// Uses BaseProvider for common functionality
 func NewProvider(authenticator *auth.GeminiAuthenticator) *Provider {
 	if authenticator == nil {
+		// Use direct instantiation for now - will be updated to use factory in later phase
 		authenticator = auth.NewGeminiAuthenticator(nil)
 	}
 	return &Provider{
+		BaseProvider:  provider.NewBaseProvider(logging.NewLogger(), 5*time.Minute),
 		baseURL:       DefaultBaseURL,
 		authenticator: authenticator,
-		httpClient:    &http.Client{Timeout: 5 * time.Minute},
-		logger:        logging.NewLogger(),
 	}
 }
 
@@ -92,11 +92,6 @@ func (p *Provider) GetAuthenticator() provider.Authenticator {
 	return p.authenticator
 }
 
-// SetTokenManager sets the TokenManager for this provider
-func (p *Provider) SetTokenManager(manager *auth.TokenManager) {
-	p.tokenManager = manager
-}
-
 // IsHealthy checks if the provider is available
 func (p *Provider) IsHealthy(ctx context.Context) bool {
 	// Try to list models as a health check
@@ -114,7 +109,7 @@ func (p *Provider) ListModels(ctx context.Context) (interface{}, error) {
 	// Try to initialize project to get actual models
 	if p.projectID == "" {
 		if err := p.initializeProject(ctx); err != nil {
-			p.logger.DebugLog("[Gemini] Failed to initialize project for model discovery: %v", err)
+			p.GetLogger().DebugLog("[Gemini] Failed to initialize project for model discovery: %v", err)
 			// Fall back to hardcoded models if initialization fails
 			return p.getHardcodedModels(), nil
 		}
@@ -124,7 +119,7 @@ func (p *Provider) ListModels(ctx context.Context) (interface{}, error) {
 	if actualModels, err := p.discoverModels(ctx); err == nil {
 		return actualModels, nil
 	} else {
-		p.logger.DebugLog("[Gemini] Failed to discover models from API: %v", err)
+		p.GetLogger().DebugLog("[Gemini] Failed to discover models from API: %v", err)
 		// Fall back to hardcoded models if discovery fails
 		return p.getHardcodedModels(), nil
 	}
@@ -259,24 +254,24 @@ func (p *Provider) doRequestWithProxy(req *http.Request, client *http.Client, to
 		// Check if this is a proxy error
 		if p.isProxyError(err) {
 			errorType := p.classifyProxyError(err)
-			p.logger.ErrorLog("[Gemini] Proxy error for token %s: %s (%s)", tokenID, err.Error(), errorType)
+			p.GetLogger().ErrorLog("[Gemini] Proxy error for token %s: %s (%s)", tokenID, err.Error(), errorType)
 
 			// Update proxy health if tokenManager is available
-			if p.tokenManager != nil {
-				if updateErr := p.tokenManager.UpdateProxyHealth(tokenID, false, err); updateErr != nil {
-					p.logger.WarningLog("[Gemini] Failed to update proxy health for token %s: %v", tokenID, updateErr)
+			if p.GetTokenManager() != nil {
+				if updateErr := p.GetTokenManager().UpdateProxyHealth(tokenID, false, err); updateErr != nil {
+					p.GetLogger().WarnLog("[Gemini] Failed to update proxy health for token %s: %v", tokenID, updateErr)
 				}
 			}
 		} else {
-			p.logger.ErrorLog("[Gemini] Request error for token %s: %v", tokenID, err)
+			p.GetLogger().ErrorLog("[Gemini] Request error for token %s: %v", tokenID, err)
 		}
 		return nil, err
 	}
 
 	// Update proxy health on success
-	if p.tokenManager != nil {
-		if updateErr := p.tokenManager.UpdateProxyHealth(tokenID, true, nil); updateErr != nil {
-			p.logger.WarningLog("[Gemini] Failed to update proxy health for token %s: %v", tokenID, updateErr)
+	if p.GetTokenManager() != nil {
+		if updateErr := p.GetTokenManager().UpdateProxyHealth(tokenID, true, nil); updateErr != nil {
+			p.GetLogger().WarnLog("[Gemini] Failed to update proxy health for token %s: %v", tokenID, updateErr)
 		}
 	}
 
@@ -285,13 +280,13 @@ func (p *Provider) doRequestWithProxy(req *http.Request, client *http.Client, to
 
 // initializeProject discovers or creates a project for the Cloud Code Assist API
 func (p *Provider) initializeProject(ctx context.Context) error {
-	p.logger.DebugLog("[Gemini] Starting project initialization...")
+	p.GetLogger().DebugLog("[Gemini] Starting project initialization...")
 
 	// Check if we have cached credentials
 	if p.authenticator.IsAuthenticated() {
-		p.logger.DebugLog("[Gemini] Found valid cached credentials")
+		p.GetLogger().DebugLog("[Gemini] Found valid cached credentials")
 	} else {
-		p.logger.DebugLog("[Gemini] No valid cached credentials found")
+		p.GetLogger().DebugLog("[Gemini] No valid cached credentials found")
 	}
 
 	// Determine which client and token to use
@@ -300,24 +295,24 @@ func (p *Provider) initializeProject(ctx context.Context) error {
 	var tokenID string
 
 	// Try to use token manager for proxy-aware client selection
-	if p.tokenManager != nil {
-		selectedToken, selectedClient, selectErr := p.tokenManager.SelectTokenWithClient()
+	if p.GetTokenManager() != nil {
+		selectedToken, selectedClient, selectErr := p.GetTokenManager().SelectTokenWithClient()
 		if selectErr != nil {
-			p.logger.WarningLog("[Gemini] Failed to select token with client, falling back to authenticator: %v", selectErr)
+			p.GetLogger().WarnLog("[Gemini] Failed to select token with client, falling back to authenticator: %v", selectErr)
 			// Fall back to authenticator
 			var authErr error
 			token, authErr = p.authenticator.GetToken(ctx)
 			if authErr != nil {
 				p.projectInitError = authErr
-				p.logger.ErrorLog("[Gemini] Failed to get token for project initialization: %v", authErr)
+				p.GetLogger().ErrorLog("[Gemini] Failed to get token for project initialization: %v", authErr)
 				return fmt.Errorf("failed to get token for project initialization: %w", authErr)
 			}
-			client = p.httpClient
+			client = p.GetHTTPClient()
 			tokenID = "fallback"
 		} else {
 			if selectedClient == nil {
-				p.logger.DebugLog("[Gemini] Token manager returned nil client, using default HTTP client")
-				client = p.httpClient
+				p.GetLogger().DebugLog("[Gemini] Token manager returned nil client, using default HTTP client")
+				client = p.GetHTTPClient()
 			} else {
 				client = selectedClient
 			}
@@ -326,9 +321,9 @@ func (p *Provider) initializeProject(ctx context.Context) error {
 
 			// Log proxy usage
 			if selectedToken.Proxy != nil && selectedToken.Proxy.Enabled {
-				p.logger.DebugLog("[Gemini] Using token %s with proxy: %s:%d", tokenID, selectedToken.Proxy.Host, selectedToken.Proxy.Port)
+				p.GetLogger().DebugLog("[Gemini] Using token %s with proxy: %s:%d", tokenID, selectedToken.Proxy.Host, selectedToken.Proxy.Port)
 			} else {
-				p.logger.DebugLog("[Gemini] Using token %s with direct connection", tokenID)
+				p.GetLogger().DebugLog("[Gemini] Using token %s with direct connection", tokenID)
 			}
 		}
 	} else {
@@ -337,14 +332,14 @@ func (p *Provider) initializeProject(ctx context.Context) error {
 		token, authErr = p.authenticator.GetToken(ctx)
 		if authErr != nil {
 			p.projectInitError = authErr
-			p.logger.ErrorLog("[Gemini] Failed to get token for project initialization: %v", authErr)
+			p.GetLogger().ErrorLog("[Gemini] Failed to get token for project initialization: %v", authErr)
 			return fmt.Errorf("failed to get token for project initialization: %w", authErr)
 		}
-		client = p.httpClient
+		client = p.GetHTTPClient()
 		tokenID = "fallback"
 	}
 
-	p.logger.DebugLog("[Gemini] Successfully obtained access token (length: %d)", len(token))
+	p.GetLogger().DebugLog("[Gemini] Successfully obtained access token (length: %d)", len(token))
 
 	// Clear any previous initialization errors since we got the token successfully
 	p.projectInitError = nil
@@ -401,7 +396,7 @@ func (p *Provider) initializeProject(ctx context.Context) error {
 	// Check if we already have a project ID from the response
 	if projectID, ok := loadResponse["cloudaicompanionProject"].(string); ok && projectID != "" {
 		p.projectID = projectID
-		p.logger.DebugLog("[Gemini] Using existing project ID: %s", p.projectID)
+		p.GetLogger().DebugLog("[Gemini] Using existing project ID: %s", p.projectID)
 		return nil
 	}
 
@@ -474,7 +469,7 @@ func (p *Provider) initializeProject(ctx context.Context) error {
 		if project, exists := response["cloudaicompanionProject"].(map[string]interface{}); exists {
 			if id, idExists := project["id"].(string); idExists {
 				p.projectID = id
-				p.logger.DebugLog("[Gemini] Created new project ID: %s", p.projectID)
+				p.GetLogger().DebugLog("[Gemini] Created new project ID: %s", p.projectID)
 				return nil
 			}
 		}
@@ -483,7 +478,7 @@ func (p *Provider) initializeProject(ctx context.Context) error {
 	// Fallback: try to get project ID directly from response
 	if id, exists := onboardResponse["cloudaicompanionProject"].(string); exists {
 		p.projectID = id
-		p.logger.DebugLog("[Gemini] Discovered project ID: %s", p.projectID)
+		p.GetLogger().DebugLog("[Gemini] Discovered project ID: %s", p.projectID)
 		return nil
 	}
 
@@ -510,15 +505,15 @@ func (p *Provider) GenerateContent(ctx context.Context, model string, request in
 	var tokenID string
 
 	// Try to use token manager for proxy-aware client selection
-	if p.tokenManager != nil {
-		selectedToken, selectedClient, selectErr := p.tokenManager.SelectTokenWithClient()
+	if p.GetTokenManager() != nil {
+		selectedToken, selectedClient, selectErr := p.GetTokenManager().SelectTokenWithClient()
 		if selectErr != nil {
-			p.logger.ErrorLog("[Gemini] Token selection failed: %v", selectErr)
+			p.GetLogger().ErrorLog("[Gemini] Token selection failed: %v", selectErr)
 			return nil, fmt.Errorf("failed to select token: %w", selectErr)
 		}
 		if selectedClient == nil {
-			p.logger.DebugLog("[Gemini] Token manager returned nil client, using default HTTP client")
-			client = p.httpClient
+			p.GetLogger().DebugLog("[Gemini] Token manager returned nil client, using default HTTP client")
+			client = p.GetHTTPClient()
 		} else {
 			client = selectedClient
 		}
@@ -527,19 +522,19 @@ func (p *Provider) GenerateContent(ctx context.Context, model string, request in
 
 		// Log proxy usage
 		if selectedToken.Proxy != nil && selectedToken.Proxy.Enabled {
-			p.logger.DebugLog("[Gemini] GenerateContent using token %s with proxy: %s:%d", tokenID, selectedToken.Proxy.Host, selectedToken.Proxy.Port)
+			p.GetLogger().DebugLog("[Gemini] GenerateContent using token %s with proxy: %s:%d", tokenID, selectedToken.Proxy.Host, selectedToken.Proxy.Port)
 		} else {
-			p.logger.DebugLog("[Gemini] GenerateContent using token %s with direct connection", tokenID)
+			p.GetLogger().DebugLog("[Gemini] GenerateContent using token %s with direct connection", tokenID)
 		}
 	} else {
 		// No token manager, use authenticator and default client
 		var authErr error
 		token, authErr = p.authenticator.GetToken(ctx)
 		if authErr != nil {
-			p.logger.ErrorLog("[Gemini] Token retrieval failed: %v", authErr)
+			p.GetLogger().ErrorLog("[Gemini] Token retrieval failed: %v", authErr)
 			return nil, fmt.Errorf("failed to get token: %w", authErr)
 		}
-		client = p.httpClient
+		client = p.GetHTTPClient()
 		tokenID = "fallback"
 	}
 
@@ -592,7 +587,7 @@ func (p *Provider) GenerateContent(ctx context.Context, model string, request in
 	req.Header.Set("Authorization", "Bearer "+token)
 	req.Header.Set("Content-Type", "application/json")
 
-	p.logger.DebugLog("[Gemini] Sending generateContent request to %s", url)
+	p.GetLogger().DebugLog("[Gemini] Sending generateContent request to %s", url)
 
 	resp, err := p.doRequestWithProxy(req, client, tokenID)
 	if err != nil {
@@ -602,7 +597,7 @@ func (p *Provider) GenerateContent(ctx context.Context, model string, request in
 
 	if resp.StatusCode == http.StatusUnauthorized {
 		// Try to refresh the token and retry the request once, following the JavaScript reference implementation
-		p.logger.DebugLog("[Gemini] Received %d, attempting to refresh token and retry", resp.StatusCode)
+		p.GetLogger().DebugLog("[Gemini] Received %d, attempting to refresh token and retry", resp.StatusCode)
 
 		// Read and close the original response body
 		bodyBytes, _ := io.ReadAll(resp.Body)
@@ -612,7 +607,7 @@ func (p *Provider) GenerateContent(ctx context.Context, model string, request in
 		// We need to implement a method to force refresh the token
 		_, refreshErr := p.authenticator.GetToken(ctx)
 		if refreshErr != nil {
-			p.logger.ErrorLog("[Gemini] Token refresh failed: %v", refreshErr)
+			p.GetLogger().ErrorLog("[Gemini] Token refresh failed: %v", refreshErr)
 			return nil, fmt.Errorf("API error (status %d) and token refresh failed: %s", resp.StatusCode, string(bodyBytes))
 		}
 
@@ -696,15 +691,15 @@ func (p *Provider) GenerateContentStream(ctx context.Context, model string, requ
 	var tokenID string
 
 	// Try to use token manager for proxy-aware client selection
-	if p.tokenManager != nil {
-		selectedToken, selectedClient, selectErr := p.tokenManager.SelectTokenWithClient()
+	if p.GetTokenManager() != nil {
+		selectedToken, selectedClient, selectErr := p.GetTokenManager().SelectTokenWithClient()
 		if selectErr != nil {
-			p.logger.ErrorLog("[Gemini] Token selection failed: %v", selectErr)
+			p.GetLogger().ErrorLog("[Gemini] Token selection failed: %v", selectErr)
 			return nil, fmt.Errorf("failed to select token: %w", selectErr)
 		}
 		if selectedClient == nil {
-			p.logger.DebugLog("[Gemini] Token manager returned nil client, using default HTTP client")
-			client = p.httpClient
+			p.GetLogger().DebugLog("[Gemini] Token manager returned nil client, using default HTTP client")
+			client = p.GetHTTPClient()
 		} else {
 			client = selectedClient
 		}
@@ -713,19 +708,19 @@ func (p *Provider) GenerateContentStream(ctx context.Context, model string, requ
 
 		// Log proxy usage
 		if selectedToken.Proxy != nil && selectedToken.Proxy.Enabled {
-			p.logger.DebugLog("[Gemini] GenerateContentStream using token %s with proxy: %s:%d", tokenID, selectedToken.Proxy.Host, selectedToken.Proxy.Port)
+			p.GetLogger().DebugLog("[Gemini] GenerateContentStream using token %s with proxy: %s:%d", tokenID, selectedToken.Proxy.Host, selectedToken.Proxy.Port)
 		} else {
-			p.logger.DebugLog("[Gemini] GenerateContentStream using token %s with direct connection", tokenID)
+			p.GetLogger().DebugLog("[Gemini] GenerateContentStream using token %s with direct connection", tokenID)
 		}
 	} else {
 		// No token manager, use authenticator and default client
 		var authErr error
 		token, authErr = p.authenticator.GetToken(ctx)
 		if authErr != nil {
-			p.logger.ErrorLog("[Gemini] Token retrieval failed: %v", authErr)
+			p.GetLogger().ErrorLog("[Gemini] Token retrieval failed: %v", authErr)
 			return nil, fmt.Errorf("failed to get token: %w", authErr)
 		}
-		client = p.httpClient
+		client = p.GetHTTPClient()
 		tokenID = "fallback"
 	}
 
@@ -781,7 +776,7 @@ func (p *Provider) GenerateContentStream(ctx context.Context, model string, requ
 	req.Header.Set("Content-Type", "application/json")
 	req.Header.Set("Accept", "text/event-stream")
 
-	p.logger.DebugLog("[Gemini] Sending streamGenerateContent request to %s", url)
+	p.GetLogger().DebugLog("[Gemini] Sending streamGenerateContent request to %s", url)
 
 	resp, err := p.doRequestWithProxy(req, client, tokenID)
 	if err != nil {
@@ -790,7 +785,7 @@ func (p *Provider) GenerateContentStream(ctx context.Context, model string, requ
 
 	if resp.StatusCode == http.StatusUnauthorized {
 		// Try to refresh the token and retry the request once, following the JavaScript reference implementation
-		p.logger.DebugLog("[Gemini] Received %d, attempting to refresh token and retry", resp.StatusCode)
+		p.GetLogger().DebugLog("[Gemini] Received %d, attempting to refresh token and retry", resp.StatusCode)
 
 		// Read and close the original response body
 		bodyBytes, _ := io.ReadAll(resp.Body)
@@ -799,7 +794,7 @@ func (p *Provider) GenerateContentStream(ctx context.Context, model string, requ
 		// Refresh the token by calling GetToken which handles refresh internally
 		_, refreshErr := p.authenticator.GetToken(ctx)
 		if refreshErr != nil {
-			p.logger.ErrorLog("[Gemini] Token refresh failed: %v", refreshErr)
+			p.GetLogger().ErrorLog("[Gemini] Token refresh failed: %v", refreshErr)
 			return nil, fmt.Errorf("API error (status %d) and token refresh failed: %s", resp.StatusCode, string(bodyBytes))
 		}
 

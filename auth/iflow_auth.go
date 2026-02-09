@@ -129,43 +129,25 @@ func (c *IFlowCredentials) GetExpire() string {
 }
 
 // IFlowAuthenticator implements the auth.Authenticator interface for iFlow
+// Embeds BaseAuthenticator for common functionality
 type IFlowAuthenticator struct {
-	config        *IFlowOAuthConfig
-	credentials   *IFlowCredentials
-	tokenManager  *TokenManager
-	multiTokenMgr *MultiTokenManager
-	mu            sync.RWMutex
-	logger        *logging.Logger
-	httpClient    *http.Client
-	tokenSource   oauth2.TokenSource
+	*BaseAuthenticator // Embedded base authenticator provides common fields and methods
+	config             *IFlowOAuthConfig
+	credentials        *IFlowCredentials
+	mu                 sync.RWMutex // For IFlow-specific fields (credentials, tokenSource)
+	tokenSource        oauth2.TokenSource
 }
 
 // NewIFlowAuthenticator creates a new iFlow authenticator
+// Uses BaseAuthenticator for common functionality
 func NewIFlowAuthenticator(config *IFlowOAuthConfig) *IFlowAuthenticator {
 	if config == nil {
 		config = DefaultIFlowOAuthConfig()
 	}
 	return &IFlowAuthenticator{
-		config:        config,
-		tokenManager:  nil, // Will be set via SetTokenManager
-		multiTokenMgr: nil, // Will be set via SetMultiTokenManager
-		logger:        logging.NewLogger(),
-		httpClient:    &http.Client{Timeout: 30 * time.Second},
+		BaseAuthenticator: NewBaseAuthenticator(logging.NewLogger()),
+		config:            config,
 	}
-}
-
-// SetTokenManager sets the token manager for this authenticator
-func (a *IFlowAuthenticator) SetTokenManager(tokenManager *TokenManager) {
-	a.mu.Lock()
-	defer a.mu.Unlock()
-	a.tokenManager = tokenManager
-}
-
-// SetMultiTokenManager sets the multi-token manager for this authenticator
-func (a *IFlowAuthenticator) SetMultiTokenManager(mtm *MultiTokenManager) {
-	a.mu.Lock()
-	defer a.mu.Unlock()
-	a.multiTokenMgr = mtm
 }
 
 // Authenticate performs the OAuth authentication flow
@@ -193,7 +175,7 @@ func (a *IFlowAuthenticator) Authenticate(ctx context.Context) error {
 
 	// Fetch user info and API key
 	if err := a.fetchUserInfo(); err != nil {
-		a.logger.DebugLog("[iFlow] Failed to fetch user info: %v", err)
+		a.GetLogger().DebugLog("[iFlow] Failed to fetch user info: %v", err)
 	}
 
 	return nil
@@ -201,12 +183,10 @@ func (a *IFlowAuthenticator) Authenticate(ctx context.Context) error {
 
 // GetToken returns a valid API key for LLM calls, refreshing if necessary
 func (a *IFlowAuthenticator) GetToken(ctx context.Context) (string, error) {
-	a.mu.Lock()
-	defer a.mu.Unlock()
-
+	tokenManager := a.GetTokenManager()
 	// If token manager is set, use it for token selection
-	if a.tokenManager != nil {
-		token, err := a.tokenManager.SelectToken()
+	if tokenManager != nil {
+		token, err := tokenManager.SelectToken()
 		if err != nil {
 			return "", fmt.Errorf("failed to select token from token manager: %w", err)
 		}
@@ -218,9 +198,14 @@ func (a *IFlowAuthenticator) GetToken(ctx context.Context) (string, error) {
 	}
 
 	// Fallback to legacy credential loading
+	a.mu.Lock()
+	defer a.mu.Unlock()
+
 	// Load credentials if not loaded
 	if a.credentials == nil {
+		a.mu.Unlock()
 		a.loadCredentials()
+		a.mu.Lock()
 	}
 
 	// Check if we have credentials
@@ -253,7 +238,7 @@ func (a *IFlowAuthenticator) GetToken(ctx context.Context) (string, error) {
 	}
 
 	// Create a context with the custom HTTP client
-	oauth2Context := context.WithValue(ctx, oauth2.HTTPClient, a.httpClient)
+	oauth2Context := context.WithValue(ctx, oauth2.HTTPClient, a.BaseAuthenticator.GetHTTPClient())
 
 	// Create TokenSource with the current token
 	ts := conf.TokenSource(oauth2Context, token)
@@ -261,13 +246,13 @@ func (a *IFlowAuthenticator) GetToken(ctx context.Context) (string, error) {
 	// Get token (this will refresh if needed)
 	newToken, err := ts.Token()
 	if err != nil {
-		a.logger.ErrorLog("[iFlow Auth] Token refresh failed: %v", err)
+		a.GetLogger().ErrorLog("[iFlow Auth] Token refresh failed: %v", err)
 		return "", fmt.Errorf("failed to refresh token: %w", err)
 	}
 
 	// Update credentials if token changed
 	if newToken.AccessToken != a.credentials.AccessToken || newToken.RefreshToken != a.credentials.RefreshToken {
-		a.logger.InfoLog("[iFlow Auth] Token refreshed successfully, saving credentials")
+		a.GetLogger().InfoLog("[iFlow Auth] Token refreshed successfully, saving credentials")
 
 		a.credentials.AccessToken = newToken.AccessToken
 		a.credentials.RefreshToken = newToken.RefreshToken
@@ -278,24 +263,28 @@ func (a *IFlowAuthenticator) GetToken(ctx context.Context) (string, error) {
 		}
 
 		// Fetch user info and API key after refresh
+		a.mu.Unlock()
 		if err := a.fetchUserInfo(); err != nil {
-			a.logger.ErrorLog("[iFlow Auth] Failed to fetch user info after refresh: %v", err)
+			a.GetLogger().ErrorLog("[iFlow Auth] Failed to fetch user info after refresh: %v", err)
 		} else {
-			a.logger.InfoLog("[iFlow Auth] User info and API key updated successfully")
+			a.GetLogger().InfoLog("[iFlow Auth] User info and API key updated successfully")
 		}
 
 		if err := a.saveCredentials(); err != nil {
-			a.logger.ErrorLog("Failed to save refreshed credentials: %v", err)
+			a.GetLogger().ErrorLog("Failed to save refreshed credentials: %v", err)
 		}
+		a.mu.Lock()
 	}
 
 	// If we still don't have an API key, try to fetch it
 	if a.credentials.APIKey == "" {
+		a.mu.Unlock()
 		if err := a.fetchUserInfo(); err != nil {
-			a.logger.ErrorLog("[iFlow Auth] Failed to fetch API key: %v", err)
+			a.GetLogger().ErrorLog("[iFlow Auth] Failed to fetch API key: %v", err)
 		} else {
 			a.saveCredentials()
 		}
+		a.mu.Lock()
 	}
 
 	// Return the API key for LLM calls, as requested by the user
@@ -320,10 +309,7 @@ func (a *IFlowAuthenticator) GetAPIKey() string {
 // GetTokenWithClient returns a valid access token and an HTTP client.
 // The HTTP client is configured with the proxy settings from the selected token.
 func (a *IFlowAuthenticator) GetTokenWithClient(ctx context.Context) (string, *http.Client, error) {
-	a.mu.RLock()
-	tokenManager := a.tokenManager
-	a.mu.RUnlock()
-
+	tokenManager := a.GetTokenManager()
 	if tokenManager == nil {
 		token, err := a.GetToken(ctx)
 		return token, nil, err
@@ -344,10 +330,7 @@ func (a *IFlowAuthenticator) GetTokenWithClient(ctx context.Context) (string, *h
 // GetHTTPClient returns an HTTP client configured with proxy settings.
 // The client is configured with the proxy settings from the selected token.
 func (a *IFlowAuthenticator) GetHTTPClient() (*http.Client, error) {
-	a.mu.RLock()
-	tokenManager := a.tokenManager
-	a.mu.RUnlock()
-
+	tokenManager := a.GetTokenManager()
 	if tokenManager == nil {
 		return nil, errors.New("token manager not initialized")
 	}
@@ -362,25 +345,29 @@ func (a *IFlowAuthenticator) GetHTTPClient() (*http.Client, error) {
 
 // IsAuthenticated checks if valid credentials exist
 func (a *IFlowAuthenticator) IsAuthenticated() bool {
-	a.mu.RLock()
-	defer a.mu.RUnlock()
-
+	tokenManager := a.GetTokenManager()
 	// If token manager is set, check if it has tokens
-	if a.tokenManager != nil {
-		tokens := a.tokenManager.store.ListTokens()
+	if tokenManager != nil {
+		tokens := tokenManager.store.ListTokens()
 		return len(tokens) > 0
 	}
 
 	// Fallback to legacy credential check
+	a.mu.RLock()
 	if a.credentials == nil {
+		a.mu.RUnlock()
 		// Try to load from file
 		a.loadCredentials()
+		a.mu.RLock()
 		if a.credentials == nil {
+			a.mu.RUnlock()
 			return false
 		}
 	}
 
-	return a.credentials.IsValid()
+	result := a.credentials.IsValid()
+	a.mu.RUnlock()
+	return result
 }
 
 // GetCredentialsPath returns the path to stored credentials
@@ -436,7 +423,7 @@ func (a *IFlowAuthenticator) loadCredentials() {
 		// If we have access token but no API key, try to fetch user info
 		if a.credentials.APIKey == "" && a.credentials.AccessToken != "" {
 			if err := a.fetchUserInfo(); err != nil {
-				a.logger.DebugLog("[iFlow] Failed to fetch user info during load: %v", err)
+				a.GetLogger().DebugLog("[iFlow] Failed to fetch user info during load: %v", err)
 			}
 		}
 		return
@@ -461,7 +448,7 @@ func (a *IFlowAuthenticator) loadCredentials() {
 	// If we have access token but no API key, try to fetch user info
 	if a.credentials.APIKey == "" && a.credentials.AccessToken != "" {
 		if err := a.fetchUserInfo(); err != nil {
-			a.logger.DebugLog("[iFlow] Failed to fetch user info during load: %v", err)
+			a.GetLogger().DebugLog("[iFlow] Failed to fetch user info during load: %v", err)
 		}
 	}
 }
@@ -590,9 +577,9 @@ func (a *IFlowAuthenticator) waitForCallback() (*IFlowOAuthCallbackResult, error
 	}
 
 	a.logger.InfoLog("[iFlow] Please open the following URL in your browser:")
-	a.logger.InfoLog("[iFlow] %s", authURL)
-	a.logger.InfoLog("[iFlow] After authorization, you will be redirected to a page showing the authorization code.")
-	a.logger.InfoLog("[iFlow] Please copy the authorization code from the URL parameter 'code' and provide it to continue.")
+	a.GetLogger().InfoLog("[iFlow] %s", authURL)
+	a.GetLogger().InfoLog("[iFlow] After authorization, you will be redirected to a page showing the authorization code.")
+	a.GetLogger().InfoLog("[iFlow] Please copy the authorization code from the URL parameter 'code' and provide it to continue.")
 
 	// For now, return an error indicating manual intervention is needed
 	return nil, fmt.Errorf("manual OAuth flow requires user interaction - please implement full OAuth server for automated flow")
@@ -618,7 +605,7 @@ func (a *IFlowAuthenticator) exchangeCodeForTokens(code string, pkceCodes *IFlow
 	req.Header.Set("Content-Type", "application/x-www-form-urlencoded")
 	req.Header.Set("Accept", "application/json")
 
-	resp, err := a.httpClient.Do(req)
+	resp, err := a.BaseAuthenticator.GetHTTPClient().Do(req)
 	if err != nil {
 		return fmt.Errorf("failed to send token request: %w", err)
 	}
@@ -648,8 +635,10 @@ func (a *IFlowAuthenticator) exchangeCodeForTokens(code string, pkceCodes *IFlow
 	expiresAt := time.Now().Add(time.Duration(tokenResp.ExpiresIn) * time.Second)
 
 	// Check if multi-token manager is available
-	if a.multiTokenMgr == nil {
+	multiTokenMgr := a.GetMultiTokenManager()
+	if multiTokenMgr == nil {
 		// Fallback to legacy saving
+		a.mu.Lock()
 		a.credentials = &IFlowCredentials{
 			AuthType:     "oauth",
 			AccessToken:  tokenResp.AccessToken,
@@ -661,9 +650,10 @@ func (a *IFlowAuthenticator) exchangeCodeForTokens(code string, pkceCodes *IFlow
 			LastRefresh:  time.Now().Format(time.RFC3339),
 			Type:         "iflow",
 		}
+		a.mu.Unlock()
 		// Fetch user info and API key
 		if err := a.fetchUserInfo(); err != nil {
-			a.logger.DebugLog("[iFlow] Failed to fetch user info: %v", err)
+			a.GetLogger().DebugLog("[iFlow] Failed to fetch user info: %v", err)
 			// Don't fail the exchange, just log the error
 		}
 		return a.saveCredentials()
@@ -677,22 +667,28 @@ func (a *IFlowAuthenticator) exchangeCodeForTokens(code string, pkceCodes *IFlow
 	tokenResponse["expires_in"] = tokenResp.ExpiresIn
 	tokenResponse["scope"] = tokenResp.Scope
 
-	email, err := a.multiTokenMgr.ExtractEmail(context.Background(), "iflow", tokenResponse, tokenResp.AccessToken)
+	email, err := multiTokenMgr.ExtractEmail(context.Background(), "iflow", tokenResponse, tokenResp.AccessToken)
 	if err != nil {
-		a.logger.WarningLog("[iFlow Auth] Failed to extract email: %v", err)
+		a.GetLogger().WarnLog("[iFlow Auth] Failed to extract email: %v", err)
 		email = ""
 	}
 
 	// Fetch user info and API key
 	if err := a.fetchUserInfo(); err != nil {
-		a.logger.DebugLog("[iFlow] Failed to fetch user info: %v", err)
+		a.GetLogger().DebugLog("[iFlow] Failed to fetch user info: %v", err)
 		// Don't fail the exchange, just log the error
 	}
 
 	// Use email from credentials if available (fetchUserInfo may have set it)
-	if a.credentials != nil && a.credentials.Email != "" {
-		email = a.credentials.Email
+	a.mu.RLock()
+	credsAPIKey := ""
+	if a.credentials != nil {
+		if a.credentials.Email != "" {
+			email = a.credentials.Email
+		}
+		credsAPIKey = a.credentials.APIKey
 	}
+	a.mu.RUnlock()
 
 	// Create ProviderToken with email and API key
 	now := time.Now()
@@ -704,7 +700,7 @@ func (a *IFlowAuthenticator) exchangeCodeForTokens(code string, pkceCodes *IFlow
 		ExpiryDate:   expiresAt.UnixMilli(),
 		Email:        email,
 		Scope:        tokenResp.Scope,
-		APIKey:       a.credentials.APIKey,
+		APIKey:       credsAPIKey,
 		Healthy:      true,
 		HealthScore:  1.0,
 		LastUsed:     now.UnixMilli(),
@@ -712,11 +708,11 @@ func (a *IFlowAuthenticator) exchangeCodeForTokens(code string, pkceCodes *IFlow
 	}
 
 	// Save token to multi-token store
-	if err := a.multiTokenMgr.SaveToken("iflow", providerToken); err != nil {
+	if err := multiTokenMgr.SaveToken("iflow", providerToken); err != nil {
 		return fmt.Errorf("failed to save token to multi-token store: %w", err)
 	}
 
-	a.logger.DebugLog("[iFlow Auth] Authentication successful, credentials saved to multi-token store")
+	a.GetLogger().DebugLog("[iFlow Auth] Authentication successful, credentials saved to multi-token store")
 	return nil
 }
 
@@ -735,7 +731,7 @@ func (a *IFlowAuthenticator) fetchUserInfo() error {
 
 	req.Header.Set("Accept", "application/json")
 
-	resp, err := a.httpClient.Do(req)
+	resp, err := a.BaseAuthenticator.GetHTTPClient().Do(req)
 	if err != nil {
 		return fmt.Errorf("failed to send user info request: %w", err)
 	}

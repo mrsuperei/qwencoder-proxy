@@ -162,7 +162,7 @@ func main() {
 func initializeProviders(
 	factory *provider.Factory,
 	multiTokenMgr *auth.MultiTokenManager,
-	logger *logging.Logger,
+	logger logging.Logger,
 ) error {
 	logger.InfoLog("Initializing providers with token manager injection...")
 
@@ -177,7 +177,7 @@ func initializeProviders(
 	geminiProvider := gemini.NewProvider(geminiAuth)
 	geminiTokenMgr, err := multiTokenMgr.GetTokenManager("gemini")
 	if err != nil {
-		logger.WarningLog("Failed to get token manager for gemini: %v", err)
+		logger.WarnLog("Failed to get token manager for gemini: %v", err)
 	} else {
 		geminiAuth.SetTokenManager(geminiTokenMgr)
 		factory.RegisterWithTokenManager(geminiProvider, geminiTokenMgr)
@@ -190,7 +190,7 @@ func initializeProviders(
 	iflowProvider := iflow.NewProvider(iflowAuth)
 	iflowTokenMgr, err := multiTokenMgr.GetTokenManager("iflow")
 	if err != nil {
-		logger.WarningLog("Failed to get token manager for iflow: %v", err)
+		logger.WarnLog("Failed to get token manager for iflow: %v", err)
 	} else {
 		iflowAuth.SetTokenManager(iflowTokenMgr)
 		factory.RegisterWithTokenManager(iflowProvider, iflowTokenMgr)
@@ -203,7 +203,7 @@ func initializeProviders(
 	kiroProvider := kiro.NewProvider(kiroAuth)
 	kiroTokenMgr, err := multiTokenMgr.GetTokenManager("kiro")
 	if err != nil {
-		logger.WarningLog("Failed to get token manager for kiro: %v", err)
+		logger.WarnLog("Failed to get token manager for kiro: %v", err)
 	} else {
 		kiroAuth.SetTokenManager(kiroTokenMgr)
 		factory.RegisterWithTokenManager(kiroProvider, kiroTokenMgr)
@@ -213,7 +213,7 @@ func initializeProviders(
 	// Create and register Qwen provider
 	qwenTokenMgr, err := multiTokenMgr.GetTokenManager("qwen")
 	if err != nil {
-		logger.WarningLog("Failed to get token manager for qwen: %v", err)
+		logger.WarnLog("Failed to get token manager for qwen: %v", err)
 	} else {
 		qwenProvider := qwen.NewProviderWithTokenManager(qwenTokenMgr, logger)
 		factory.RegisterWithTokenManager(qwenProvider, qwenTokenMgr)
@@ -226,7 +226,7 @@ func initializeProviders(
 	antigravityProvider := antigravity.NewProvider(antigravityAuth)
 	antigravityTokenMgr, err := multiTokenMgr.GetTokenManager("antigravity")
 	if err != nil {
-		logger.WarningLog("Failed to get token manager for antigravity: %v", err)
+		logger.WarnLog("Failed to get token manager for antigravity: %v", err)
 	} else {
 		antigravityAuth.SetTokenManager(antigravityTokenMgr)
 		factory.RegisterWithTokenManager(antigravityProvider, antigravityTokenMgr)
@@ -238,7 +238,7 @@ func initializeProviders(
 	defer cancel()
 
 	if err := factory.PopulateModelProviders(ctx); err != nil {
-		logger.WarningLog("Failed to populate model providers: %v", err)
+		logger.WarnLog("Failed to populate model providers: %v", err)
 		// Continue anyway - providers have hardcoded models
 	}
 
@@ -325,7 +325,7 @@ func registerProviderConfigs(multiTokenMgr *auth.MultiTokenManager) error {
 }
 
 // applyMiddleware adds middleware to the HTTP handler
-func applyMiddleware(handler http.Handler, logger *logging.Logger, cfg *config.Config) http.Handler {
+func applyMiddleware(handler http.Handler, logger logging.Logger, cfg *config.Config) http.Handler {
 	return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		// Log request
 		logger.InfoLog("%s %s", r.Method, r.URL.Path)

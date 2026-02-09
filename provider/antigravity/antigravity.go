@@ -60,22 +60,23 @@ var ModelAliasMapping = map[string]string{
 }
 
 // Provider implements the provider.Provider interface for Antigravity
+// Embeds BaseProvider for common functionality
 type Provider struct {
-	dailyBaseURL    string
-	autopushBaseURL string
-	authenticator   *auth.GeminiAuthenticator // Antigravity uses similar auth to Gemini CLI
-	httpClient      *http.Client
-	tokenManager    *auth.TokenManager
-	logger          *logging.Logger
-	projectID       string
-	isInitialized   bool
-	cachedModels    map[string]bool
-	cacheMu         sync.RWMutex
+	*provider.BaseProvider // Embedded base provider provides common fields and methods
+	dailyBaseURL           string
+	autopushBaseURL        string
+	authenticator          *auth.GeminiAuthenticator // Antigravity uses similar auth to Gemini CLI
+	projectID              string
+	isInitialized          bool
+	cachedModels           map[string]bool
+	cacheMu                sync.RWMutex // Antigravity-specific mutex for model cache
 }
 
 // NewProvider creates a new Antigravity provider
+// Uses BaseProvider for common functionality
 func NewProvider(authenticator *auth.GeminiAuthenticator) *Provider {
 	if authenticator == nil {
+		// Use direct instantiation for now - will be updated to use factory in later phase
 		authenticator = auth.NewGeminiAuthenticator(&auth.GeminiOAuthConfig{
 			ClientID:     "1071006060591-tmhssin2h21lcre235vtolojh4g403ep.apps.googleusercontent.com",
 			ClientSecret: "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",
@@ -86,11 +87,12 @@ func NewProvider(authenticator *auth.GeminiAuthenticator) *Provider {
 		})
 	}
 	return &Provider{
+		BaseProvider:    provider.NewBaseProvider(logging.NewLogger(), 5*time.Minute),
 		dailyBaseURL:    DefaultDailyBaseURL,
 		autopushBaseURL: DefaultAutopushBaseURL,
 		authenticator:   authenticator,
-		httpClient:      &http.Client{Timeout: 5 * time.Minute},
-		logger:          logging.NewLogger(),
+		projectID:       "",
+		isInitialized:   false,
 		cachedModels:    make(map[string]bool),
 	}
 }
@@ -159,16 +161,11 @@ func (p *Provider) GetAuthenticator() provider.Authenticator {
 	return p.authenticator
 }
 
-// SetTokenManager sets the TokenManager for this provider
-func (p *Provider) SetTokenManager(manager *auth.TokenManager) {
-	p.tokenManager = manager
-}
-
 // IsHealthy checks if the provider is available
 func (p *Provider) IsHealthy(ctx context.Context) bool {
 	// Initialize the provider as part of health check
 	if err := p.Initialize(ctx); err != nil {
-		p.logger.ErrorLog("[Antigravity] Health check failed during initialization: %v", err)
+		p.GetLogger().ErrorLog("[Antigravity] Health check failed during initialization: %v", err)
 		return false
 	}
 
@@ -280,24 +277,24 @@ func (p *Provider) doRequestWithProxy(req *http.Request, client *http.Client, to
 		// Check if this is a proxy error
 		if p.isProxyError(err) {
 			errorType := p.classifyProxyError(err)
-			p.logger.ErrorLog("[Antigravity] Proxy error for token %s: %s (%s)", tokenID, err.Error(), errorType)
+			p.GetLogger().ErrorLog("[Antigravity] Proxy error for token %s: %s (%s)", tokenID, err.Error(), errorType)
 
 			// Update proxy health if tokenManager is available
-			if p.tokenManager != nil {
-				if updateErr := p.tokenManager.UpdateProxyHealth(tokenID, false, err); updateErr != nil {
-					p.logger.WarningLog("[Antigravity] Failed to update proxy health for token %s: %v", tokenID, updateErr)
+			if p.GetTokenManager() != nil {
+				if updateErr := p.GetTokenManager().UpdateProxyHealth(tokenID, false, err); updateErr != nil {
+					p.GetLogger().WarnLog("[Antigravity] Failed to update proxy health for token %s: %v", tokenID, updateErr)
 				}
 			}
 		} else {
-			p.logger.ErrorLog("[Antigravity] Request error for token %s: %v", tokenID, err)
+			p.GetLogger().ErrorLog("[Antigravity] Request error for token %s: %v", tokenID, err)
 		}
 		return nil, err
 	}
 
 	// Update proxy health on success
-	if p.tokenManager != nil {
-		if updateErr := p.tokenManager.UpdateProxyHealth(tokenID, true, nil); updateErr != nil {
-			p.logger.WarningLog("[Antigravity] Failed to update proxy health for token %s: %v", tokenID, updateErr)
+	if p.GetTokenManager() != nil {
+		if updateErr := p.GetTokenManager().UpdateProxyHealth(tokenID, true, nil); updateErr != nil {
+			p.GetLogger().WarnLog("[Antigravity] Failed to update proxy health for token %s: %v", tokenID, updateErr)
 		}
 	}
 
@@ -314,12 +311,12 @@ func (p *Provider) doRequestWithRetry(ctx context.Context, reqFunc func(string, 
 
 	// Check for 401
 	if resp.StatusCode == http.StatusUnauthorized {
-		p.logger.DebugLog("[Antigravity] Received 401 Unauthorized. Retrying with fresh token...")
+		p.GetLogger().DebugLog("[Antigravity] Received 401 Unauthorized. Retrying with fresh token...")
 		resp.Body.Close() // Close the failed response body
 
 		// Force refresh
 		if err := p.authenticator.ForceRefresh(ctx); err != nil {
-			p.logger.ErrorLog("[Antigravity] Failed to force refresh token: %v", err)
+			p.GetLogger().ErrorLog("[Antigravity] Failed to force refresh token: %v", err)
 			return nil, fmt.Errorf("failed to force refresh token: %w", err)
 		}
 
@@ -350,22 +347,22 @@ func (p *Provider) ListModels(ctx context.Context) (interface{}, error) {
 	var tokenID string
 
 	// Try to use token manager for proxy-aware client selection
-	if p.tokenManager != nil {
-		selectedToken, selectedClient, selectErr := p.tokenManager.SelectTokenWithClient()
+	if p.GetTokenManager() != nil {
+		selectedToken, selectedClient, selectErr := p.GetTokenManager().SelectTokenWithClient()
 		if selectErr != nil {
-			p.logger.WarningLog("[Antigravity] Failed to select token with client, falling back to authenticator: %v", selectErr)
+			p.GetLogger().WarnLog("[Antigravity] Failed to select token with client, falling back to authenticator: %v", selectErr)
 			// Fall back to authenticator
 			var authErr error
 			token, authErr = p.authenticator.GetToken(ctx)
 			if authErr != nil {
 				return nil, fmt.Errorf("failed to get token: %w", authErr)
 			}
-			client = p.httpClient
+			client = p.GetHTTPClient()
 			tokenID = "fallback"
 		} else {
 			if selectedClient == nil {
-				p.logger.DebugLog("[Antigravity] Token manager returned nil client, using default HTTP client")
-				client = p.httpClient
+				p.GetLogger().DebugLog("[Antigravity] Token manager returned nil client, using default HTTP client")
+				client = p.GetHTTPClient()
 			} else {
 				client = selectedClient
 			}
@@ -374,9 +371,9 @@ func (p *Provider) ListModels(ctx context.Context) (interface{}, error) {
 
 			// Log proxy usage
 			if selectedToken.Proxy != nil && selectedToken.Proxy.Enabled {
-				p.logger.DebugLog("[Antigravity] Using token %s with proxy: %s:%d", tokenID, selectedToken.Proxy.Host, selectedToken.Proxy.Port)
+				p.GetLogger().DebugLog("[Antigravity] Using token %s with proxy: %s:%d", tokenID, selectedToken.Proxy.Host, selectedToken.Proxy.Port)
 			} else {
-				p.logger.DebugLog("[Antigravity] Using token %s with direct connection", tokenID)
+				p.GetLogger().DebugLog("[Antigravity] Using token %s with direct connection", tokenID)
 			}
 		}
 	} else {
@@ -386,7 +383,7 @@ func (p *Provider) ListModels(ctx context.Context) (interface{}, error) {
 		if authErr != nil {
 			return nil, fmt.Errorf("failed to get token: %w", authErr)
 		}
-		client = p.httpClient
+		client = p.GetHTTPClient()
 		tokenID = "fallback"
 	}
 
@@ -401,7 +398,7 @@ func (p *Provider) ListModels(ctx context.Context) (interface{}, error) {
 		req.Header.Set("Content-Type", "application/json")
 		req.Header.Set("User-Agent", DefaultUserAgent)
 
-		p.logger.DebugLog("[Antigravity] Sending fetchAvailableModels request to %s", url)
+		p.GetLogger().DebugLog("[Antigravity] Sending fetchAvailableModels request to %s", url)
 		return p.doRequestWithProxy(req, client, tokenID)
 	}
 
@@ -422,7 +419,7 @@ func (p *Provider) ListModels(ctx context.Context) (interface{}, error) {
 		return nil, fmt.Errorf("failed to read response body: %w", err)
 	}
 
-	p.logger.DebugLog("[Antigravity] Raw fetchAvailableModels response: %s", string(respBody))
+	p.GetLogger().DebugLog("[Antigravity] Raw fetchAvailableModels response: %s", string(respBody))
 
 	// Try to unmarshal the response into a generic map
 	var rawResponse map[string]interface{}
@@ -483,10 +480,10 @@ func (p *Provider) ListModels(ctx context.Context) (interface{}, error) {
 				}
 			}
 		} else {
-			p.logger.ErrorLog("[Antigravity] models field is not an object: %T", modelsData)
+			p.GetLogger().ErrorLog("[Antigravity] models field is not an object: %T", modelsData)
 		}
 	} else {
-		p.logger.ErrorLog("[Antigravity] No models field found in response: %+v", rawResponse)
+		p.GetLogger().ErrorLog("[Antigravity] No models field found in response: %+v", rawResponse)
 	}
 
 	// Update dynamic cache
@@ -501,7 +498,7 @@ func (p *Provider) ListModels(ctx context.Context) (interface{}, error) {
 
 // discoverProjectAndModels discovers the project ID and available models
 func (p *Provider) discoverProjectAndModels(ctx context.Context) (string, error) {
-	p.logger.DebugLog("[Antigravity] Discovering Project ID...")
+	p.GetLogger().DebugLog("[Antigravity] Discovering Project ID...")
 
 	// Prepare client metadata
 	clientMetadata := map[string]interface{}{
@@ -524,7 +521,7 @@ func (p *Provider) discoverProjectAndModels(ctx context.Context) (string, error)
 	for _, baseURL := range baseURLs {
 		projectID, err := p.callAPI(ctx, "loadCodeAssist", loadRequest, baseURL)
 		if err != nil {
-			p.logger.ErrorLog("[Antigravity] Error calling loadCodeAssist on %s: %v", baseURL, err)
+			p.GetLogger().ErrorLog("[Antigravity] Error calling loadCodeAssist on %s: %v", baseURL, err)
 			lastErr = err
 			continue
 		}
@@ -532,7 +529,7 @@ func (p *Provider) discoverProjectAndModels(ctx context.Context) (string, error)
 		// Check if we already have a project ID from the response
 		if project, exists := projectID["cloudaicompanionProject"]; exists && project != nil {
 			if projectStr, ok := project.(string); ok && projectStr != "" {
-				p.logger.DebugLog("[Antigravity] Discovered existing Project ID: %s", projectStr)
+				p.GetLogger().DebugLog("[Antigravity] Discovered existing Project ID: %s", projectStr)
 				return projectStr, nil
 			}
 		}
@@ -571,7 +568,7 @@ func (p *Provider) discoverProjectAndModels(ctx context.Context) (string, error)
 		// Call onboardUser
 		lroResponse, err := p.callAPI(ctx, "onboardUser", onboardRequest, baseURL)
 		if err != nil {
-			p.logger.ErrorLog("[Antigravity] Error calling onboardUser on %s: %v", baseURL, err)
+			p.GetLogger().ErrorLog("[Antigravity] Error calling onboardUser on %s: %v", baseURL, err)
 			lastErr = err
 			continue
 		}
@@ -618,14 +615,14 @@ func (p *Provider) discoverProjectAndModels(ctx context.Context) (string, error)
 		}
 
 		if discoveredProjectId != "" {
-			p.logger.DebugLog("[Antigravity] Onboarded and discovered Project ID: %s", discoveredProjectId)
+			p.GetLogger().DebugLog("[Antigravity] Onboarded and discovered Project ID: %s", discoveredProjectId)
 			return discoveredProjectId, nil
 		}
 	}
 
 	// If all base URLs failed, return fallback project ID
 	fallbackProjectId := p.generateProjectID()
-	p.logger.DebugLog("[Antigravity] Generated fallback Project ID: %s", fallbackProjectId)
+	p.GetLogger().DebugLog("[Antigravity] Generated fallback Project ID: %s", fallbackProjectId)
 
 	if lastErr != nil {
 		return fallbackProjectId, fmt.Errorf("all base URLs failed, using fallback: %w", lastErr)
@@ -642,22 +639,22 @@ func (p *Provider) callAPI(ctx context.Context, method string, body map[string]i
 	var tokenID string
 
 	// Try to use token manager for proxy-aware client selection
-	if p.tokenManager != nil {
-		selectedToken, selectedClient, selectErr := p.tokenManager.SelectTokenWithClient()
+	if p.GetTokenManager() != nil {
+		selectedToken, selectedClient, selectErr := p.GetTokenManager().SelectTokenWithClient()
 		if selectErr != nil {
-			p.logger.WarningLog("[Antigravity] Failed to select token with client, falling back to authenticator: %v", selectErr)
+			p.GetLogger().WarnLog("[Antigravity] Failed to select token with client, falling back to authenticator: %v", selectErr)
 			// Fall back to authenticator
 			var authErr error
 			token, authErr = p.authenticator.GetToken(ctx)
 			if authErr != nil {
 				return nil, fmt.Errorf("failed to get token: %w", authErr)
 			}
-			client = p.httpClient
+			client = p.GetHTTPClient()
 			tokenID = "fallback"
 		} else {
 			if selectedClient == nil {
-				p.logger.DebugLog("[Antigravity] Token manager returned nil client, using default HTTP client")
-				client = p.httpClient
+				p.GetLogger().DebugLog("[Antigravity] Token manager returned nil client, using default HTTP client")
+				client = p.GetHTTPClient()
 			} else {
 				client = selectedClient
 			}
@@ -666,9 +663,9 @@ func (p *Provider) callAPI(ctx context.Context, method string, body map[string]i
 
 			// Log proxy usage
 			if selectedToken.Proxy != nil && selectedToken.Proxy.Enabled {
-				p.logger.DebugLog("[Antigravity] Using token %s with proxy: %s:%d", tokenID, selectedToken.Proxy.Host, selectedToken.Proxy.Port)
+				p.GetLogger().DebugLog("[Antigravity] Using token %s with proxy: %s:%d", tokenID, selectedToken.Proxy.Host, selectedToken.Proxy.Port)
 			} else {
-				p.logger.DebugLog("[Antigravity] Using token %s with direct connection", tokenID)
+				p.GetLogger().DebugLog("[Antigravity] Using token %s with direct connection", tokenID)
 			}
 		}
 	} else {
@@ -678,7 +675,7 @@ func (p *Provider) callAPI(ctx context.Context, method string, body map[string]i
 		if authErr != nil {
 			return nil, fmt.Errorf("failed to get token: %w", authErr)
 		}
-		client = p.httpClient
+		client = p.GetHTTPClient()
 		tokenID = "fallback"
 	}
 
@@ -699,7 +696,7 @@ func (p *Provider) callAPI(ctx context.Context, method string, body map[string]i
 		req.Header.Set("Content-Type", "application/json")
 		req.Header.Set("User-Agent", DefaultUserAgent)
 
-		p.logger.DebugLog("[Antigravity] Sending %s request to %s", method, url)
+		p.GetLogger().DebugLog("[Antigravity] Sending %s request to %s", method, url)
 		return p.doRequestWithProxy(req, client, tokenID)
 	}
 
@@ -728,7 +725,7 @@ func (p *Provider) Initialize(ctx context.Context) error {
 		return nil
 	}
 
-	p.logger.DebugLog("[Antigravity] Initializing Antigravity API Service...")
+	p.GetLogger().DebugLog("[Antigravity] Initializing Antigravity API Service...")
 
 	// Initialize auth
 	if err := p.initializeAuth(ctx); err != nil {
@@ -743,11 +740,11 @@ func (p *Provider) Initialize(ctx context.Context) error {
 		}
 		p.projectID = projectID
 	} else {
-		p.logger.DebugLog("[Antigravity] Using provided Project ID: %s", p.projectID)
+		p.GetLogger().DebugLog("[Antigravity] Using provided Project ID: %s", p.projectID)
 	}
 
 	p.isInitialized = true
-	p.logger.DebugLog("[Antigravity] Initialization complete. Project ID: %s", p.projectID)
+	p.GetLogger().DebugLog("[Antigravity] Initialization complete. Project ID: %s", p.projectID)
 	return nil
 }
 
@@ -952,15 +949,15 @@ func (p *Provider) GenerateContent(ctx context.Context, model string, request in
 	var tokenID string
 
 	// Try to use token manager for proxy-aware client selection
-	if p.tokenManager != nil {
-		selectedToken, selectedClient, selectErr := p.tokenManager.SelectTokenWithClient()
+	if p.GetTokenManager() != nil {
+		selectedToken, selectedClient, selectErr := p.GetTokenManager().SelectTokenWithClient()
 		if selectErr != nil {
-			p.logger.ErrorLog("[Antigravity] Token selection failed: %v", selectErr)
+			p.GetLogger().ErrorLog("[Antigravity] Token selection failed: %v", selectErr)
 			return nil, fmt.Errorf("failed to select token: %w", selectErr)
 		}
 		if selectedClient == nil {
-			p.logger.DebugLog("[Antigravity] Token manager returned nil client, using default HTTP client")
-			client = p.httpClient
+			p.GetLogger().DebugLog("[Antigravity] Token manager returned nil client, using default HTTP client")
+			client = p.GetHTTPClient()
 		} else {
 			client = selectedClient
 		}
@@ -969,19 +966,19 @@ func (p *Provider) GenerateContent(ctx context.Context, model string, request in
 
 		// Log proxy usage
 		if selectedToken.Proxy != nil && selectedToken.Proxy.Enabled {
-			p.logger.DebugLog("[Antigravity] GenerateContent using token %s with proxy: %s:%d", tokenID, selectedToken.Proxy.Host, selectedToken.Proxy.Port)
+			p.GetLogger().DebugLog("[Antigravity] GenerateContent using token %s with proxy: %s:%d", tokenID, selectedToken.Proxy.Host, selectedToken.Proxy.Port)
 		} else {
-			p.logger.DebugLog("[Antigravity] GenerateContent using token %s with direct connection", tokenID)
+			p.GetLogger().DebugLog("[Antigravity] GenerateContent using token %s with direct connection", tokenID)
 		}
 	} else {
 		// No token manager, use authenticator and default client
 		var authErr error
 		token, authErr = p.authenticator.GetToken(ctx)
 		if authErr != nil {
-			p.logger.ErrorLog("[Antigravity] Token retrieval failed: %v", authErr)
+			p.GetLogger().ErrorLog("[Antigravity] Token retrieval failed: %v", authErr)
 			return nil, fmt.Errorf("failed to get token: %w", authErr)
 		}
-		client = p.httpClient
+		client = p.GetHTTPClient()
 		tokenID = "fallback"
 	}
 
@@ -997,7 +994,7 @@ func (p *Provider) GenerateContent(ctx context.Context, model string, request in
 		req.Header.Set("Content-Type", "application/json")
 		req.Header.Set("User-Agent", DefaultUserAgent)
 
-		p.logger.DebugLog("[Antigravity] Sending generateContent request to %s", url)
+		p.GetLogger().DebugLog("[Antigravity] Sending generateContent request to %s", url)
 		return p.doRequestWithProxy(req, client, tokenID)
 	}
 
@@ -1082,15 +1079,15 @@ func (p *Provider) GenerateContentStream(ctx context.Context, model string, requ
 	var tokenID string
 
 	// Try to use token manager for proxy-aware client selection
-	if p.tokenManager != nil {
-		selectedToken, selectedClient, selectErr := p.tokenManager.SelectTokenWithClient()
+	if p.GetTokenManager() != nil {
+		selectedToken, selectedClient, selectErr := p.GetTokenManager().SelectTokenWithClient()
 		if selectErr != nil {
-			p.logger.ErrorLog("[Antigravity] Token selection failed: %v", selectErr)
+			p.GetLogger().ErrorLog("[Antigravity] Token selection failed: %v", selectErr)
 			return nil, fmt.Errorf("failed to select token: %w", selectErr)
 		}
 		if selectedClient == nil {
-			p.logger.DebugLog("[Antigravity] Token manager returned nil client, using default HTTP client")
-			client = p.httpClient
+			p.GetLogger().DebugLog("[Antigravity] Token manager returned nil client, using default HTTP client")
+			client = p.GetHTTPClient()
 		} else {
 			client = selectedClient
 		}
@@ -1099,19 +1096,19 @@ func (p *Provider) GenerateContentStream(ctx context.Context, model string, requ
 
 		// Log proxy usage
 		if selectedToken.Proxy != nil && selectedToken.Proxy.Enabled {
-			p.logger.DebugLog("[Antigravity] GenerateContentStream using token %s with proxy: %s:%d", tokenID, selectedToken.Proxy.Host, selectedToken.Proxy.Port)
+			p.GetLogger().DebugLog("[Antigravity] GenerateContentStream using token %s with proxy: %s:%d", tokenID, selectedToken.Proxy.Host, selectedToken.Proxy.Port)
 		} else {
-			p.logger.DebugLog("[Antigravity] GenerateContentStream using token %s with direct connection", tokenID)
+			p.GetLogger().DebugLog("[Antigravity] GenerateContentStream using token %s with direct connection", tokenID)
 		}
 	} else {
 		// No token manager, use authenticator and default client
 		var authErr error
 		token, authErr = p.authenticator.GetToken(ctx)
 		if authErr != nil {
-			p.logger.ErrorLog("[Antigravity] Token retrieval failed: %v", authErr)
+			p.GetLogger().ErrorLog("[Antigravity] Token retrieval failed: %v", authErr)
 			return nil, fmt.Errorf("failed to get token: %w", authErr)
 		}
-		client = p.httpClient
+		client = p.GetHTTPClient()
 		tokenID = "fallback"
 	}
 
@@ -1129,7 +1126,7 @@ func (p *Provider) GenerateContentStream(ctx context.Context, model string, requ
 		req.Header.Set("User-Agent", DefaultUserAgent)
 		req.Header.Set("Accept", "text/event-stream")
 
-		p.logger.DebugLog("[Antigravity] Sending streaming generateContent request to %s", url)
+		p.GetLogger().DebugLog("[Antigravity] Sending streaming generateContent request to %s", url)
 		return p.doRequestWithProxy(req, client, tokenID)
 	}
 

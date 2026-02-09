@@ -2,9 +2,6 @@
 package converter
 
 import (
-	"fmt"
-	"time"
-
 	"github.com/sunbankio/qwencoder-proxy/provider"
 )
 
@@ -32,18 +29,7 @@ func (c *QwenConverter) ToOpenAIResponse(native interface{}, model string) (inte
 		return native, nil
 	}
 
-	openAIResp := map[string]interface{}{
-		"id":      fmt.Sprintf("chatcmpl-%s", model),
-		"object":  "chat.completion",
-		"created": time.Now().Unix(),
-		"model":   model,
-		"choices": []interface{}{},
-		"usage": map[string]interface{}{
-			"prompt_tokens":     0,
-			"completion_tokens": 0,
-			"total_tokens":      0,
-		},
-	}
+	openAIResp := CreateOpenAIResponseBase(model)
 
 	// Helper to extract choices from a map
 	extractChoices := func(m map[string]interface{}) ([]interface{}, bool) {
@@ -71,29 +57,15 @@ func (c *QwenConverter) ToOpenAIResponse(native interface{}, model string) (inte
 		return nil, false
 	}
 
-	// DIAGNOSTIC: Log raw Qwen response structure
-	fmt.Printf("[QwenConverter DIAGNOSTIC] Raw Qwen response: %+v\n", qwenResp)
-
 	if choices, ok := extractChoices(qwenResp); ok {
 		var openAIChoices []interface{}
 		for i, choice := range choices {
 			if choiceMap, ok := choice.(map[string]interface{}); ok {
-				// DIAGNOSTIC: Log each choice
-				fmt.Printf("[QwenConverter DIAGNOSTIC] Choice %d: %+v\n", i, choiceMap)
-
 				content := ""
 				if msg, exists := choiceMap["message"]; exists {
 					if msgMap, msgOk := msg.(map[string]interface{}); msgOk {
-						// DIAGNOSTIC: Log message structure
-						fmt.Printf("[QwenConverter DIAGNOSTIC] Choice %d message: %+v\n", i, msgMap)
 						if c, ok := msgMap["content"].(string); ok {
 							content = c
-						}
-						// DIAGNOSTIC: Check for tool_calls
-						if toolCalls, hasToolCalls := msgMap["tool_calls"]; hasToolCalls {
-							fmt.Printf("[QwenConverter DIAGNOSTIC] Tool calls found in choice %d: %+v\n", i, toolCalls)
-						} else {
-							fmt.Printf("[QwenConverter DIAGNOSTIC] No tool_calls found in choice %d message\n", i)
 						}
 					}
 				}
@@ -103,14 +75,7 @@ func (c *QwenConverter) ToOpenAIResponse(native interface{}, model string) (inte
 					finishReason = reason
 				}
 
-				openAIChoice := map[string]interface{}{
-					"index": i,
-					"message": map[string]interface{}{
-						"role":    "assistant",
-						"content": content,
-					},
-					"finish_reason": finishReason,
-				}
+				openAIChoice := CreateOpenAIChoice(i, content, finishReason)
 
 				// Extract tool_calls from Qwen response
 				if msg, exists := choiceMap["message"]; exists {

@@ -13,7 +13,6 @@ import (
 	"os"
 	"path/filepath"
 	"strings"
-	"sync"
 	"time"
 
 	"github.com/google/uuid"
@@ -52,41 +51,22 @@ type GeminiCredentials struct {
 }
 
 // GeminiAuthenticator implements Authenticator interface for Gemini
+// Embeds BaseAuthenticator for common functionality
 type GeminiAuthenticator struct {
-	config        *GeminiOAuthConfig
-	tokenManager  *TokenManager
-	multiTokenMgr *MultiTokenManager
-	mu            sync.RWMutex
-	logger        *logging.Logger
-	httpClient    *http.Client
+	*BaseAuthenticator // Embedded base authenticator provides common fields and methods
+	config             *GeminiOAuthConfig
 }
 
 // NewGeminiAuthenticator creates a new Gemini authenticator
+// Uses BaseAuthenticator for common functionality
 func NewGeminiAuthenticator(config *GeminiOAuthConfig) *GeminiAuthenticator {
 	if config == nil {
 		config = DefaultGeminiOAuthConfig()
 	}
 	return &GeminiAuthenticator{
-		config:        config,
-		tokenManager:  nil, // Will be set via SetTokenManager
-		multiTokenMgr: nil, // Will be set via SetMultiTokenManager
-		logger:        logging.NewLogger(),
-		httpClient:    &http.Client{Timeout: 30 * time.Second},
+		BaseAuthenticator: NewBaseAuthenticator(logging.NewLogger()),
+		config:            config,
 	}
-}
-
-// SetTokenManager sets the token manager for this authenticator
-func (a *GeminiAuthenticator) SetTokenManager(tokenManager *TokenManager) {
-	a.mu.Lock()
-	defer a.mu.Unlock()
-	a.tokenManager = tokenManager
-}
-
-// SetMultiTokenManager sets the multi-token manager for this authenticator
-func (a *GeminiAuthenticator) SetMultiTokenManager(mtm *MultiTokenManager) {
-	a.mu.Lock()
-	defer a.mu.Unlock()
-	a.multiTokenMgr = mtm
 }
 
 // GetCredentialsPath returns path to credentials file
@@ -97,10 +77,7 @@ func (a *GeminiAuthenticator) GetCredentialsPath() string {
 
 // IsAuthenticated checks if valid credentials exist
 func (a *GeminiAuthenticator) IsAuthenticated() bool {
-	a.mu.RLock()
-	tokenManager := a.tokenManager
-	a.mu.RUnlock()
-
+	tokenManager := a.GetTokenManager()
 	if tokenManager == nil {
 		return false
 	}
@@ -159,33 +136,27 @@ func (a *GeminiAuthenticator) ClearCredentials() error {
 
 // GetToken returns a valid access token using multi-token manager
 func (a *GeminiAuthenticator) GetToken(ctx context.Context) (string, error) {
-	a.mu.RLock()
-	tokenManager := a.tokenManager
-	a.mu.RUnlock()
-
+	tokenManager := a.GetTokenManager()
 	if tokenManager == nil {
-		a.logger.ErrorLog("[GeminiAuth] GetToken: token manager is nil")
+		a.GetLogger().ErrorLog("[GeminiAuth] GetToken: token manager is nil")
 		return "", fmt.Errorf("token manager not initialized")
 	}
 
-	a.logger.DebugLog("[GeminiAuth] GetToken: calling tokenManager.SelectToken()")
+	a.GetLogger().DebugLog("[GeminiAuth] GetToken: calling tokenManager.SelectToken()")
 	token, err := tokenManager.SelectToken()
 	if err != nil {
-		a.logger.ErrorLog("[GeminiAuth] GetToken: tokenManager.SelectToken() failed: %v", err)
+		a.GetLogger().ErrorLog("[GeminiAuth] GetToken: tokenManager.SelectToken() failed: %v", err)
 		return "", fmt.Errorf("failed to select token: %w", err)
 	}
 
-	a.logger.DebugLog("[GeminiAuth] GetToken: selected token ID=%s, Email=%s", token.ID, token.Email)
+	a.GetLogger().DebugLog("[GeminiAuth] GetToken: selected token ID=%s, Email=%s", token.ID, token.Email)
 	return token.AccessToken, nil
 }
 
 // GetTokenWithClient returns a valid access token and an HTTP client.
 // The HTTP client is configured with the proxy settings from the selected token.
 func (a *GeminiAuthenticator) GetTokenWithClient(ctx context.Context) (string, *http.Client, error) {
-	a.mu.RLock()
-	tokenManager := a.tokenManager
-	a.mu.RUnlock()
-
+	tokenManager := a.GetTokenManager()
 	if tokenManager == nil {
 		token, err := a.GetToken(ctx)
 		return token, nil, err
@@ -201,10 +172,7 @@ func (a *GeminiAuthenticator) GetTokenWithClient(ctx context.Context) (string, *
 // GetHTTPClient returns an HTTP client configured with proxy settings.
 // The client is configured with the proxy settings from the selected token.
 func (a *GeminiAuthenticator) GetHTTPClient() (*http.Client, error) {
-	a.mu.RLock()
-	tokenManager := a.tokenManager
-	a.mu.RUnlock()
-
+	tokenManager := a.GetTokenManager()
 	if tokenManager == nil {
 		return nil, errors.New("token manager not initialized")
 	}
@@ -275,7 +243,7 @@ func (a *GeminiAuthenticator) Authenticate(ctx context.Context) error {
 	go func() {
 		defer func() {
 			if r := recover(); r != nil {
-				a.logger.ErrorLog("[Gemini Auth] Panic recovered in server goroutine: %v", r)
+				a.GetLogger().ErrorLog("[Gemini Auth] Panic recovered in server goroutine: %v", r)
 				errChan <- fmt.Errorf("panic: %v", r)
 			}
 		}()
@@ -326,7 +294,7 @@ func (a *GeminiAuthenticator) exchangeCodeForTokens(ctx context.Context, code, r
 	}
 	req.Header.Set("Content-Type", "application/x-www-form-urlencoded")
 
-	resp, err := a.httpClient.Do(req)
+	resp, err := a.BaseAuthenticator.GetHTTPClient().Do(req)
 	if err != nil {
 		return fmt.Errorf("failed to send token request: %w", err)
 	}
@@ -349,10 +317,11 @@ func (a *GeminiAuthenticator) exchangeCodeForTokens(ctx context.Context, code, r
 	}
 
 	// Check if multi-token manager is available
-	if a.multiTokenMgr == nil {
+	multiTokenMgr := a.GetMultiTokenManager()
+	if multiTokenMgr == nil {
 		// Fallback to legacy saving
-		a.logger.DebugLog("[Gemini Auth] Multi-token manager not available, using legacy save")
-		a.logger.DebugLog("[Gemini Auth] Authentication successful, credentials saved")
+		a.GetLogger().DebugLog("[Gemini Auth] Multi-token manager not available, using legacy save")
+		a.GetLogger().DebugLog("[Gemini Auth] Authentication successful, credentials saved")
 		return nil
 	}
 
@@ -364,9 +333,9 @@ func (a *GeminiAuthenticator) exchangeCodeForTokens(ctx context.Context, code, r
 	tokenResponse["expires_in"] = tokenResp.ExpiresIn
 	tokenResponse["scope"] = tokenResp.Scope
 
-	email, err := a.multiTokenMgr.ExtractEmail(ctx, "gemini", tokenResponse, tokenResp.AccessToken)
+	email, err := multiTokenMgr.ExtractEmail(ctx, "gemini", tokenResponse, tokenResp.AccessToken)
 	if err != nil {
-		a.logger.WarningLog("[Gemini Auth] Failed to extract email: %v", err)
+		a.GetLogger().WarnLog("[Gemini Auth] Failed to extract email: %v", err)
 		email = ""
 	}
 
@@ -389,10 +358,10 @@ func (a *GeminiAuthenticator) exchangeCodeForTokens(ctx context.Context, code, r
 	}
 
 	// Save token to multi-token store
-	if err := a.multiTokenMgr.SaveToken("gemini", providerToken); err != nil {
+	if err := multiTokenMgr.SaveToken("gemini", providerToken); err != nil {
 		return fmt.Errorf("failed to save token to multi-token store: %w", err)
 	}
 
-	a.logger.DebugLog("[Gemini Auth] Authentication successful, credentials saved to multi-token store")
+	a.GetLogger().DebugLog("[Gemini Auth] Authentication successful, credentials saved to multi-token store")
 	return nil
 }

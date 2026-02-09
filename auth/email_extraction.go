@@ -29,11 +29,11 @@ type EmailExtractor interface {
 type QwenEmailExtractor struct {
 	userInfoURL string
 	httpClient  *http.Client
-	logger      *logging.Logger
+	logger      logging.Logger
 }
 
 // NewQwenEmailExtractor creates a new QwenEmailExtractor
-func NewQwenEmailExtractor(httpClient *http.Client, logger *logging.Logger) *QwenEmailExtractor {
+func NewQwenEmailExtractor(httpClient *http.Client, logger logging.Logger) *QwenEmailExtractor {
 	if httpClient == nil {
 		httpClient = &http.Client{Timeout: 30 * time.Second}
 	}
@@ -76,11 +76,11 @@ func (qe *QwenEmailExtractor) UserInfoURL() string {
 type GeminiEmailExtractor struct {
 	userInfoURL string
 	httpClient  *http.Client
-	logger      *logging.Logger
+	logger      logging.Logger
 }
 
 // NewGeminiEmailExtractor creates a new GeminiEmailExtractor
-func NewGeminiEmailExtractor(httpClient *http.Client, logger *logging.Logger) *GeminiEmailExtractor {
+func NewGeminiEmailExtractor(httpClient *http.Client, logger logging.Logger) *GeminiEmailExtractor {
 	if httpClient == nil {
 		httpClient = &http.Client{Timeout: 30 * time.Second}
 	}
@@ -146,11 +146,11 @@ func (ge *GeminiEmailExtractor) UserInfoURL() string {
 type KiroEmailExtractor struct {
 	userInfoURL string
 	httpClient  *http.Client
-	logger      *logging.Logger
+	logger      logging.Logger
 }
 
 // NewKiroEmailExtractor creates a new KiroEmailExtractor
-func NewKiroEmailExtractor(httpClient *http.Client, logger *logging.Logger) *KiroEmailExtractor {
+func NewKiroEmailExtractor(httpClient *http.Client, logger logging.Logger) *KiroEmailExtractor {
 	if httpClient == nil {
 		httpClient = &http.Client{Timeout: 30 * time.Second}
 	}
@@ -201,11 +201,11 @@ func (ke *KiroEmailExtractor) UserInfoURL() string {
 type IFlowEmailExtractor struct {
 	userInfoURL string
 	httpClient  *http.Client
-	logger      *logging.Logger
+	logger      logging.Logger
 }
 
 // NewIFlowEmailExtractor creates a new IFlowEmailExtractor
-func NewIFlowEmailExtractor(httpClient *http.Client, logger *logging.Logger) *IFlowEmailExtractor {
+func NewIFlowEmailExtractor(httpClient *http.Client, logger logging.Logger) *IFlowEmailExtractor {
 	if httpClient == nil {
 		httpClient = &http.Client{Timeout: 30 * time.Second}
 	}
@@ -291,11 +291,11 @@ func (ife *IFlowEmailExtractor) UserInfoURL() string {
 type EmailExtractionManager struct {
 	extractors map[string]EmailExtractor // ProviderID -> EmailExtractor
 	mu         sync.RWMutex
-	logger     *logging.Logger
+	logger     logging.Logger
 }
 
 // NewEmailExtractionManager creates a new EmailExtractionManager
-func NewEmailExtractionManager(logger *logging.Logger) *EmailExtractionManager {
+func NewEmailExtractionManager(logger logging.Logger) *EmailExtractionManager {
 	if logger == nil {
 		logger = logging.NewLogger()
 	}
@@ -326,7 +326,7 @@ func (eem *EmailExtractionManager) ExtractEmail(ctx context.Context, providerID 
 
 	email, err := extractor.ExtractEmail(ctx, tokenResponse, accessToken)
 	if err != nil {
-		eem.logger.WarningLog("[EmailExtractionManager] Failed to extract email for %s: %v", providerID, err)
+		eem.logger.WarnLog("[EmailExtractionManager] Failed to extract email for %s: %v", providerID, err)
 		return "", err
 	}
 
@@ -380,7 +380,7 @@ func extractEmailFromTokenResponse(tokenResponse map[string]interface{}) (string
 }
 
 // fetchEmailFromUserInfo fetches email from a user info endpoint with retry logic
-func fetchEmailFromUserInfo(ctx context.Context, userInfoURL string, accessToken string, httpClient *http.Client, logger *logging.Logger) (string, error) {
+func fetchEmailFromUserInfo(ctx context.Context, userInfoURL string, accessToken string, httpClient *http.Client, logger logging.Logger) (string, error) {
 	const maxRetries = 3
 	const initialRetryDelay = 500 * time.Millisecond
 
@@ -448,7 +448,7 @@ func fetchEmailFromUserInfo(ctx context.Context, userInfoURL string, accessToken
 		// Check for retryable errors (5xx, 429, or network issues)
 		if resp.StatusCode != http.StatusOK {
 			lastErr = fmt.Errorf("user info request failed (status %d): %s", resp.StatusCode, bodyStr)
-			logger.WarningLog("[fetchEmailFromUserInfo] %v", lastErr)
+			logger.WarnLog("[fetchEmailFromUserInfo] %v", lastErr)
 			continue // Retry for 5xx, 429
 		}
 
@@ -471,7 +471,7 @@ func fetchEmailFromUserInfo(ctx context.Context, userInfoURL string, accessToken
 		}
 
 		lastErr = fmt.Errorf("no email found in user info response")
-		logger.WarningLog("[fetchEmailFromUserInfo] %v", lastErr)
+		logger.WarnLog("[fetchEmailFromUserInfo] %v", lastErr)
 		// Don't retry if we got a valid response but no email
 		return "", lastErr
 	}

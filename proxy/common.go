@@ -29,7 +29,7 @@ func SetStreamingHeaders(w http.ResponseWriter) {
 }
 
 // CopyStreamToResponse copies blocks from an io.ReadCloser to a http.ResponseWriter with flushing
-func CopyStreamToResponse(w http.ResponseWriter, stream io.ReadCloser, logger *logging.Logger) error {
+func CopyStreamToResponse(w http.ResponseWriter, stream io.ReadCloser, logger logging.Logger) error {
 	defer stream.Close()
 
 	flusher, ok := w.(http.Flusher)
@@ -57,7 +57,7 @@ func CopyStreamToResponse(w http.ResponseWriter, stream io.ReadCloser, logger *l
 }
 
 // StreamResponse handles streaming content generation and writing to the response writer
-func StreamResponse(w http.ResponseWriter, r *http.Request, factory *provider.Factory, p provider.Provider, nativeReq interface{}, model string, logger *logging.Logger) error {
+func StreamResponse(w http.ResponseWriter, r *http.Request, factory *provider.Factory, p provider.Provider, nativeReq interface{}, model string, logger logging.Logger) error {
 	ctx := r.Context()
 	stream, err := p.GenerateContentStream(ctx, model, nativeReq)
 	if err != nil {

@@ -23,7 +23,7 @@ import (
 type ProxyHealthTracker struct {
 	healthStore         map[string]*ProxyHealth // key: tokenID
 	storeLock           sync.RWMutex
-	logger              *logging.Logger
+	logger              logging.Logger
 	failureThreshold    int           // Default: 5
 	healthCheckInterval time.Duration // Default: 5 minutes
 }
@@ -34,7 +34,7 @@ type ProxyHealthTracker struct {
 //   - logger: Logger for tracker operations
 //   - failureThreshold: Number of consecutive failures before marking unhealthy (default: 5)
 //   - healthCheckInterval: Interval for periodic health checks (default: 5 minutes)
-func NewProxyHealthTracker(logger *logging.Logger, failureThreshold int, healthCheckInterval time.Duration) *ProxyHealthTracker {
+func NewProxyHealthTracker(logger logging.Logger, failureThreshold int, healthCheckInterval time.Duration) *ProxyHealthTracker {
 	if failureThreshold <= 0 {
 		failureThreshold = 5
 	}
@@ -108,7 +108,7 @@ func (pht *ProxyHealthTracker) UpdateHealth(tokenID string, healthy bool, err er
 
 	// Check if consecutive failures exceed threshold
 	if health.ConsecutiveFailures > pht.failureThreshold {
-		pht.logger.WarningLog("Proxy for token %s marked unhealthy after %d consecutive failures",
+		pht.logger.WarnLog("Proxy for token %s marked unhealthy after %d consecutive failures",
 			tokenID, health.ConsecutiveFailures)
 	}
 

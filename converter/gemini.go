@@ -40,25 +40,11 @@ func (c *GeminiConverter) ToOpenAIResponse(native interface{}, model string) (in
 	}
 
 	// Create OpenAI-compatible response
-	openAIResp := map[string]interface{}{
-		"id":      "chatcmpl-" + generateID(),
-		"object":  "chat.completion",
-		"created": getCurrentTimestamp(),
-		"model":   model,
-		"choices": []interface{}{},
-		"usage": map[string]interface{}{
-			"prompt_tokens":     0,
-			"completion_tokens": 0,
-			"total_tokens":      0,
-		},
-	}
+	openAIResp := CreateOpenAIResponseBase(model)
 
 	if geminiResp.UsageMetadata != nil {
-		openAIResp["usage"] = map[string]interface{}{
-			"prompt_tokens":     geminiResp.UsageMetadata.PromptTokenCount,
-			"completion_tokens": geminiResp.UsageMetadata.CandidatesTokenCount,
-			"total_tokens":      geminiResp.UsageMetadata.TotalTokenCount,
-		}
+		UpdateUsage(openAIResp, geminiResp.UsageMetadata.PromptTokenCount,
+			geminiResp.UsageMetadata.CandidatesTokenCount, geminiResp.UsageMetadata.TotalTokenCount)
 	}
 
 	choices := []interface{}{}
@@ -85,20 +71,12 @@ func (c *GeminiConverter) ToOpenAIResponse(native interface{}, model string) (in
 				}
 			}
 
-			choice := map[string]interface{}{
-				"index": i,
-				"message": map[string]interface{}{
-					"role":    "assistant",
-					"content": content,
-				},
-				"finish_reason": convertFinishReason(candidate.FinishReason),
-			}
-
+			var choice map[string]interface{}
 			// If we have tool calls, update the message
 			if len(toolCalls) > 0 {
-				choice["message"].(map[string]interface{})["content"] = nil
-				choice["message"].(map[string]interface{})["tool_calls"] = toolCalls
-				choice["finish_reason"] = "tool_calls"
+				choice = CreateOpenAIChoiceWithToolCalls(i, toolCalls, "tool_calls")
+			} else {
+				choice = CreateOpenAIChoice(i, content, ConvertFinishReason(candidate.FinishReason))
 			}
 
 			choices = append(choices, choice)
@@ -106,16 +84,6 @@ func (c *GeminiConverter) ToOpenAIResponse(native interface{}, model string) (in
 	}
 
 	openAIResp["choices"] = choices
-
-	// DIAGNOSTIC: Log raw parts from Gemini response
-	for i, candidate := range geminiResp.Candidates {
-		if candidate.Content != nil {
-			fmt.Printf("[GeminiConverter DIAGNOSTIC] Candidate %d has %d parts\n", i, len(candidate.Content.Parts))
-			for j, part := range candidate.Content.Parts {
-				fmt.Printf("[GeminiConverter DIAGNOSTIC] Part %d - Text: '%s', InlineData: %v, FileData: %v\n", j, part.Text, part.InlineData != nil, part.FileData != nil)
-			}
-		}
-	}
 
 	return openAIResp, nil
 }
@@ -135,7 +103,7 @@ func (c *GeminiConverter) ToOpenAIStreamChunk(native interface{}, model string) 
 	}
 
 	openAIChunk := map[string]interface{}{
-		"id":      "chatcmpl-stream", // ID should be consistent, but stateless converter can't guarantee. Fixed placeholder or caller overrides.
+		"id":      "chatcmpl-" + generateID(), // ID should be consistent, but stateless converter can't guarantee. Fixed placeholder or caller overrides.
 		"object":  "chat.completion.chunk",
 		"created": getCurrentTimestamp(),
 		"model":   model,
@@ -172,7 +140,7 @@ func (c *GeminiConverter) ToOpenAIStreamChunk(native interface{}, model string) 
 		choice["delta"] = delta
 
 		if candidate.FinishReason != "" {
-			choice["finish_reason"] = convertFinishReason(candidate.FinishReason)
+			choice["finish_reason"] = ConvertFinishReason(candidate.FinishReason)
 		}
 
 		choices = append(choices, choice)
@@ -200,16 +168,6 @@ func (c *GeminiConverter) FromOpenAIRequest(req interface{}) (interface{}, error
 		return nil, fmt.Errorf("unexpected request type: %T", req)
 	}
 
-	// DIAGNOSTIC: Log if tools are present in the OpenAI request
-	if tools, hasTools := openAIReq["tools"]; hasTools {
-		fmt.Printf("[GeminiConverter DIAGNOSTIC] Tools found in OpenAI request: %+v\n", tools)
-	} else {
-		fmt.Printf("[GeminiConverter DIAGNOSTIC] No tools found in OpenAI request\n")
-	}
-	if toolChoice, hasToolChoice := openAIReq["tool_choice"]; hasToolChoice {
-		fmt.Printf("[GeminiConverter DIAGNOSTIC] tool_choice in OpenAI request: %+v\n", toolChoice)
-	}
-
 	// Create Gemini request
 	geminiReq := &gemini.GeminiRequest{
 		Contents: []gemini.Content{},
@@ -220,7 +178,7 @@ func (c *GeminiConverter) FromOpenAIRequest(req interface{}) (interface{}, error
 		for _, msg := range messages {
 			if msgMap, ok := msg.(map[string]interface{}); ok {
 				role, _ := msgMap["role"].(string)
-				content := convertContent(msgMap["content"])
+				content := ConvertContent(msgMap["content"])
 
 				// Map OpenAI roles to Gemini roles
 				geminiRole := role
@@ -277,8 +235,8 @@ func (c *GeminiConverter) FromOpenAIRequest(req interface{}) (interface{}, error
 					if function, hasFunction := toolMap["function"]; hasFunction {
 						if funcMap, ok := function.(map[string]interface{}); ok {
 							functionDecl := gemini.FunctionDeclaration{
-								Name:        getString(funcMap, "name"),
-								Description: getString(funcMap, "description"),
+								Name:        GetString(funcMap, "name"),
+								Description: GetString(funcMap, "description"),
 							}
 							if params, hasParams := funcMap["parameters"]; hasParams {
 								if paramsMap, ok := params.(map[string]interface{}); ok {
@@ -307,12 +265,6 @@ func (c *GeminiConverter) FromOpenAIRequest(req interface{}) (interface{}, error
 		}
 	}
 
-	// DIAGNOSTIC: Log the Gemini request structure
-	fmt.Printf("[GeminiConverter DIAGNOSTIC] Gemini request after conversion - Tools: %d, ToolConfig: %+v\n", len(geminiReq.Tools), geminiReq.ToolConfig)
-	if len(geminiReq.Tools) > 0 {
-		fmt.Printf("[GeminiConverter DIAGNOSTIC] First tool: %+v\n", geminiReq.Tools[0])
-	}
-
 	return geminiReq, nil
 }
 
@@ -325,62 +277,4 @@ func (c *GeminiConverter) FromOpenAIResponse(resp interface{}) (interface{}, err
 // Protocol returns the native protocol
 func (c *GeminiConverter) Protocol() provider.ProtocolType {
 	return provider.ProtocolGemini
-}
-
-// Helper functions
-
-// getString safely extracts a string value from a map
-func getString(m map[string]interface{}, key string) string {
-	if val, ok := m[key]; ok {
-		if str, ok := val.(string); ok {
-			return str
-		}
-	}
-	return ""
-}
-
-func convertContent(content interface{}) string {
-	if contentStr, ok := content.(string); ok {
-		return contentStr
-	}
-
-	// Handle content as array of content parts (for vision models)
-	if contentArr, ok := content.([]interface{}); ok {
-		var result string
-		for _, part := range contentArr {
-			if partMap, ok := part.(map[string]interface{}); ok {
-				if text, exists := partMap["text"]; exists {
-					if textStr, ok := text.(string); ok {
-						result += textStr
-					}
-				}
-			}
-		}
-		return result
-	}
-
-	return fmt.Sprintf("%v", content)
-}
-
-func convertFinishReason(geminiFinishReason string) string {
-	switch geminiFinishReason {
-	case "STOP":
-		return "stop"
-	case "MAX_TOKENS":
-		return "length"
-	case "SAFETY":
-		return "content_filter"
-	case "RECITATION":
-		return "content_filter"
-	default:
-		return "stop" // default to stop
-	}
-}
-
-func generateID() string {
-	return fmt.Sprintf("chatcmpl-%d", time.Now().UnixNano())
-}
-
-func getCurrentTimestamp() int64 {
-	return time.Now().Unix()
 }

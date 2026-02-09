@@ -50,11 +50,11 @@ type MultiTokenStore struct {
 	Settings    StoreSettings   `json:"settings"`
 	mu          sync.RWMutex
 	providerDir string // Provider directory path (e.g., ".credentials/gemini")
-	logger      *logging.Logger
+	logger      logging.Logger
 }
 
 // NewMultiTokenStore creates a new MultiTokenStore instance
-func NewMultiTokenStore(providerID, filePath string, logger *logging.Logger) *MultiTokenStore {
+func NewMultiTokenStore(providerID, filePath string, logger logging.Logger) *MultiTokenStore {
 	// Extract provider directory from filePath
 	// filePath is like ".credentials/gemini.json"
 	// providerDir will be ".credentials/gemini"
@@ -132,13 +132,13 @@ func (mts *MultiTokenStore) loadInternal() error {
 		filePath := filepath.Join(mts.providerDir, entry.Name())
 		data, err := os.ReadFile(filePath)
 		if err != nil {
-			mts.logger.WarningLog("Failed to read token file %s: %v", filePath, err)
+			mts.logger.WarnLog("Failed to read token file %s: %v", filePath, err)
 			continue
 		}
 
 		var token ProviderToken
 		if err := json.Unmarshal(data, &token); err != nil {
-			mts.logger.WarningLog("Failed to parse token file %s: %v", filePath, err)
+			mts.logger.WarnLog("Failed to parse token file %s: %v", filePath, err)
 			continue
 		}
 
@@ -195,7 +195,7 @@ func (mts *MultiTokenStore) migrateFromLegacy(legacyFilePath string) error {
 	// Create backup of legacy file
 	backupPath := legacyFilePath + ".backup"
 	if err := os.WriteFile(backupPath, data, CredentialsFileMode); err != nil {
-		mts.logger.WarningLog("Failed to create backup of legacy file: %v", err)
+		mts.logger.WarnLog("Failed to create backup of legacy file: %v", err)
 	} else {
 		mts.logger.InfoLog("Legacy file backed up to: %s", backupPath)
 	}
@@ -233,7 +233,7 @@ func (mts *MultiTokenStore) migrateFromLegacy(legacyFilePath string) error {
 
 	// Save settings
 	if err := mts.saveSettings(); err != nil {
-		mts.logger.WarningLog("Failed to save settings after migration: %v", err)
+		mts.logger.WarnLog("Failed to save settings after migration: %v", err)
 	}
 
 	mts.logger.InfoLog("Successfully migrated legacy format to multi-token store for provider: %s", mts.ProviderID)
@@ -257,14 +257,14 @@ func (mts *MultiTokenStore) saveInternal() error {
 	// Save each token to its own file
 	for _, token := range mts.Tokens {
 		if err := mts.saveTokenToFile(token); err != nil {
-			mts.logger.WarningLog("Failed to save token %s: %v", token.ID, err)
+			mts.logger.WarnLog("Failed to save token %s: %v", token.ID, err)
 			continue
 		}
 	}
 
 	// Save settings
 	if err := mts.saveSettings(); err != nil {
-		mts.logger.WarningLog("Failed to save settings: %v", err)
+		mts.logger.WarnLog("Failed to save settings: %v", err)
 	}
 
 	mts.logger.DebugLog("Saved token store for provider: %s with %d tokens", mts.ProviderID, len(mts.Tokens))
@@ -365,7 +365,7 @@ func (mts *MultiTokenStore) AddToken(token ProviderToken) error {
 				if oldFilePath != newFilePath {
 					// Delete old file if it exists
 					if err := os.Remove(oldFilePath); err != nil && !os.IsNotExist(err) {
-						mts.logger.WarningLog("Failed to delete old token file %s: %v", oldFilePath, err)
+						mts.logger.WarnLog("Failed to delete old token file %s: %v", oldFilePath, err)
 					}
 				}
 			}
@@ -387,7 +387,7 @@ func (mts *MultiTokenStore) AddToken(token ProviderToken) error {
 					if oldFilePath != newFilePath {
 						// Delete old file if it exists
 						if err := os.Remove(oldFilePath); err != nil && !os.IsNotExist(err) {
-							mts.logger.WarningLog("Failed to delete old token file %s: %v", oldFilePath, err)
+							mts.logger.WarnLog("Failed to delete old token file %s: %v", oldFilePath, err)
 						}
 					}
 				}
@@ -432,7 +432,7 @@ func (mts *MultiTokenStore) RemoveToken(tokenID string) error {
 			// Delete the token file
 			filePath := mts.getFilePathForToken(token)
 			if err := os.Remove(filePath); err != nil && !os.IsNotExist(err) {
-				mts.logger.WarningLog("Failed to delete token file %s: %v", filePath, err)
+				mts.logger.WarnLog("Failed to delete token file %s: %v", filePath, err)
 			}
 
 			mts.Tokens = append(mts.Tokens[:i], mts.Tokens[i+1:]...)
@@ -486,7 +486,7 @@ func (mts *MultiTokenStore) UpdateToken(tokenID string, updateFunc func(*Provide
 				if oldFilePath != newFilePath {
 					// Delete old file if it exists
 					if err := os.Remove(oldFilePath); err != nil && !os.IsNotExist(err) {
-						mts.logger.WarningLog("Failed to delete old token file %s: %v", oldFilePath, err)
+						mts.logger.WarnLog("Failed to delete old token file %s: %v", oldFilePath, err)
 					}
 				}
 			}

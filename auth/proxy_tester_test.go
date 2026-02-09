@@ -11,7 +11,7 @@ import (
 )
 
 func TestNewProxyTester(t *testing.T) {
-	logger := &logging.Logger{}
+	logger := logging.NewLogger()
 	tester := NewProxyTester(logger)
 
 	if tester == nil {
@@ -24,7 +24,7 @@ func TestNewProxyTester(t *testing.T) {
 }
 
 func TestTestConnection_NilConfig(t *testing.T) {
-	logger := &logging.Logger{}
+	logger := logging.NewLogger()
 	tester := NewProxyTester(logger)
 
 	result, err := tester.TestConnection(context.Background(), nil)
@@ -47,7 +47,7 @@ func TestTestConnection_NilConfig(t *testing.T) {
 }
 
 func TestTestConnection_NoneType(t *testing.T) {
-	logger := &logging.Logger{}
+	logger := logging.NewLogger()
 	tester := NewProxyTester(logger)
 
 	config := &ProxyConfig{
@@ -66,7 +66,7 @@ func TestTestConnection_NoneType(t *testing.T) {
 }
 
 func TestTestConnection_InvalidConfig(t *testing.T) {
-	logger := &logging.Logger{}
+	logger := logging.NewLogger()
 	tester := NewProxyTester(logger)
 
 	tests := []struct {
@@ -128,7 +128,7 @@ func TestTestConnection_InvalidConfig(t *testing.T) {
 }
 
 func TestTestConnection_ValidConfigButUnreachable(t *testing.T) {
-	logger := &logging.Logger{}
+	logger := logging.NewLogger()
 	tester := NewProxyTester(logger)
 
 	// Use an unreachable proxy configuration
@@ -166,7 +166,7 @@ func TestTestConnection_ValidConfigButUnreachable(t *testing.T) {
 }
 
 func TestTestConnection_ContextTimeout(t *testing.T) {
-	logger := &logging.Logger{}
+	logger := logging.NewLogger()
 	tester := NewProxyTester(logger)
 
 	// Use a proxy that will likely timeout
@@ -199,7 +199,7 @@ func TestTestConnection_ContextTimeout(t *testing.T) {
 }
 
 func TestCreateHTTPProxyClient(t *testing.T) {
-	logger := &logging.Logger{}
+	logger := logging.NewLogger()
 	tester := NewProxyTester(logger)
 
 	tests := []struct {
@@ -260,7 +260,7 @@ func TestCreateHTTPProxyClient(t *testing.T) {
 }
 
 func TestCreateSOCKS5Client(t *testing.T) {
-	logger := &logging.Logger{}
+	logger := logging.NewLogger()
 	tester := NewProxyTester(logger)
 
 	tests := []struct {
@@ -312,7 +312,7 @@ func TestCreateSOCKS5Client(t *testing.T) {
 }
 
 func TestCreateProxyClient_UnsupportedType(t *testing.T) {
-	logger := &logging.Logger{}
+	logger := logging.NewLogger()
 	tester := NewProxyTester(logger)
 
 	config := &ProxyConfig{

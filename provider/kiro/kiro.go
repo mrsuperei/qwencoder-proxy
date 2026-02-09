@@ -55,23 +55,23 @@ var ModelMapping = map[string]string{
 }
 
 // Provider implements the provider.Provider interface for Kiro
+// Embeds BaseProvider for common functionality
 type Provider struct {
-	authenticator *auth.KiroAuthenticator
-	httpClient    *http.Client
-	tokenManager  *auth.TokenManager
-	logger        *logging.Logger
-	machineID     string
+	*provider.BaseProvider // Embedded base provider provides common fields and methods
+	authenticator          *auth.KiroAuthenticator
+	machineID              string // Kiro-specific field
 }
 
 // NewProvider creates a new Kiro provider
+// Uses BaseProvider for common functionality
 func NewProvider(authenticator *auth.KiroAuthenticator) *Provider {
 	if authenticator == nil {
+		// Use direct instantiation for now - will be updated to use factory in later phase
 		authenticator = auth.NewKiroAuthenticator(nil)
 	}
 	return &Provider{
+		BaseProvider:  provider.NewBaseProvider(logging.NewLogger(), 5*time.Minute),
 		authenticator: authenticator,
-		httpClient:    &http.Client{Timeout: 5 * time.Minute},
-		logger:        logging.NewLogger(),
 		machineID:     generateMachineID(),
 	}
 }
@@ -115,11 +115,6 @@ func (p *Provider) SupportsModel(model string) bool {
 // GetAuthenticator returns the auth handler for this provider
 func (p *Provider) GetAuthenticator() provider.Authenticator {
 	return p.authenticator
-}
-
-// SetTokenManager sets the TokenManager for this provider
-func (p *Provider) SetTokenManager(manager *auth.TokenManager) {
-	p.tokenManager = manager
 }
 
 // IsHealthy checks if the provider is available
@@ -236,24 +231,24 @@ func (p *Provider) doRequestWithProxy(req *http.Request, client *http.Client, to
 		// Check if this is a proxy error
 		if p.isProxyError(err) {
 			errorType := p.classifyProxyError(err)
-			p.logger.ErrorLog("[Kiro] Proxy error for token %s: %s (%s)", tokenID, err.Error(), errorType)
+			p.GetLogger().ErrorLog("[Kiro] Proxy error for token %s: %s (%s)", tokenID, err.Error(), errorType)
 
 			// Update proxy health if tokenManager is available
-			if p.tokenManager != nil {
-				if updateErr := p.tokenManager.UpdateProxyHealth(tokenID, false, err); updateErr != nil {
-					p.logger.WarningLog("[Kiro] Failed to update proxy health for token %s: %v", tokenID, updateErr)
+			if p.GetTokenManager() != nil {
+				if updateErr := p.GetTokenManager().UpdateProxyHealth(tokenID, false, err); updateErr != nil {
+					p.GetLogger().WarnLog("[Kiro] Failed to update proxy health for token %s: %v", tokenID, updateErr)
 				}
 			}
 		} else {
-			p.logger.ErrorLog("[Kiro] Request error for token %s: %v", tokenID, err)
+			p.GetLogger().ErrorLog("[Kiro] Request error for token %s: %v", tokenID, err)
 		}
 		return nil, err
 	}
 
 	// Update proxy health on success
-	if p.tokenManager != nil {
-		if updateErr := p.tokenManager.UpdateProxyHealth(tokenID, true, nil); updateErr != nil {
-			p.logger.WarningLog("[Kiro] Failed to update proxy health for token %s: %v", tokenID, updateErr)
+	if p.GetTokenManager() != nil {
+		if updateErr := p.GetTokenManager().UpdateProxyHealth(tokenID, true, nil); updateErr != nil {
+			p.GetLogger().WarnLog("[Kiro] Failed to update proxy health for token %s: %v", tokenID, updateErr)
 		}
 	}
 
@@ -302,15 +297,15 @@ func (p *Provider) GenerateContent(ctx context.Context, model string, request in
 	var tokenID string
 
 	// Try to use token manager for proxy-aware client selection
-	if p.tokenManager != nil {
-		selectedToken, selectedClient, selectErr := p.tokenManager.SelectTokenWithClient()
+	if p.GetTokenManager() != nil {
+		selectedToken, selectedClient, selectErr := p.GetTokenManager().SelectTokenWithClient()
 		if selectErr != nil {
-			p.logger.ErrorLog("[Kiro] Token selection failed: %v", selectErr)
+			p.GetLogger().ErrorLog("[Kiro] Token selection failed: %v", selectErr)
 			return nil, fmt.Errorf("failed to select token: %w", selectErr)
 		}
 		if selectedClient == nil {
-			p.logger.DebugLog("[Kiro] Token manager returned nil client, using default HTTP client")
-			client = p.httpClient
+			p.GetLogger().DebugLog("[Kiro] Token manager returned nil client, using default HTTP client")
+			client = p.GetHTTPClient()
 		} else {
 			client = selectedClient
 		}
@@ -319,19 +314,19 @@ func (p *Provider) GenerateContent(ctx context.Context, model string, request in
 
 		// Log proxy usage
 		if selectedToken.Proxy != nil && selectedToken.Proxy.Enabled {
-			p.logger.DebugLog("[Kiro] GenerateContent using token %s with proxy: %s:%d", tokenID, selectedToken.Proxy.Host, selectedToken.Proxy.Port)
+			p.GetLogger().DebugLog("[Kiro] GenerateContent using token %s with proxy: %s:%d", tokenID, selectedToken.Proxy.Host, selectedToken.Proxy.Port)
 		} else {
-			p.logger.DebugLog("[Kiro] GenerateContent using token %s with direct connection", tokenID)
+			p.GetLogger().DebugLog("[Kiro] GenerateContent using token %s with direct connection", tokenID)
 		}
 	} else {
 		// No token manager, use authenticator and default client (backward compatibility)
 		var authErr error
 		token, authErr = p.authenticator.GetToken(ctx)
 		if authErr != nil {
-			p.logger.ErrorLog("[Kiro] Token retrieval failed: %v", authErr)
+			p.GetLogger().ErrorLog("[Kiro] Token retrieval failed: %v", authErr)
 			return nil, fmt.Errorf("failed to get token: %w", authErr)
 		}
-		client = p.httpClient
+		client = p.GetHTTPClient()
 		tokenID = "fallback"
 	}
 
@@ -367,8 +362,8 @@ func (p *Provider) GenerateContent(ctx context.Context, model string, request in
 		req.Header.Set(k, v)
 	}
 
-	p.logger.DebugLog("[Kiro] Sending generateAssistantResponse request to %s", url)
-	p.logger.DebugLog("[Kiro] Request body: %s", string(reqBody))
+	p.GetLogger().DebugLog("[Kiro] Sending generateAssistantResponse request to %s", url)
+	p.GetLogger().DebugLog("[Kiro] Request body: %s", string(reqBody))
 	fmt.Println("[Kiro DEBUG] Request body:", string(reqBody))
 	fmt.Println("[Kiro DEBUG] Invocation ID:", invocationID)
 
@@ -406,15 +401,15 @@ func (p *Provider) GenerateContentStream(ctx context.Context, model string, requ
 	var tokenID string
 
 	// Try to use token manager for proxy-aware client selection
-	if p.tokenManager != nil {
-		selectedToken, selectedClient, selectErr := p.tokenManager.SelectTokenWithClient()
+	if p.GetTokenManager() != nil {
+		selectedToken, selectedClient, selectErr := p.GetTokenManager().SelectTokenWithClient()
 		if selectErr != nil {
-			p.logger.ErrorLog("[Kiro] Token selection failed: %v", selectErr)
+			p.GetLogger().ErrorLog("[Kiro] Token selection failed: %v", selectErr)
 			return nil, fmt.Errorf("failed to select token: %w", selectErr)
 		}
 		if selectedClient == nil {
-			p.logger.DebugLog("[Kiro] Token manager returned nil client, using default HTTP client")
-			client = p.httpClient
+			p.GetLogger().DebugLog("[Kiro] Token manager returned nil client, using default HTTP client")
+			client = p.GetHTTPClient()
 		} else {
 			client = selectedClient
 		}
@@ -423,19 +418,19 @@ func (p *Provider) GenerateContentStream(ctx context.Context, model string, requ
 
 		// Log proxy usage
 		if selectedToken.Proxy != nil && selectedToken.Proxy.Enabled {
-			p.logger.DebugLog("[Kiro] GenerateContentStream using token %s with proxy: %s:%d", tokenID, selectedToken.Proxy.Host, selectedToken.Proxy.Port)
+			p.GetLogger().DebugLog("[Kiro] GenerateContentStream using token %s with proxy: %s:%d", tokenID, selectedToken.Proxy.Host, selectedToken.Proxy.Port)
 		} else {
-			p.logger.DebugLog("[Kiro] GenerateContentStream using token %s with direct connection", tokenID)
+			p.GetLogger().DebugLog("[Kiro] GenerateContentStream using token %s with direct connection", tokenID)
 		}
 	} else {
 		// No token manager, use authenticator and default client (backward compatibility)
 		var authErr error
 		token, authErr = p.authenticator.GetToken(ctx)
 		if authErr != nil {
-			p.logger.ErrorLog("[Kiro] Token retrieval failed: %v", authErr)
+			p.GetLogger().ErrorLog("[Kiro] Token retrieval failed: %v", authErr)
 			return nil, fmt.Errorf("failed to get token: %w", authErr)
 		}
-		client = p.httpClient
+		client = p.GetHTTPClient()
 		tokenID = "fallback"
 	}
 
@@ -471,7 +466,7 @@ func (p *Provider) GenerateContentStream(ctx context.Context, model string, requ
 	}
 	req.Header.Set("Accept", "text/event-stream")
 
-	p.logger.DebugLog("[Kiro] Sending SendMessageStreaming request to %s", url)
+	p.GetLogger().DebugLog("[Kiro] Sending SendMessageStreaming request to %s", url)
 	fmt.Println("[Kiro DEBUG] Streaming Invocation ID:", invocationID)
 
 	resp, err := p.doRequestWithProxy(req, client, tokenID)
@@ -513,12 +508,12 @@ func (p *Provider) convertBedrockStreamToOpenAI(ctx context.Context, body io.Rea
 			lenBuf := make([]byte, 4)
 			if _, err := io.ReadFull(reader, lenBuf); err != nil {
 				if err != io.EOF {
-					p.logger.ErrorLog("Error reading stream length: %v", err)
+					p.GetLogger().ErrorLog("Error reading stream length: %v", err)
 					// Check if this is a proxy error and update health
 					if p.isProxyError(err) {
-						if p.tokenManager != nil {
-							if updateErr := p.tokenManager.UpdateProxyHealth(tokenID, false, err); updateErr != nil {
-								p.logger.WarningLog("[Kiro] Failed to update proxy health for token %s: %v", tokenID, updateErr)
+						if p.GetTokenManager() != nil {
+							if updateErr := p.GetTokenManager().UpdateProxyHealth(tokenID, false, err); updateErr != nil {
+								p.GetLogger().WarnLog("[Kiro] Failed to update proxy health for token %s: %v", tokenID, updateErr)
 							}
 						}
 					}
@@ -530,12 +525,12 @@ func (p *Provider) convertBedrockStreamToOpenAI(ctx context.Context, body io.Rea
 			// 2. Read Header Length (4 bytes)
 			if _, err := io.ReadFull(reader, lenBuf); err != nil {
 				if err != io.EOF {
-					p.logger.ErrorLog("Error reading header length: %v", err)
+					p.GetLogger().ErrorLog("Error reading header length: %v", err)
 					// Check if this is a proxy error and update health
 					if p.isProxyError(err) {
-						if p.tokenManager != nil {
-							if updateErr := p.tokenManager.UpdateProxyHealth(tokenID, false, err); updateErr != nil {
-								p.logger.WarningLog("[Kiro] Failed to update proxy health for token %s: %v", tokenID, updateErr)
+						if p.GetTokenManager() != nil {
+							if updateErr := p.GetTokenManager().UpdateProxyHealth(tokenID, false, err); updateErr != nil {
+								p.GetLogger().WarnLog("[Kiro] Failed to update proxy health for token %s: %v", tokenID, updateErr)
 							}
 						}
 					}
@@ -547,12 +542,12 @@ func (p *Provider) convertBedrockStreamToOpenAI(ctx context.Context, body io.Rea
 			// 3. Read Prelude CRC (4 bytes) - discard
 			if _, err := reader.Discard(4); err != nil {
 				if err != io.EOF {
-					p.logger.ErrorLog("Error reading prelude CRC: %v", err)
+					p.GetLogger().ErrorLog("Error reading prelude CRC: %v", err)
 					// Check if this is a proxy error and update health
 					if p.isProxyError(err) {
-						if p.tokenManager != nil {
-							if updateErr := p.tokenManager.UpdateProxyHealth(tokenID, false, err); updateErr != nil {
-								p.logger.WarningLog("[Kiro] Failed to update proxy health for token %s: %v", tokenID, updateErr)
+						if p.GetTokenManager() != nil {
+							if updateErr := p.GetTokenManager().UpdateProxyHealth(tokenID, false, err); updateErr != nil {
+								p.GetLogger().WarnLog("[Kiro] Failed to update proxy health for token %s: %v", tokenID, updateErr)
 							}
 						}
 					}
@@ -563,12 +558,12 @@ func (p *Provider) convertBedrockStreamToOpenAI(ctx context.Context, body io.Rea
 			// 4. Read Headers (headerLen bytes) - discard
 			if _, err := reader.Discard(int(headerLen)); err != nil {
 				if err != io.EOF {
-					p.logger.ErrorLog("Error reading headers: %v", err)
+					p.GetLogger().ErrorLog("Error reading headers: %v", err)
 					// Check if this is a proxy error and update health
 					if p.isProxyError(err) {
-						if p.tokenManager != nil {
-							if updateErr := p.tokenManager.UpdateProxyHealth(tokenID, false, err); updateErr != nil {
-								p.logger.WarningLog("[Kiro] Failed to update proxy health for token %s: %v", tokenID, updateErr)
+						if p.GetTokenManager() != nil {
+							if updateErr := p.GetTokenManager().UpdateProxyHealth(tokenID, false, err); updateErr != nil {
+								p.GetLogger().WarnLog("[Kiro] Failed to update proxy health for token %s: %v", tokenID, updateErr)
 							}
 						}
 					}
@@ -583,12 +578,12 @@ func (p *Provider) convertBedrockStreamToOpenAI(ctx context.Context, body io.Rea
 			payload := make([]byte, payloadLen)
 			if _, err := io.ReadFull(reader, payload); err != nil {
 				if err != io.EOF {
-					p.logger.ErrorLog("Error reading payload: %v", err)
+					p.GetLogger().ErrorLog("Error reading payload: %v", err)
 					// Check if this is a proxy error and update health
 					if p.isProxyError(err) {
-						if p.tokenManager != nil {
-							if updateErr := p.tokenManager.UpdateProxyHealth(tokenID, false, err); updateErr != nil {
-								p.logger.WarningLog("[Kiro] Failed to update proxy health for token %s: %v", tokenID, updateErr)
+						if p.GetTokenManager() != nil {
+							if updateErr := p.GetTokenManager().UpdateProxyHealth(tokenID, false, err); updateErr != nil {
+								p.GetLogger().WarnLog("[Kiro] Failed to update proxy health for token %s: %v", tokenID, updateErr)
 							}
 						}
 					}
@@ -599,12 +594,12 @@ func (p *Provider) convertBedrockStreamToOpenAI(ctx context.Context, body io.Rea
 			// 6. Read Message CRC (4 bytes) - discard
 			if _, err := reader.Discard(4); err != nil {
 				if err != io.EOF {
-					p.logger.ErrorLog("Error reading message CRC: %v", err)
+					p.GetLogger().ErrorLog("Error reading message CRC: %v", err)
 					// Check if this is a proxy error and update health
 					if p.isProxyError(err) {
-						if p.tokenManager != nil {
-							if updateErr := p.tokenManager.UpdateProxyHealth(tokenID, false, err); updateErr != nil {
-								p.logger.WarningLog("[Kiro] Failed to update proxy health for token %s: %v", tokenID, updateErr)
+						if p.GetTokenManager() != nil {
+							if updateErr := p.GetTokenManager().UpdateProxyHealth(tokenID, false, err); updateErr != nil {
+								p.GetLogger().WarnLog("[Kiro] Failed to update proxy health for token %s: %v", tokenID, updateErr)
 							}
 						}
 					}
@@ -644,9 +639,9 @@ func (p *Provider) convertBedrockStreamToOpenAI(ctx context.Context, body io.Rea
 		}
 
 		// Update proxy health on successful stream completion
-		if p.tokenManager != nil {
-			if updateErr := p.tokenManager.UpdateProxyHealth(tokenID, true, nil); updateErr != nil {
-				p.logger.WarningLog("[Kiro] Failed to update proxy health for token %s: %v", tokenID, updateErr)
+		if p.GetTokenManager() != nil {
+			if updateErr := p.GetTokenManager().UpdateProxyHealth(tokenID, true, nil); updateErr != nil {
+				p.GetLogger().WarnLog("[Kiro] Failed to update proxy health for token %s: %v", tokenID, updateErr)
 			}
 		}
 

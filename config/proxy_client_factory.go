@@ -27,7 +27,7 @@ type ProxyAwareHTTPClientFactory struct {
 	baseConfig  HTTPClientConfig
 	proxyCache  map[auth.ProxyConfigKey]*http.Client
 	cacheLock   sync.RWMutex
-	logger      *logging.Logger
+	logger      logging.Logger
 	maxSize     int
 	accessOrder []auth.ProxyConfigKey // Track access order for LRU eviction
 }
@@ -38,7 +38,7 @@ type ProxyAwareHTTPClientFactory struct {
 //   - baseConfig: Base HTTP client configuration for all created clients
 //   - logger: Logger for factory operations
 //   - maxSize: Maximum number of cached clients (default: 50 if <= 0)
-func NewProxyAwareHTTPClientFactory(baseConfig HTTPClientConfig, logger *logging.Logger, maxSize int) *ProxyAwareHTTPClientFactory {
+func NewProxyAwareHTTPClientFactory(baseConfig HTTPClientConfig, logger logging.Logger, maxSize int) *ProxyAwareHTTPClientFactory {
 	if maxSize <= 0 {
 		maxSize = 50
 	}
@@ -103,6 +103,21 @@ func (f *ProxyAwareHTTPClientFactory) GetClient(proxyConfig *auth.ProxyConfig) *
 	return client
 }
 
+// GetDefaultClient returns a default HTTP client (no proxy).
+// This method implements the HTTPClientFactory interface.
+// It delegates to GetClient with nil proxyConfig to return a direct connection client.
+func (f *ProxyAwareHTTPClientFactory) GetDefaultClient() *http.Client {
+	return f.GetClient(nil)
+}
+
+// GetClientWithTimeout returns an HTTP client with specific timeout.
+// This method implements the HTTPClientFactory interface.
+// Creates a new client with the specified timeout (not cached).
+// This is useful for one-off requests that need a different timeout than the default.
+func (f *ProxyAwareHTTPClientFactory) GetClientWithTimeout(timeout time.Duration) *http.Client {
+	return &http.Client{Timeout: timeout}
+}
+
 // CreateClientWithProxy creates a new HTTP client configured with the given proxy settings.
 // This method does not use the cache - it always creates a new client.
 func (f *ProxyAwareHTTPClientFactory) CreateClientWithProxy(proxyConfig *auth.ProxyConfig) *http.Client {
@@ -119,7 +134,7 @@ func (f *ProxyAwareHTTPClientFactory) CreateClientWithProxy(proxyConfig *auth.Pr
 	case auth.ProxyTypeSOCKS5:
 		transport, err = f.createSOCKS5Transport(proxyConfig)
 	default:
-		f.logger.WarningLog("Unknown proxy type: %s, using direct connection", proxyConfig.Type)
+		f.logger.WarnLog("Unknown proxy type: %s, using direct connection", proxyConfig.Type)
 		return f.createDirectClient()
 	}
 

@@ -14,12 +14,14 @@ import (
 
 	"github.com/sunbankio/qwencoder-proxy/auth"
 	"github.com/sunbankio/qwencoder-proxy/logging"
+	"github.com/sunbankio/qwencoder-proxy/provider"
+	providerpkg "github.com/sunbankio/qwencoder-proxy/provider"
 )
 
 // TestIsProxyError tests the isProxyError method
 func TestIsProxyError(t *testing.T) {
 	provider := &Provider{
-		logger: logging.NewLogger(),
+		BaseProvider: providerpkg.NewBaseProvider(logging.NewLogger(), 5*time.Minute),
 	}
 
 	tests := []struct {
@@ -114,7 +116,7 @@ func (e *timeoutError) Temporary() bool { return false }
 // TestClassifyProxyError tests the classifyProxyError method
 func TestClassifyProxyError(t *testing.T) {
 	provider := &Provider{
-		logger: logging.NewLogger(),
+		BaseProvider: providerpkg.NewBaseProvider(logging.NewLogger(), 5*time.Minute),
 	}
 
 	tests := []struct {
@@ -225,9 +227,10 @@ func TestDoRequestWithProxy_Success(t *testing.T) {
 	strategy := auth.NewRandomSelectionStrategy()
 	tokenManager := auth.NewTokenManager(store, strategy, logging.NewLogger(), nil, mockTracker)
 
+	base := providerpkg.NewBaseProvider(logging.NewLogger(), 5*time.Minute)
+	base.SetTokenManager(tokenManager)
 	provider := &Provider{
-		logger:       logging.NewLogger(),
-		tokenManager: tokenManager,
+		BaseProvider: base,
 	}
 
 	req, _ := http.NewRequest("GET", server.URL, nil)
@@ -282,9 +285,10 @@ func TestDoRequestWithProxy_ProxyError(t *testing.T) {
 	strategy := auth.NewRandomSelectionStrategy()
 	tokenManager := auth.NewTokenManager(store, strategy, logging.NewLogger(), nil, mockTracker)
 
+	base := providerpkg.NewBaseProvider(logging.NewLogger(), 5*time.Minute)
+	base.SetTokenManager(tokenManager)
 	provider := &Provider{
-		logger:       logging.NewLogger(),
-		tokenManager: tokenManager,
+		BaseProvider: base,
 	}
 
 	req, _ := http.NewRequest("GET", "http://"+listener.Addr().String(), nil)
@@ -353,12 +357,13 @@ func TestGenerateContent_WithTokenManager(t *testing.T) {
 	tokenManager := auth.NewTokenManager(store, strategy, logging.NewLogger(), nil, nil)
 
 	// Create provider with token manager
+	base := providerpkg.NewBaseProvider(logging.NewLogger(), 5*time.Minute)
+	base.SetHTTPClient(server.Client())
+	base.SetTokenManager(tokenManager)
 	provider := &Provider{
 		baseURL:       strings.TrimSuffix(server.URL, "/") + "/v1",
 		authenticator: nil,
-		httpClient:    server.Client(),
-		tokenManager:  tokenManager,
-		logger:        logging.NewLogger(),
+		BaseProvider:  base,
 	}
 
 	// Test request
@@ -449,12 +454,13 @@ func TestGenerateContent_WithProxy(t *testing.T) {
 	tokenManager := auth.NewTokenManager(store, strategy, logging.NewLogger(), clientFactory, nil)
 
 	// Create provider with token manager
+	base := providerpkg.NewBaseProvider(logging.NewLogger(), 5*time.Minute)
+	base.SetHTTPClient(server.Client())
+	base.SetTokenManager(tokenManager)
 	provider := &Provider{
 		baseURL:       strings.TrimSuffix(server.URL, "/") + "/v1",
 		authenticator: nil,
-		httpClient:    server.Client(),
-		tokenManager:  tokenManager,
-		logger:        logging.NewLogger(),
+		BaseProvider:  base,
 	}
 
 	// Test request
@@ -518,12 +524,12 @@ func TestGenerateContent_WithoutTokenManager(t *testing.T) {
 	authenticator := auth.NewIFlowAuthenticator(nil)
 
 	// Create provider without token manager
+	base := providerpkg.NewBaseProvider(logging.NewLogger(), 5*time.Minute)
+	base.SetHTTPClient(server.Client())
 	provider := &Provider{
 		baseURL:       strings.TrimSuffix(server.URL, "/") + "/v1",
 		authenticator: authenticator,
-		httpClient:    server.Client(),
-		tokenManager:  nil,
-		logger:        logging.NewLogger(),
+		BaseProvider:  base,
 	}
 
 	// Test request
@@ -587,12 +593,13 @@ func TestGenerateContentStream_WithTokenManager(t *testing.T) {
 	tokenManager := auth.NewTokenManager(store, strategy, logging.NewLogger(), nil, nil)
 
 	// Create provider with token manager
+	base := providerpkg.NewBaseProvider(logging.NewLogger(), 5*time.Minute)
+	base.SetHTTPClient(server.Client())
+	base.SetTokenManager(tokenManager)
 	provider := &Provider{
 		baseURL:       strings.TrimSuffix(server.URL, "/") + "/v1",
 		authenticator: nil,
-		httpClient:    server.Client(),
-		tokenManager:  tokenManager,
-		logger:        logging.NewLogger(),
+		BaseProvider:  base,
 	}
 
 	// Test request
@@ -663,13 +670,14 @@ func TestProxyHealthTracking(t *testing.T) {
 	strategy := auth.NewRandomSelectionStrategy()
 	tokenManager := auth.NewTokenManager(store, strategy, logging.NewLogger(), nil, tracker)
 
+	base := provider.NewBaseProvider(logging.NewLogger(), 5*time.Minute)
+	base.SetTokenManager(tokenManager)
 	provider := &Provider{
-		logger:       logging.NewLogger(),
-		tokenManager: tokenManager,
+		BaseProvider: base,
 	}
 
 	// Test successful health update
-	err := provider.tokenManager.UpdateProxyHealth("test-token-health", true, nil)
+	err := provider.GetTokenManager().UpdateProxyHealth("test-token-health", true, nil)
 	if err != nil {
 		t.Errorf("UpdateProxyHealth(success) error = %v", err)
 	}
@@ -681,7 +689,7 @@ func TestProxyHealthTracking(t *testing.T) {
 
 	// Test failure health update
 	proxyErr := errors.New("connection refused")
-	err = provider.tokenManager.UpdateProxyHealth("test-token-health", false, proxyErr)
+	err = provider.GetTokenManager().UpdateProxyHealth("test-token-health", false, proxyErr)
 	if err != nil {
 		t.Errorf("UpdateProxyHealth(failure) error = %v", err)
 	}
@@ -705,7 +713,7 @@ func TestProxyHealthTracking(t *testing.T) {
 func TestSetTokenManager(t *testing.T) {
 	provider := NewProvider(nil)
 
-	if provider.tokenManager != nil {
+	if provider.GetTokenManager() != nil {
 		t.Error("Expected tokenManager to be nil initially")
 	}
 
@@ -716,11 +724,11 @@ func TestSetTokenManager(t *testing.T) {
 
 	provider.SetTokenManager(tokenManager)
 
-	if provider.tokenManager == nil {
+	if provider.GetTokenManager() == nil {
 		t.Error("Expected tokenManager to be set")
 	}
 
-	if provider.tokenManager != tokenManager {
+	if provider.GetTokenManager() != tokenManager {
 		t.Error("tokenManager not set correctly")
 	}
 }

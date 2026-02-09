@@ -43,24 +43,24 @@ var SupportedModels = []string{
 }
 
 // Provider implements the provider.Provider interface for iFlow
+// Embeds BaseProvider for common functionality
 type Provider struct {
-	baseURL       string
-	authenticator *auth.IFlowAuthenticator
-	httpClient    *http.Client
-	tokenManager  *auth.TokenManager
-	logger        *logging.Logger
+	*provider.BaseProvider // Embedded base provider provides common fields and methods
+	baseURL                string
+	authenticator          *auth.IFlowAuthenticator
 }
 
 // NewProvider creates a new iFlow provider
+// Uses BaseProvider for common functionality
 func NewProvider(authenticator *auth.IFlowAuthenticator) *Provider {
 	if authenticator == nil {
+		// Use direct instantiation for now - will be updated to use factory in later phase
 		authenticator = auth.NewIFlowAuthenticator(nil)
 	}
 	return &Provider{
+		BaseProvider:  provider.NewBaseProvider(logging.NewLogger(), 5*time.Minute),
 		baseURL:       APIBaseURL,
 		authenticator: authenticator,
-		httpClient:    &http.Client{Timeout: 5 * time.Minute},
-		logger:        logging.NewLogger(),
 	}
 }
 
@@ -92,11 +92,6 @@ func (p *Provider) SupportsModel(model string) bool {
 // GetAuthenticator returns the auth handler for this provider
 func (p *Provider) GetAuthenticator() provider.Authenticator {
 	return p.authenticator
-}
-
-// SetTokenManager sets the TokenManager for this provider
-func (p *Provider) SetTokenManager(manager *auth.TokenManager) {
-	p.tokenManager = manager
 }
 
 // IsHealthy checks if the provider is available
@@ -229,24 +224,24 @@ func (p *Provider) doRequestWithProxy(req *http.Request, client *http.Client, to
 		// Check if this is a proxy error
 		if p.isProxyError(err) {
 			errorType := p.classifyProxyError(err)
-			p.logger.ErrorLog("[iFlow] Proxy error for token %s: %s (%s)", tokenID, err.Error(), errorType)
+			p.GetLogger().ErrorLog("[iFlow] Proxy error for token %s: %s (%s)", tokenID, err.Error(), errorType)
 
 			// Update proxy health if tokenManager is available
-			if p.tokenManager != nil {
-				if updateErr := p.tokenManager.UpdateProxyHealth(tokenID, false, err); updateErr != nil {
-					p.logger.WarningLog("[iFlow] Failed to update proxy health for token %s: %v", tokenID, updateErr)
+			if p.GetTokenManager() != nil {
+				if updateErr := p.GetTokenManager().UpdateProxyHealth(tokenID, false, err); updateErr != nil {
+					p.GetLogger().WarnLog("[iFlow] Failed to update proxy health for token %s: %v", tokenID, updateErr)
 				}
 			}
 		} else {
-			p.logger.ErrorLog("[iFlow] Request error for token %s: %v", tokenID, err)
+			p.GetLogger().ErrorLog("[iFlow] Request error for token %s: %v", tokenID, err)
 		}
 		return nil, err
 	}
 
 	// Update proxy health on success
-	if p.tokenManager != nil {
-		if updateErr := p.tokenManager.UpdateProxyHealth(tokenID, true, nil); updateErr != nil {
-			p.logger.WarningLog("[iFlow] Failed to update proxy health for token %s: %v", tokenID, updateErr)
+	if p.GetTokenManager() != nil {
+		if updateErr := p.GetTokenManager().UpdateProxyHealth(tokenID, true, nil); updateErr != nil {
+			p.GetLogger().WarnLog("[iFlow] Failed to update proxy health for token %s: %v", tokenID, updateErr)
 		}
 	}
 
@@ -261,15 +256,15 @@ func (p *Provider) GenerateContent(ctx context.Context, model string, request in
 	var tokenID string
 
 	// Try to use token manager for proxy-aware client selection
-	if p.tokenManager != nil {
-		selectedToken, selectedClient, selectErr := p.tokenManager.SelectTokenWithClient()
+	if p.GetTokenManager() != nil {
+		selectedToken, selectedClient, selectErr := p.GetTokenManager().SelectTokenWithClient()
 		if selectErr != nil {
-			p.logger.ErrorLog("[iFlow] Token selection failed: %v", selectErr)
+			p.GetLogger().ErrorLog("[iFlow] Token selection failed: %v", selectErr)
 			return nil, fmt.Errorf("failed to select token: %w", selectErr)
 		}
 		if selectedClient == nil {
-			p.logger.DebugLog("[iFlow] Token manager returned nil client, using default HTTP client")
-			client = p.httpClient
+			p.GetLogger().DebugLog("[iFlow] Token manager returned nil client, using default HTTP client")
+			client = p.GetHTTPClient()
 		} else {
 			client = selectedClient
 		}
@@ -278,19 +273,19 @@ func (p *Provider) GenerateContent(ctx context.Context, model string, request in
 
 		// Log proxy usage
 		if selectedToken.Proxy != nil && selectedToken.Proxy.Enabled {
-			p.logger.DebugLog("[iFlow] GenerateContent using token %s with proxy: %s:%d", tokenID, selectedToken.Proxy.Host, selectedToken.Proxy.Port)
+			p.GetLogger().DebugLog("[iFlow] GenerateContent using token %s with proxy: %s:%d", tokenID, selectedToken.Proxy.Host, selectedToken.Proxy.Port)
 		} else {
-			p.logger.DebugLog("[iFlow] GenerateContent using token %s with direct connection", tokenID)
+			p.GetLogger().DebugLog("[iFlow] GenerateContent using token %s with direct connection", tokenID)
 		}
 	} else {
 		// No token manager, use authenticator and default client (backward compatibility)
 		var authErr error
 		token, authErr = p.authenticator.GetToken(ctx)
 		if authErr != nil {
-			p.logger.ErrorLog("[iFlow] Token retrieval failed: %v", authErr)
+			p.GetLogger().ErrorLog("[iFlow] Token retrieval failed: %v", authErr)
 			return nil, fmt.Errorf("failed to get token: %w", authErr)
 		}
-		client = p.httpClient
+		client = p.GetHTTPClient()
 		tokenID = "fallback"
 	}
 
@@ -298,7 +293,7 @@ func (p *Provider) GenerateContent(ctx context.Context, model string, request in
 	if len(token) > 20 {
 		tokenPrefix = token[:20]
 	}
-	p.logger.DebugLog("[iFlow] Using access token (first 20 chars): %s", tokenPrefix)
+	p.GetLogger().DebugLog("[iFlow] Using access token (first 20 chars): %s", tokenPrefix)
 
 	// Marshal the request
 	reqBody, err := json.Marshal(request)
@@ -317,7 +312,7 @@ func (p *Provider) GenerateContent(ctx context.Context, model string, request in
 	req.Header.Set("Accept", "application/json")
 	req.Header.Set("User-Agent", "iflow-cli/0.4.8")
 
-	p.logger.DebugLog("[iFlow] Sending chat completions request to %s", url)
+	p.GetLogger().DebugLog("[iFlow] Sending chat completions request to %s", url)
 
 	resp, err := p.doRequestWithProxy(req, client, tokenID)
 	if err != nil {
@@ -325,12 +320,12 @@ func (p *Provider) GenerateContent(ctx context.Context, model string, request in
 	}
 	defer resp.Body.Close()
 
-	p.logger.DebugLog("[iFlow] Response status: %d", resp.StatusCode)
-	p.logger.DebugLog("[iFlow] Response headers: %v", resp.Header)
+	p.GetLogger().DebugLog("[iFlow] Response status: %d", resp.StatusCode)
+	p.GetLogger().DebugLog("[iFlow] Response headers: %v", resp.Header)
 
 	if resp.StatusCode == http.StatusUnauthorized {
 		// Try to refresh token and retry
-		p.logger.DebugLog("[iFlow] Received %d, attempting to refresh token and retry", resp.StatusCode)
+		p.GetLogger().DebugLog("[iFlow] Received %d, attempting to refresh token and retry", resp.StatusCode)
 
 		// Read and close the original response body
 		bodyBytes, _ := io.ReadAll(resp.Body)
@@ -338,7 +333,7 @@ func (p *Provider) GenerateContent(ctx context.Context, model string, request in
 
 		_, refreshErr := p.authenticator.GetToken(ctx)
 		if refreshErr != nil {
-			p.logger.ErrorLog("[iFlow] Token refresh failed: %v", refreshErr)
+			p.GetLogger().ErrorLog("[iFlow] Token refresh failed: %v", refreshErr)
 			return nil, fmt.Errorf("unauthorized and token refresh failed: %s", string(bodyBytes))
 		}
 
@@ -358,7 +353,7 @@ func (p *Provider) GenerateContent(ctx context.Context, model string, request in
 
 	if resp.StatusCode != http.StatusOK {
 		body, _ := io.ReadAll(resp.Body)
-		p.logger.DebugLog("[iFlow] API error response body: %s", string(body))
+		p.GetLogger().DebugLog("[iFlow] API error response body: %s", string(body))
 		return nil, fmt.Errorf("API error (status %d): %s", resp.StatusCode, string(body))
 	}
 
@@ -367,7 +362,7 @@ func (p *Provider) GenerateContent(ctx context.Context, model string, request in
 		return nil, fmt.Errorf("failed to read response body: %w", err)
 	}
 
-	p.logger.DebugLog("[iFlow] Raw response body: %s", string(respBody))
+	p.GetLogger().DebugLog("[iFlow] Raw response body: %s", string(respBody))
 
 	var chatResp OpenAIChatResponse
 	if err := json.Unmarshal(respBody, &chatResp); err != nil {
@@ -385,15 +380,15 @@ func (p *Provider) GenerateContentStream(ctx context.Context, model string, requ
 	var tokenID string
 
 	// Try to use token manager for proxy-aware client selection
-	if p.tokenManager != nil {
-		selectedToken, selectedClient, selectErr := p.tokenManager.SelectTokenWithClient()
+	if p.GetTokenManager() != nil {
+		selectedToken, selectedClient, selectErr := p.GetTokenManager().SelectTokenWithClient()
 		if selectErr != nil {
-			p.logger.ErrorLog("[iFlow] Token selection failed: %v", selectErr)
+			p.GetLogger().ErrorLog("[iFlow] Token selection failed: %v", selectErr)
 			return nil, fmt.Errorf("failed to select token: %w", selectErr)
 		}
 		if selectedClient == nil {
-			p.logger.DebugLog("[iFlow] Token manager returned nil client, using default HTTP client")
-			client = p.httpClient
+			p.GetLogger().DebugLog("[iFlow] Token manager returned nil client, using default HTTP client")
+			client = p.GetHTTPClient()
 		} else {
 			client = selectedClient
 		}
@@ -402,19 +397,19 @@ func (p *Provider) GenerateContentStream(ctx context.Context, model string, requ
 
 		// Log proxy usage
 		if selectedToken.Proxy != nil && selectedToken.Proxy.Enabled {
-			p.logger.DebugLog("[iFlow] GenerateContentStream using token %s with proxy: %s:%d", tokenID, selectedToken.Proxy.Host, selectedToken.Proxy.Port)
+			p.GetLogger().DebugLog("[iFlow] GenerateContentStream using token %s with proxy: %s:%d", tokenID, selectedToken.Proxy.Host, selectedToken.Proxy.Port)
 		} else {
-			p.logger.DebugLog("[iFlow] GenerateContentStream using token %s with direct connection", tokenID)
+			p.GetLogger().DebugLog("[iFlow] GenerateContentStream using token %s with direct connection", tokenID)
 		}
 	} else {
 		// No token manager, use authenticator and default client (backward compatibility)
 		var authErr error
 		token, authErr = p.authenticator.GetToken(ctx)
 		if authErr != nil {
-			p.logger.ErrorLog("[iFlow] Token retrieval failed: %v", authErr)
+			p.GetLogger().ErrorLog("[iFlow] Token retrieval failed: %v", authErr)
 			return nil, fmt.Errorf("failed to get token: %w", authErr)
 		}
-		client = p.httpClient
+		client = p.GetHTTPClient()
 		tokenID = "fallback"
 	}
 
@@ -435,19 +430,19 @@ func (p *Provider) GenerateContentStream(ctx context.Context, model string, requ
 	req.Header.Set("Accept", "text/event-stream, application/json")
 	req.Header.Set("User-Agent", "qwencoder-proxy/1.0")
 
-	p.logger.DebugLog("[iFlow] Sending streaming chat completions request to %s", url)
+	p.GetLogger().DebugLog("[iFlow] Sending streaming chat completions request to %s", url)
 
 	resp, err := p.doRequestWithProxy(req, client, tokenID)
 	if err != nil {
 		return nil, fmt.Errorf("failed to send request: %w", err)
 	}
 
-	p.logger.DebugLog("[iFlow] Streaming response status: %d", resp.StatusCode)
-	p.logger.DebugLog("[iFlow] Streaming response headers: %v", resp.Header)
+	p.GetLogger().DebugLog("[iFlow] Streaming response status: %d", resp.StatusCode)
+	p.GetLogger().DebugLog("[iFlow] Streaming response headers: %v", resp.Header)
 
 	if resp.StatusCode == http.StatusUnauthorized {
 		// Try to refresh token and retry
-		p.logger.DebugLog("[iFlow] Received %d, attempting to refresh token and retry", resp.StatusCode)
+		p.GetLogger().DebugLog("[iFlow] Received %d, attempting to refresh token and retry", resp.StatusCode)
 
 		// Read and close the original response body
 		bodyBytes, _ := io.ReadAll(resp.Body)
@@ -455,7 +450,7 @@ func (p *Provider) GenerateContentStream(ctx context.Context, model string, requ
 
 		_, refreshErr := p.authenticator.GetToken(ctx)
 		if refreshErr != nil {
-			p.logger.ErrorLog("[iFlow] Token refresh failed: %v", refreshErr)
+			p.GetLogger().ErrorLog("[iFlow] Token refresh failed: %v", refreshErr)
 			return nil, fmt.Errorf("unauthorized and token refresh failed: %s", string(bodyBytes))
 		}
 
@@ -475,7 +470,7 @@ func (p *Provider) GenerateContentStream(ctx context.Context, model string, requ
 	if resp.StatusCode != http.StatusOK {
 		body, _ := io.ReadAll(resp.Body)
 		resp.Body.Close()
-		p.logger.DebugLog("[iFlow] Streaming API error response body: %s", string(body))
+		p.GetLogger().DebugLog("[iFlow] Streaming API error response body: %s", string(body))
 		return nil, fmt.Errorf("API error (status %d): %s", resp.StatusCode, string(body))
 	}
 

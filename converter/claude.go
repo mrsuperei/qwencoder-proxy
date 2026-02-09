@@ -3,7 +3,6 @@ package converter
 
 import (
 	"fmt"
-	"time"
 
 	"github.com/sunbankio/qwencoder-proxy/provider"
 	"github.com/sunbankio/qwencoder-proxy/provider/kiro"
@@ -33,7 +32,7 @@ func (c *ClaudeConverter) ToOpenAIResponse(native interface{}, model string) (in
 		if !ok {
 			return nil, fmt.Errorf("invalid response type, expected *kiro.ClaudeResponse or map[string]interface{}")
 		}
-		
+
 		// Convert map to ClaudeResponse
 		claudeResp = &kiro.ClaudeResponse{}
 		if id, ok := respMap["id"].(string); ok {
@@ -48,7 +47,7 @@ func (c *ClaudeConverter) ToOpenAIResponse(native interface{}, model string) (in
 		if stopReason, ok := respMap["stop_reason"].(string); ok {
 			claudeResp.StopReason = stopReason
 		}
-		
+
 		// Parse content array
 		if contentRaw, ok := respMap["content"].([]interface{}); ok {
 			for _, contentItem := range contentRaw {
@@ -64,7 +63,7 @@ func (c *ClaudeConverter) ToOpenAIResponse(native interface{}, model string) (in
 				}
 			}
 		}
-		
+
 		// Parse usage
 		if usageRaw, ok := respMap["usage"].(map[string]interface{}); ok {
 			usage := &kiro.Usage{}
@@ -87,43 +86,26 @@ func (c *ClaudeConverter) ToOpenAIResponse(native interface{}, model string) (in
 	}
 
 	// Convert stop_reason to OpenAI finish_reason
-	finishReason := "stop"
-	switch claudeResp.StopReason {
-	case "end_turn":
-		finishReason = "stop"
-	case "max_tokens":
-		finishReason = "length"
-	case "stop_sequence":
-		finishReason = "stop"
-	case "tool_use":
-		finishReason = "tool_calls"
-	}
+	finishReason := ConvertFinishReason(claudeResp.StopReason)
 
 	// Create OpenAI response structure
-	openAIResp := map[string]interface{}{
-		"id":      claudeResp.ID,
-		"object":  "chat.completion",
-		"created": time.Now().Unix(),
-		"model":   claudeResp.Model,
-		"choices": []map[string]interface{}{
-			{
-				"index": 0,
-				"message": map[string]interface{}{
-					"role":    claudeResp.Role,
-					"content": content,
-				},
-				"finish_reason": finishReason,
+	openAIResp := CreateOpenAIResponseBase(claudeResp.Model)
+	openAIResp["id"] = claudeResp.ID
+	openAIResp["choices"] = []map[string]interface{}{
+		{
+			"index": 0,
+			"message": map[string]interface{}{
+				"role":    claudeResp.Role,
+				"content": content,
 			},
+			"finish_reason": finishReason,
 		},
 	}
 
 	// Add usage if available
 	if claudeResp.Usage != nil {
-		openAIResp["usage"] = map[string]interface{}{
-			"prompt_tokens":     claudeResp.Usage.InputTokens,
-			"completion_tokens": claudeResp.Usage.OutputTokens,
-			"total_tokens":      claudeResp.Usage.InputTokens + claudeResp.Usage.OutputTokens,
-		}
+		UpdateUsage(openAIResp, claudeResp.Usage.InputTokens,
+			claudeResp.Usage.OutputTokens, claudeResp.Usage.InputTokens+claudeResp.Usage.OutputTokens)
 	}
 
 	return openAIResp, nil
@@ -139,7 +121,7 @@ func (c *ClaudeConverter) ToOpenAIStreamChunk(native interface{}, model string) 
 		if !ok {
 			return nil, fmt.Errorf("invalid stream event type, expected *kiro.StreamEvent or map[string]interface{}")
 		}
-		
+
 		// Convert map to StreamEvent
 		streamEvent = &kiro.StreamEvent{}
 		if eventType, ok := eventMap["type"].(string); ok {
@@ -148,7 +130,7 @@ func (c *ClaudeConverter) ToOpenAIStreamChunk(native interface{}, model string) 
 		if index, ok := eventMap["index"].(float64); ok {
 			streamEvent.Index = int(index)
 		}
-		
+
 		// Parse delta
 		if deltaRaw, ok := eventMap["delta"].(map[string]interface{}); ok {
 			delta := &kiro.Delta{}
@@ -160,7 +142,7 @@ func (c *ClaudeConverter) ToOpenAIStreamChunk(native interface{}, model string) 
 			}
 			streamEvent.Delta = delta
 		}
-		
+
 		// Parse content_block
 		if blockRaw, ok := eventMap["content_block"].(map[string]interface{}); ok {
 			block := &kiro.ContentBlock{}
@@ -178,7 +160,7 @@ func (c *ClaudeConverter) ToOpenAIStreamChunk(native interface{}, model string) 
 	chunk := map[string]interface{}{
 		"id":      fmt.Sprintf("chatcmpl-%d", streamEvent.Index),
 		"object":  "chat.completion.chunk",
-		"created": time.Now().Unix(),
+		"created": getCurrentTimestamp(),
 		"model":   model,
 		"choices": []map[string]interface{}{
 			{
@@ -213,18 +195,7 @@ func (c *ClaudeConverter) ToOpenAIStreamChunk(native interface{}, model string) 
 	case "message_delta":
 		// Message delta with stop reason
 		if streamEvent.Delta != nil && streamEvent.Delta.StopReason != "" {
-			finishReason := "stop"
-			switch streamEvent.Delta.StopReason {
-			case "end_turn":
-				finishReason = "stop"
-			case "max_tokens":
-				finishReason = "length"
-			case "stop_sequence":
-				finishReason = "stop"
-			case "tool_use":
-				finishReason = "tool_calls"
-			}
-			choice["finish_reason"] = finishReason
+			choice["finish_reason"] = ConvertFinishReason(streamEvent.Delta.StopReason)
 		}
 		choice["delta"] = map[string]interface{}{}
 	case "message_stop":

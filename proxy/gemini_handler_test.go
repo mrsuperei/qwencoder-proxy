@@ -27,10 +27,10 @@ func TestNewGeminiHandler(t *testing.T) {
 	if handler.provider == nil {
 		t.Error("Expected provider to be set")
 	}
-	if handler.logger == nil {
+	if handler.GetLogger() == nil {
 		t.Error("Expected logger to be set")
 	}
-	if handler.tokenManager != nil {
+	if handler.GetTokenManager() != nil {
 		t.Error("Expected tokenManager to be nil for backward compatibility")
 	}
 }
@@ -45,7 +45,7 @@ func TestNewGeminiHandlerWithTokenManager(t *testing.T) {
 	if handler == nil {
 		t.Fatal("Expected non-nil handler")
 	}
-	if handler.tokenManager == nil {
+	if handler.GetTokenManager() == nil {
 		t.Error("Expected tokenManager to be set")
 	}
 }
@@ -113,9 +113,9 @@ func TestGeminiIsProxyError(t *testing.T) {
 
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
-			got := handler.isProxyError(tt.err)
+			got := handler.IsProxyError(tt.err)
 			if got != tt.want {
-				t.Errorf("isProxyError(%v) = %v, want %v", tt.err, got, tt.want)
+				t.Errorf("IsProxyError(%v) = %v, want %v", tt.err, got, tt.want)
 			}
 		})
 	}
@@ -159,15 +159,15 @@ func TestGeminiGetProxyErrorDetails(t *testing.T) {
 
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
-			details := handler.getProxyErrorDetails(tt.err)
+			details := handler.GetProxyErrorDetails(tt.err)
 			if details["proxy_host"] != tt.wantHost {
-				t.Errorf("getProxyErrorDetails(%v)[proxy_host] = %v, want %v", tt.err, details["proxy_host"], tt.wantHost)
+				t.Errorf("GetProxyErrorDetails(%v)[proxy_host] = %v, want %v", tt.err, details["proxy_host"], tt.wantHost)
 			}
 			if details["proxy_type"] != tt.wantType {
-				t.Errorf("getProxyErrorDetails(%v)[proxy_type] = %v, want %v", tt.err, details["proxy_type"], tt.wantType)
+				t.Errorf("GetProxyErrorDetails(%v)[proxy_type] = %v, want %v", tt.err, details["proxy_type"], tt.wantType)
 			}
 			if details["original_error"] == nil {
-				t.Error("getProxyErrorDetails should include original_error")
+				t.Error("GetProxyErrorDetails should include original_error")
 			}
 		})
 	}
@@ -178,7 +178,7 @@ func TestGeminiFormatProxyError(t *testing.T) {
 	handler := NewGeminiHandler(gemini.NewProvider(nil))
 	err := errors.New("dial tcp: lookup proxy.example.com:1080: no such host")
 
-	jsonBytes := handler.formatProxyError(err)
+	jsonBytes := handler.FormatProxyError(err)
 
 	var result map[string]interface{}
 	if err := json.Unmarshal(jsonBytes, &result); err != nil {
@@ -208,7 +208,7 @@ func TestGeminiHandleProxyError(t *testing.T) {
 	err := errors.New("dial tcp: lookup proxy.example.com:1080: no such host")
 
 	w := httptest.NewRecorder()
-	handler.handleProxyError(w, err)
+	handler.HandleProxyError(w, err)
 
 	if w.Code != http.StatusBadGateway {
 		t.Errorf("Expected status %d, got %d", http.StatusBadGateway, w.Code)
@@ -267,7 +267,7 @@ func TestGeminiBackwardCompatibility(t *testing.T) {
 	err := errors.New("dial tcp: lookup proxy.example.com:1080: no such host")
 
 	w := httptest.NewRecorder()
-	handler.handleProxyError(w, err)
+	handler.HandleProxyError(w, err)
 
 	// Should still detect proxy error and return appropriate response
 	body := w.Body.String()
@@ -288,7 +288,7 @@ func TestGeminiLogProxyError(t *testing.T) {
 	}
 
 	// This should not panic
-	handler.logProxyError(err, details)
+	handler.LogProxyError(err, details)
 }
 
 // TestGeminiServeHTTPWithCORS tests CORS headers

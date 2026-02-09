@@ -13,11 +13,9 @@ func TestLogger(t *testing.T) {
 	}
 
 	// Test logging functions (these should not panic)
-	logger.StreamLog("Test stream log")
-	logger.NonStreamLog("Test non-stream log")
-	logger.DoneLog("Test done log")
-	logger.DoneNonStreamLog("Test done non-stream log")
-	logger.SeparatorLog()
+	// Only test methods defined in the Logger interface
+	logger.InfoLog("Test info log")
+	logger.DebugLog("Test debug log")
 	logger.ErrorLog("Test error log")
-	logger.WarningLog("Test warning log")
+	logger.WarnLog("Test warning log")
 }

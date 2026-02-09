@@ -52,13 +52,13 @@ type RefreshCoordinator struct {
 	cancel        context.CancelFunc
 	wg            sync.WaitGroup
 	mu            sync.RWMutex
-	logger        *logging.Logger
+	logger        logging.Logger
 	workerStatus  map[int]bool // Worker ID -> Active status
 	clientFactory ProxyClientFactory
 }
 
 // NewRefreshCoordinator creates a new RefreshCoordinator
-func NewRefreshCoordinator(store *MultiTokenStore, workers int, logger *logging.Logger, clientFactory ProxyClientFactory) *RefreshCoordinator {
+func NewRefreshCoordinator(store *MultiTokenStore, workers int, logger logging.Logger, clientFactory ProxyClientFactory) *RefreshCoordinator {
 	if workers <= 0 {
 		workers = 3 // Default worker count
 	}
@@ -100,16 +100,15 @@ func (rc *RefreshCoordinator) Start() error {
 // Stop gracefully stops the refresh coordinator
 func (rc *RefreshCoordinator) Stop() {
 	rc.mu.Lock()
-	defer rc.mu.Unlock()
-
 	// Cancel context first to signal workers to stop
 	rc.cancel()
 
 	// Close queues to signal workers to stop
 	close(rc.requestQueue)
 	close(rc.resultQueue)
+	rc.mu.Unlock()
 
-	// Wait for workers to finish
+	// Wait for workers to finish (must be done without holding the lock)
 	rc.wg.Wait()
 
 	rc.logger.InfoLog("[RefreshCoordinator] Stopped all workers")
@@ -205,7 +204,7 @@ func (rc *RefreshCoordinator) sendResult(result RefreshResult) {
 		// Result sent successfully
 	default:
 		// Queue full, log warning but don't block
-		rc.logger.WarningLog("[RefreshCoordinator] Result queue full, dropping result for token %s", result.TokenID)
+		rc.logger.WarnLog("[RefreshCoordinator] Result queue full, dropping result for token %s", result.TokenID)
 	}
 }
 
@@ -307,11 +306,11 @@ type RefreshScheduler struct {
 	cancel        context.CancelFunc
 	wg            sync.WaitGroup
 	mu            sync.RWMutex
-	logger        *logging.Logger
+	logger        logging.Logger
 }
 
 // NewRefreshScheduler creates a new RefreshScheduler
-func NewRefreshScheduler(coordinator *RefreshCoordinator, store *MultiTokenStore, checkInterval time.Duration, logger *logging.Logger) *RefreshScheduler {
+func NewRefreshScheduler(coordinator *RefreshCoordinator, store *MultiTokenStore, checkInterval time.Duration, logger logging.Logger) *RefreshScheduler {
 	if checkInterval <= 0 {
 		checkInterval = 5 * time.Minute // Default check interval
 	}
@@ -393,13 +392,13 @@ func (rs *RefreshScheduler) CheckAndSchedule() {
 // QwenRefresher implements ProviderRefresh for Qwen
 type QwenRefresher struct {
 	httpClient    *http.Client
-	logger        *logging.Logger
+	logger        logging.Logger
 	clientFactory ProxyClientFactory
 	tokenManager  *TokenManager // For proxy health tracking
 }
 
 // NewQwenRefresher creates a new QwenRefresher
-func NewQwenRefresher(httpClient *http.Client, logger *logging.Logger, clientFactory ProxyClientFactory, tokenManager *TokenManager) *QwenRefresher {
+func NewQwenRefresher(httpClient *http.Client, logger logging.Logger, clientFactory ProxyClientFactory, tokenManager *TokenManager) *QwenRefresher {
 	if httpClient == nil {
 		httpClient = &http.Client{Timeout: 30 * time.Second}
 	}
@@ -477,13 +476,13 @@ func (qr *QwenRefresher) ProviderID() string {
 type GeminiRefresher struct {
 	config        *GeminiOAuthConfig
 	httpClient    *http.Client
-	logger        *logging.Logger
+	logger        logging.Logger
 	clientFactory ProxyClientFactory
 	tokenManager  *TokenManager // For proxy health tracking
 }
 
 // NewGeminiRefresher creates a new GeminiRefresher
-func NewGeminiRefresher(config *GeminiOAuthConfig, httpClient *http.Client, logger *logging.Logger, clientFactory ProxyClientFactory, tokenManager *TokenManager) *GeminiRefresher {
+func NewGeminiRefresher(config *GeminiOAuthConfig, httpClient *http.Client, logger logging.Logger, clientFactory ProxyClientFactory, tokenManager *TokenManager) *GeminiRefresher {
 	if config == nil {
 		config = DefaultGeminiOAuthConfig()
 	}
@@ -592,13 +591,13 @@ func (gr *GeminiRefresher) ProviderID() string {
 type KiroRefresher struct {
 	config        *KiroOAuthConfig
 	httpClient    *http.Client
-	logger        *logging.Logger
+	logger        logging.Logger
 	clientFactory ProxyClientFactory
 	tokenManager  *TokenManager // For proxy health tracking
 }
 
 // NewKiroRefresher creates a new KiroRefresher
-func NewKiroRefresher(config *KiroOAuthConfig, httpClient *http.Client, logger *logging.Logger, clientFactory ProxyClientFactory, tokenManager *TokenManager) *KiroRefresher {
+func NewKiroRefresher(config *KiroOAuthConfig, httpClient *http.Client, logger logging.Logger, clientFactory ProxyClientFactory, tokenManager *TokenManager) *KiroRefresher {
 	if config == nil {
 		config = DefaultKiroOAuthConfig()
 	}
@@ -723,13 +722,13 @@ func (kr *KiroRefresher) ProviderID() string {
 type IFlowRefresher struct {
 	config        *IFlowOAuthConfig
 	httpClient    *http.Client
-	logger        *logging.Logger
+	logger        logging.Logger
 	clientFactory ProxyClientFactory
 	tokenManager  *TokenManager // For proxy health tracking
 }
 
 // NewIFlowRefresher creates a new IFlowRefresher
-func NewIFlowRefresher(config *IFlowOAuthConfig, httpClient *http.Client, logger *logging.Logger, clientFactory ProxyClientFactory, tokenManager *TokenManager) *IFlowRefresher {
+func NewIFlowRefresher(config *IFlowOAuthConfig, httpClient *http.Client, logger logging.Logger, clientFactory ProxyClientFactory, tokenManager *TokenManager) *IFlowRefresher {
 	if config == nil {
 		config = DefaultIFlowOAuthConfig()
 	}

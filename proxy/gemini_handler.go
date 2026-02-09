@@ -2,11 +2,7 @@
 package proxy
 
 import (
-	"context"
 	"encoding/json"
-	"errors"
-	"fmt"
-	"net"
 	"net/http"
 	"strings"
 
@@ -17,39 +13,37 @@ import (
 )
 
 // GeminiHandler handles requests to /gemini/* routes
+// Embeds BaseHandler for common functionality
 type GeminiHandler struct {
+	*BaseHandler // Embedded base handler provides common fields and methods
 	provider     *gemini.Provider
-	logger       *logging.Logger
-	tokenManager *auth.TokenManager // Optional, for proxy error handling
 }
 
 // NewGeminiHandler creates a new Gemini route handler
+// Uses BaseHandler for common functionality
 func NewGeminiHandler(p *gemini.Provider) *GeminiHandler {
 	return &GeminiHandler{
-		provider:     p,
-		logger:       logging.NewLogger(),
-		tokenManager: nil,
+		BaseHandler: NewBaseHandler(logging.NewLogger(), nil),
+		provider:    p,
 	}
 }
 
 // NewGeminiHandlerWithTokenManager creates a new Gemini route handler with token manager for proxy error handling
+// Uses BaseHandler for common functionality
 func NewGeminiHandlerWithTokenManager(p *gemini.Provider, tokenManager *auth.TokenManager) *GeminiHandler {
 	return &GeminiHandler{
-		provider:     p,
-		logger:       logging.NewLogger(),
-		tokenManager: tokenManager,
+		BaseHandler: NewBaseHandler(logging.NewLogger(), tokenManager),
+		provider:    p,
 	}
 }
 
 // ServeHTTP handles HTTP requests for Gemini routes
 func (h *GeminiHandler) ServeHTTP(w http.ResponseWriter, r *http.Request) {
-	// Set CORS headers
-	w.Header().Set("Access-Control-Allow-Origin", "*")
-	w.Header().Set("Access-Control-Allow-Methods", "GET, POST, OPTIONS")
-	w.Header().Set("Access-Control-Allow-Headers", "Content-Type, Authorization")
+	// Set CORS headers using BaseHandler method
+	h.SetCORSHeaders(w)
 
 	if r.Method == http.MethodOptions {
-		w.WriteHeader(http.StatusOK)
+		h.HandleOptions(w) // Use BaseHandler method
 		return
 	}
 
@@ -57,7 +51,7 @@ func (h *GeminiHandler) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 	path := strings.TrimPrefix(r.URL.Path, "/gemini")
 	path = strings.TrimPrefix(path, "/")
 
-	h.logger.DebugLog("[Gemini Handler] Request: %s %s", r.Method, path)
+	h.GetLogger().DebugLog("[Gemini Handler] Request: %s %s", r.Method, path)
 
 	switch {
 	case path == "models" && r.Method == http.MethodGet:
@@ -77,11 +71,11 @@ func (h *GeminiHandler) handleListModels(w http.ResponseWriter, r *http.Request)
 
 	models, err := h.provider.ListModels(ctx)
 	if err != nil {
-		h.logger.ErrorLog("[Gemini Handler] Failed to list models: %v", err)
+		h.GetLogger().ErrorLog("[Gemini Handler] Failed to list models: %v", err)
 
 		// Check if this is a proxy error
-		if h.isProxyError(err) {
-			h.handleProxyError(w, err)
+		if h.IsProxyError(err) {
+			h.HandleProxyError(w, err)
 			return
 		}
 
@@ -91,7 +85,7 @@ func (h *GeminiHandler) handleListModels(w http.ResponseWriter, r *http.Request)
 
 	w.Header().Set("Content-Type", "application/json")
 	if err := json.NewEncoder(w).Encode(models); err != nil {
-		h.logger.ErrorLog("[Gemini Handler] Failed to encode response: %v", err)
+		h.GetLogger().ErrorLog("[Gemini Handler] Failed to encode response: %v", err)
 	}
 }
 
@@ -112,7 +106,7 @@ func (h *GeminiHandler) handleGenerateContent(w http.ResponseWriter, r *http.Req
 	// Parse request body
 	var request gemini.GeminiRequest
 	if err := json.NewDecoder(r.Body).Decode(&request); err != nil {
-		h.logger.ErrorLog("[Gemini Handler] Failed to decode request: %v", err)
+		h.GetLogger().ErrorLog("[Gemini Handler] Failed to decode request: %v", err)
 		http.Error(w, "Invalid request body", http.StatusBadRequest)
 		return
 	}
@@ -120,11 +114,11 @@ func (h *GeminiHandler) handleGenerateContent(w http.ResponseWriter, r *http.Req
 	ctx := r.Context()
 	response, err := h.provider.GenerateContent(ctx, model, &request)
 	if err != nil {
-		h.logger.ErrorLog("[Gemini Handler] GenerateContent failed: %v", err)
+		h.GetLogger().ErrorLog("[Gemini Handler] GenerateContent failed: %v", err)
 
 		// Check if this is a proxy error
-		if h.isProxyError(err) {
-			h.handleProxyError(w, err)
+		if h.IsProxyError(err) {
+			h.HandleProxyError(w, err)
 			return
 		}
 
@@ -134,7 +128,7 @@ func (h *GeminiHandler) handleGenerateContent(w http.ResponseWriter, r *http.Req
 
 	w.Header().Set("Content-Type", "application/json")
 	if err := json.NewEncoder(w).Encode(response); err != nil {
-		h.logger.ErrorLog("[Gemini Handler] Failed to encode response: %v", err)
+		h.GetLogger().ErrorLog("[Gemini Handler] Failed to encode response: %v", err)
 	}
 }
 
@@ -155,7 +149,7 @@ func (h *GeminiHandler) handleStreamGenerateContent(w http.ResponseWriter, r *ht
 	// Parse request body
 	var request gemini.GeminiRequest
 	if err := json.NewDecoder(r.Body).Decode(&request); err != nil {
-		h.logger.ErrorLog("[Gemini Handler] Failed to decode request: %v", err)
+		h.GetLogger().ErrorLog("[Gemini Handler] Failed to decode request: %v", err)
 		http.Error(w, "Invalid request body", http.StatusBadRequest)
 		return
 	}
@@ -163,12 +157,12 @@ func (h *GeminiHandler) handleStreamGenerateContent(w http.ResponseWriter, r *ht
 	// Create a minimal factory for the converter (this is a temporary solution)
 	// In a real implementation, the factory should be passed to the handler
 	factory := &provider.Factory{}
-	if err := ConvertedStreamResponse(w, r, factory, h.provider, &request, model, h.logger); err != nil {
-		h.logger.ErrorLog("[Gemini Handler] Stream error: %v", err)
+	if err := ConvertedStreamResponse(w, r, factory, h.provider, &request, model, h.GetLogger()); err != nil {
+		h.GetLogger().ErrorLog("[Gemini Handler] Stream error: %v", err)
 
 		// Check if this is a proxy error
-		if h.isProxyError(err) {
-			h.handleProxyError(w, err)
+		if h.IsProxyError(err) {
+			h.HandleProxyError(w, err)
 			return
 		}
 
@@ -186,183 +180,6 @@ func extractModelFromPath(path, action string) string {
 		return ""
 	}
 	return path[:idx]
-}
-
-// handleProxyError handles proxy-related errors and returns structured error responses
-func (h *GeminiHandler) handleProxyError(w http.ResponseWriter, err error) {
-	// Get proxy details from error
-	details := h.getProxyErrorDetails(err)
-
-	// Log the proxy error with masked credentials
-	h.logProxyError(err, details)
-
-	// Create structured error response
-	errorResp := map[string]interface{}{
-		"error":            "proxy_connection_failed",
-		"message":          fmt.Sprintf("Failed to connect to proxy %s:%d", details["proxy_host"], details["proxy_port"]),
-		"details":          details,
-		"suggested_action": "Check proxy configuration or disable proxy for this token",
-	}
-
-	// Set headers and write JSON response
-	w.Header().Set("Content-Type", "application/json")
-	w.WriteHeader(http.StatusBadGateway)
-	json.NewEncoder(w).Encode(errorResp)
-}
-
-// isProxyError detects if an error is related to proxy connection issues
-func (h *GeminiHandler) isProxyError(err error) bool {
-	if err == nil {
-		return false
-	}
-
-	// Check for common proxy error patterns
-	errStr := err.Error()
-
-	// Network operation timeout
-	if errors.Is(err, context.DeadlineExceeded) {
-		return true
-	}
-
-	// Connection refused
-	if strings.Contains(errStr, "connection refused") {
-		return true
-	}
-
-	// Proxy authentication failure
-	if strings.Contains(errStr, "proxy authentication failed") ||
-		strings.Contains(errStr, "407") {
-		return true
-	}
-
-	// DNS lookup failure
-	if strings.Contains(errStr, "no such host") ||
-		strings.Contains(errStr, "lookup") ||
-		strings.Contains(errStr, "dns") {
-		return true
-	}
-
-	// SOCKS proxy errors
-	if strings.Contains(errStr, "socks") {
-		return true
-	}
-
-	// Connection timeout
-	if strings.Contains(errStr, "timeout") {
-		return true
-	}
-
-	// Network unreachable
-	if strings.Contains(errStr, "network unreachable") ||
-		strings.Contains(errStr, "unreachable") {
-		return true
-	}
-
-	// Check for net.OpError which often indicates network-level issues
-	var netErr *net.OpError
-	if errors.As(err, &netErr) {
-		return true
-	}
-
-	return false
-}
-
-// getProxyErrorDetails extracts proxy-related details from an error
-func (h *GeminiHandler) getProxyErrorDetails(err error) map[string]interface{} {
-	details := make(map[string]interface{})
-
-	// Default values
-	details["proxy_type"] = "unknown"
-	details["proxy_host"] = "unknown"
-	details["proxy_port"] = 0
-	details["original_error"] = err.Error()
-
-	// Try to extract proxy details from token manager if available
-	if h.tokenManager != nil {
-		// Note: In a real implementation, we might need to track which token
-		// was used for the current request. For now, we'll provide generic details.
-		// This could be enhanced by passing token context through the request.
-	}
-
-	// Try to extract proxy details from error message
-	errStr := err.Error()
-
-	// Extract host from error messages like "dial tcp: lookup proxy.example.com: no such host"
-	if strings.Contains(errStr, "lookup ") {
-		parts := strings.Split(errStr, "lookup ")
-		if len(parts) > 1 {
-			hostParts := strings.Split(parts[1], ":")
-			if len(hostParts) > 0 {
-				details["proxy_host"] = strings.TrimSpace(hostParts[0])
-			}
-		}
-	}
-
-	// Detect proxy type from error message
-	if strings.Contains(errStr, "socks5") {
-		details["proxy_type"] = "socks5"
-	} else if strings.Contains(errStr, "http") {
-		details["proxy_type"] = "http"
-	} else if strings.Contains(errStr, "https") {
-		details["proxy_type"] = "https"
-	}
-
-	// Detect authentication errors
-	if strings.Contains(errStr, "407") || strings.Contains(errStr, "authentication") {
-		details["auth_error"] = true
-	}
-
-	return details
-}
-
-// logProxyError logs proxy errors with masked credentials
-func (h *GeminiHandler) logProxyError(err error, details map[string]interface{}) {
-	// Create a masked version of details for logging
-	maskedDetails := make(map[string]interface{})
-	for k, v := range details {
-		maskedDetails[k] = v
-	}
-
-	// Mask any sensitive information
-	if proxyHost, ok := details["proxy_host"].(string); ok {
-		maskedDetails["proxy_host"] = proxyHost
-	}
-	if proxyPort, ok := details["proxy_port"].(int); ok {
-		maskedDetails["proxy_port"] = proxyPort
-	}
-	if proxyType, ok := details["proxy_type"].(string); ok {
-		maskedDetails["proxy_type"] = proxyType
-	}
-
-	// Log with structured format
-	h.logger.ErrorLog("[Gemini Handler] Proxy connection failed - Type: %s, Host: %s, Port: %d, Error: %v",
-		maskedDetails["proxy_type"],
-		maskedDetails["proxy_host"],
-		maskedDetails["proxy_port"],
-		err)
-}
-
-// formatProxyError formats a proxy error as a JSON response
-func (h *GeminiHandler) formatProxyError(err error) []byte {
-	details := h.getProxyErrorDetails(err)
-	errorResp := map[string]interface{}{
-		"error":            "proxy_connection_failed",
-		"message":          fmt.Sprintf("Failed to connect to proxy %s:%d", details["proxy_host"], details["proxy_port"]),
-		"details":          details,
-		"suggested_action": "Check proxy configuration or disable proxy for this token",
-	}
-
-	jsonBytes, err := json.Marshal(errorResp)
-	if err != nil {
-		// Fallback to simple error message
-		fallback := map[string]interface{}{
-			"error":   "proxy_connection_failed",
-			"message": err.Error(),
-		}
-		jsonBytes, _ = json.Marshal(fallback)
-	}
-
-	return jsonBytes
 }
 
 // RegisterGeminiRoutes registers Gemini routes with the given provider factory

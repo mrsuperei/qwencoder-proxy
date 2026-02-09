@@ -174,6 +174,6 @@ func GetDefaultMultiTokenManager() *MultiTokenManager {
 }
 
 // AuthenticateWithOAuth performs the complete OAuth device authorization flow
-func AuthenticateWithOAuth(ctx context.Context, logger *logging.Logger, multiTokenMgr *MultiTokenManager) error {
+func AuthenticateWithOAuth(ctx context.Context, logger logging.Logger, multiTokenMgr *MultiTokenManager) error {
 	return AuthenticateWithDeviceFlow(ctx, logger, multiTokenMgr)
 }

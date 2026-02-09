@@ -36,7 +36,7 @@ type MultiTokenManager struct {
 	proxyHealthTrackers map[string]*ProxyHealthTracker
 	strategyFactory     *StrategyFactory
 	mu                  sync.RWMutex
-	logger              *logging.Logger
+	logger              logging.Logger
 	httpClient          *http.Client
 	clientFactory       ProxyClientFactory
 	credentialsDir      string
@@ -44,7 +44,7 @@ type MultiTokenManager struct {
 }
 
 // NewMultiTokenManager creates a new MultiTokenManager
-func NewMultiTokenManager(logger *logging.Logger) *MultiTokenManager {
+func NewMultiTokenManager(logger logging.Logger) *MultiTokenManager {
 	if logger == nil {
 		logger = logging.NewLogger()
 	}
@@ -179,7 +179,7 @@ func (mtm *MultiTokenManager) GetTokenStore(providerID string) (*MultiTokenStore
 
 	store = NewMultiTokenStore(providerID, credsPath, mtm.logger)
 	if err := store.Load(); err != nil {
-		mtm.logger.WarningLog("[MultiTokenManager] Failed to load token store for %s: %v", providerID, err)
+		mtm.logger.WarnLog("[MultiTokenManager] Failed to load token store for %s: %v", providerID, err)
 	}
 
 	mtm.stores[providerID] = store

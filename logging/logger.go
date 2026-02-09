@@ -30,61 +30,71 @@ const (
 	DebugTag         = "🐛 [DBG]" // New debug tag
 )
 
-// Logger wraps the standard logger with color support
-type Logger struct {
+// StandardLogger wraps the standard logger with color support
+// Implements the Logger interface
+type StandardLogger struct {
 	*log.Logger
 }
 
-// NewLogger creates a new Logger instance
-func NewLogger() *Logger {
-	return &Logger{
+// NewLogger creates a new StandardLogger instance
+// Returns a Logger interface for dependency inversion
+func NewLogger() Logger {
+	return &StandardLogger{
 		Logger: log.New(os.Stdout, "", log.LstdFlags),
 	}
 }
 
 // StreamLog logs streaming requests with blue color
-func (l *Logger) StreamLog(format string, v ...interface{}) {
+func (l *StandardLogger) StreamLog(format string, v ...interface{}) {
 	message := fmt.Sprintf(format, v...)
 	l.Printf("%s%s%s %s", Blue, StreamTag, Reset, message)
 }
 
 // NonStreamLog logs non-streaming requests with cyan color
-func (l *Logger) NonStreamLog(format string, v ...interface{}) {
+func (l *StandardLogger) NonStreamLog(format string, v ...interface{}) {
 	message := fmt.Sprintf(format, v...)
 	l.Printf("%s%s%s %s", Cyan, NonStreamTag, Reset, message)
 }
 
 // DoneLog logs streaming completions with green color
-func (l *Logger) DoneLog(format string, v ...interface{}) {
+func (l *StandardLogger) DoneLog(format string, v ...interface{}) {
 	message := fmt.Sprintf(format, v...)
 	l.Printf("%s%s%s %s", Green, DoneTag, Reset, message)
 }
 
 // DoneNonStreamLog logs non-streaming completions with green color
-func (l *Logger) DoneNonStreamLog(format string, v ...interface{}) {
+func (l *StandardLogger) DoneNonStreamLog(format string, v ...interface{}) {
 	message := fmt.Sprintf(format, v...)
 	l.Printf("%s%s%s %s", Green, DoneNonStreamTag, Reset, message)
 }
 
 // SeparatorLog prints a dimmed separator line
-func (l *Logger) SeparatorLog() {
+func (l *StandardLogger) SeparatorLog() {
 	l.Printf("%s%s%s", Dim, Separator, Reset)
 }
 
 // ErrorLog logs errors with red color
-func (l *Logger) ErrorLog(format string, v ...interface{}) {
+// Implements Logger interface
+func (l *StandardLogger) ErrorLog(format string, v ...interface{}) {
 	message := fmt.Sprintf(format, v...)
 	l.Printf("%s⚠️  [ERROR] %s%s", Red, Reset, message)
 }
 
 // WarningLog logs warnings with yellow color
-func (l *Logger) WarningLog(format string, v ...interface{}) {
+func (l *StandardLogger) WarningLog(format string, v ...interface{}) {
 	message := fmt.Sprintf(format, v...)
 	l.Printf("%s⚠️  [WARN] %s%s", Yellow, Reset, message)
 }
 
+// WarnLog logs warnings with yellow color
+// Implements Logger interface (alias for WarningLog)
+func (l *StandardLogger) WarnLog(format string, v ...interface{}) {
+	l.WarningLog(format, v...)
+}
+
 // DebugLog logs debug messages with magenta color if debug mode is enabled
-func (l *Logger) DebugLog(format string, v ...interface{}) {
+// Implements Logger interface
+func (l *StandardLogger) DebugLog(format string, v ...interface{}) {
 	if IsDebugMode {
 		message := fmt.Sprintf(format, v...)
 		l.Printf("%s%s%s %s", Magenta, DebugTag, Reset, message)
@@ -92,7 +102,7 @@ func (l *Logger) DebugLog(format string, v ...interface{}) {
 }
 
 // DebugRawLog logs raw debug messages without extra formatting if debug mode is enabled
-func (l *Logger) DebugRawLog(format string, v ...interface{}) {
+func (l *StandardLogger) DebugRawLog(format string, v ...interface{}) {
 	if IsDebugMode {
 		message := fmt.Sprintf(format, v...)
 		l.Printf("%s%s", Dim, message)
@@ -100,16 +110,17 @@ func (l *Logger) DebugRawLog(format string, v ...interface{}) {
 }
 
 // InfoLog logs informational messages with white color
-func (l *Logger) InfoLog(format string, v ...interface{}) {
+// Implements Logger interface
+func (l *StandardLogger) InfoLog(format string, v ...interface{}) {
 	message := fmt.Sprintf(format, v...)
 	l.Printf("%sℹ️  [INFO] %s%s", White, Reset, message)
 }
 
 // ProxyRequestLog logs proxy request information in a simplified format
-func (l *Logger) ProxyRequestLog(clientIP, method, path, userAgent string, model string, reqSize int, isStream bool, upstreamStatus, clientStatus int, respSize int, durationMs int64) {
+func (l *StandardLogger) ProxyRequestLog(clientIP, method, path, userAgent string, model string, reqSize int, isStream bool, upstreamStatus, clientStatus int, respSize int, durationMs int64) {
 	// Use WarningLog when upstreamStatus and clientStatus are not both 200
 	if upstreamStatus != 200 || clientStatus != 200 {
-		l.WarningLog("%s %s %s | Model: %s | User-Agent: %s | ReqSize: %d | Stream: %t | Upstream: %d | Client: %d | RespSize: %d | Duration: %dms",
+		l.WarnLog("%s %s %s | Model: %s | User-Agent: %s | ReqSize: %d | Stream: %t | Upstream: %d | Client: %d | RespSize: %d | Duration: %dms",
 			clientIP,
 			method,
 			path,

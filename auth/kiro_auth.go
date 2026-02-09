@@ -52,42 +52,24 @@ type KiroCredentials struct {
 }
 
 // KiroAuthenticator implements the Authenticator interface for Kiro
+// Embeds BaseAuthenticator for common functionality
 type KiroAuthenticator struct {
-	config        *KiroOAuthConfig
-	credentials   *KiroCredentials
-	tokenManager  *TokenManager
-	multiTokenMgr *MultiTokenManager
-	mu            sync.RWMutex
-	logger        *logging.Logger
-	httpClient    *http.Client
+	*BaseAuthenticator // Embedded base authenticator provides common fields and methods
+	config             *KiroOAuthConfig
+	credentials        *KiroCredentials // Kiro-specific field
+	mu                 sync.RWMutex     // For Kiro-specific fields (credentials)
 }
 
 // NewKiroAuthenticator creates a new Kiro authenticator
+// Uses BaseAuthenticator for common functionality
 func NewKiroAuthenticator(config *KiroOAuthConfig) *KiroAuthenticator {
 	if config == nil {
 		config = DefaultKiroOAuthConfig()
 	}
 	return &KiroAuthenticator{
-		config:        config,
-		tokenManager:  nil, // Will be set via SetTokenManager
-		multiTokenMgr: nil, // Will be set via SetMultiTokenManager
-		logger:        logging.NewLogger(),
-		httpClient:    &http.Client{Timeout: 30 * time.Second},
+		BaseAuthenticator: NewBaseAuthenticator(logging.NewLogger()),
+		config:            config,
 	}
-}
-
-// SetTokenManager sets the token manager for this authenticator
-func (a *KiroAuthenticator) SetTokenManager(tokenManager *TokenManager) {
-	a.mu.Lock()
-	defer a.mu.Unlock()
-	a.tokenManager = tokenManager
-}
-
-// SetMultiTokenManager sets the multi-token manager for this authenticator
-func (a *KiroAuthenticator) SetMultiTokenManager(mtm *MultiTokenManager) {
-	a.mu.Lock()
-	defer a.mu.Unlock()
-	a.multiTokenMgr = mtm
 }
 
 // GetCredentialsPath returns the path to the credentials file
@@ -97,22 +79,21 @@ func (a *KiroAuthenticator) GetCredentialsPath() string {
 
 // IsAuthenticated checks if valid credentials exist
 func (a *KiroAuthenticator) IsAuthenticated() bool {
-	a.mu.RLock()
-	defer a.mu.RUnlock()
-
+	tokenManager := a.GetTokenManager()
 	// If token manager is set, check if it has tokens
-	if a.tokenManager != nil {
-		tokens := a.tokenManager.store.ListTokens()
+	if tokenManager != nil {
+		tokens := tokenManager.store.ListTokens()
 		return len(tokens) > 0
 	}
 
 	// Fallback to legacy credential check
+	a.mu.RLock()
 	if a.credentials == nil {
+		a.mu.RUnlock()
 		creds, err := a.loadCredentials()
 		if err != nil {
 			return false
 		}
-		a.mu.RUnlock()
 		a.mu.Lock()
 		a.credentials = creds
 		a.mu.Unlock()
@@ -128,11 +109,14 @@ func (a *KiroAuthenticator) IsAuthenticated() bool {
 			// Considered "not authenticated" (needs refresh) if we strictly check validity here.
 			// But IsAuthenticated usually just checks if we have *some* credentials.
 			// Let's stick to simple existence + expiry check.
+			a.mu.RUnlock()
 			return false
 		}
 	}
 
-	return a.credentials != nil && a.credentials.AccessToken != ""
+	result := a.credentials != nil && a.credentials.AccessToken != ""
+	a.mu.RUnlock()
+	return result
 }
 
 // loadCredentials loads credentials from file
@@ -189,18 +173,19 @@ func (a *KiroAuthenticator) loadCredentials() (*KiroCredentials, error) {
 	}
 
 	// Extract email if multi-token manager is available
-	if a.multiTokenMgr != nil && creds.AccessToken != "" {
+	multiTokenMgr := a.GetMultiTokenManager()
+	if multiTokenMgr != nil && creds.AccessToken != "" {
 		tokenResponse := make(map[string]interface{})
 		tokenResponse["access_token"] = creds.AccessToken
 		tokenResponse["refresh_token"] = creds.RefreshToken
 		tokenResponse["token_type"] = "Bearer"
 
-		email, err := a.multiTokenMgr.ExtractEmail(context.Background(), "kiro", tokenResponse, creds.AccessToken)
+		email, err := multiTokenMgr.ExtractEmail(context.Background(), "kiro", tokenResponse, creds.AccessToken)
 		if err != nil {
-			a.logger.DebugLog("[Kiro Auth] Failed to extract email: %v", err)
+			a.GetLogger().DebugLog("[Kiro Auth] Failed to extract email: %v", err)
 		} else {
 			if email != "" {
-				a.logger.DebugLog("[Kiro Auth] Extracted email: %s", email)
+				a.GetLogger().DebugLog("[Kiro Auth] Extracted email: %s", email)
 			}
 		}
 	}
@@ -273,12 +258,10 @@ func (k *kiroTokenRefresher) Token() (*oauth2.Token, error) {
 
 // GetToken returns a valid access token, refreshing if necessary
 func (a *KiroAuthenticator) GetToken(ctx context.Context) (string, error) {
-	a.mu.Lock()
-	defer a.mu.Unlock()
-
+	tokenManager := a.GetTokenManager()
 	// If token manager is set, use it for token selection
-	if a.tokenManager != nil {
-		token, err := a.tokenManager.SelectToken()
+	if tokenManager != nil {
+		token, err := tokenManager.SelectToken()
 		if err != nil {
 			return "", fmt.Errorf("failed to select token from token manager: %w", err)
 		}
@@ -286,6 +269,9 @@ func (a *KiroAuthenticator) GetToken(ctx context.Context) (string, error) {
 	}
 
 	// Fallback to legacy credential loading
+	a.mu.Lock()
+	defer a.mu.Unlock()
+
 	// Load credentials if not in memory
 	if a.credentials == nil {
 		creds, err := a.loadCredentials()
@@ -317,7 +303,7 @@ func (a *KiroAuthenticator) GetToken(ctx context.Context) (string, error) {
 	// Check buffer (30 mins)
 	buffer := time.Duration(TokenRefreshBufferMs) * time.Millisecond
 	if time.Until(token.Expiry) < buffer {
-		a.logger.InfoLog("[Kiro Auth] Token expiring in less than 30m or expired, forcing refresh")
+		a.GetLogger().InfoLog("[Kiro Auth] Token expiring in less than 30m or expired, forcing refresh")
 		token.Expiry = time.Now().Add(-1 * time.Second)
 	}
 
@@ -327,7 +313,7 @@ func (a *KiroAuthenticator) GetToken(ctx context.Context) (string, error) {
 	// Get token (this triggers refresh if expired)
 	newToken, err := ts.Token()
 	if err != nil {
-		a.logger.ErrorLog("[Kiro Auth] Failed to refresh token: %v", err)
+		a.GetLogger().ErrorLog("[Kiro Auth] Failed to refresh token: %v", err)
 		// Continue with existing token if refresh fails??
 		// Original code: "Continue with existing token if refresh fails"
 		// But if it's expired, we probably shouldn't.
@@ -340,7 +326,7 @@ func (a *KiroAuthenticator) GetToken(ctx context.Context) (string, error) {
 
 	// Update credentials if changed
 	if newToken.AccessToken != a.credentials.AccessToken || newToken.RefreshToken != a.credentials.RefreshToken {
-		a.logger.InfoLog("[Kiro Auth] Token refreshed successfully, saving credentials")
+		a.GetLogger().InfoLog("[Kiro Auth] Token refreshed successfully, saving credentials")
 		a.credentials.AccessToken = newToken.AccessToken
 		// ReuseTokenSource preserves refresh token if not returned, so it should be safe.
 		// But kiroTokenRefresher logic below ensures it's set in the returned token.
@@ -348,7 +334,7 @@ func (a *KiroAuthenticator) GetToken(ctx context.Context) (string, error) {
 		a.credentials.ExpiresAt = newToken.Expiry.Format(time.RFC3339)
 
 		if err := a.saveCredentials(a.credentials); err != nil {
-			a.logger.ErrorLog("Failed to save refreshed credentials: %v", err)
+			a.GetLogger().ErrorLog("Failed to save refreshed credentials: %v", err)
 		}
 	}
 
@@ -358,10 +344,7 @@ func (a *KiroAuthenticator) GetToken(ctx context.Context) (string, error) {
 // GetTokenWithClient returns a valid access token and an HTTP client.
 // The HTTP client is configured with the proxy settings from the selected token.
 func (a *KiroAuthenticator) GetTokenWithClient(ctx context.Context) (string, *http.Client, error) {
-	a.mu.RLock()
-	tokenManager := a.tokenManager
-	a.mu.RUnlock()
-
+	tokenManager := a.GetTokenManager()
 	if tokenManager == nil {
 		token, err := a.GetToken(ctx)
 		return token, nil, err
@@ -377,10 +360,7 @@ func (a *KiroAuthenticator) GetTokenWithClient(ctx context.Context) (string, *ht
 // GetHTTPClient returns an HTTP client configured with proxy settings.
 // The client is configured with the proxy settings from the selected token.
 func (a *KiroAuthenticator) GetHTTPClient() (*http.Client, error) {
-	a.mu.RLock()
-	tokenManager := a.tokenManager
-	a.mu.RUnlock()
-
+	tokenManager := a.GetTokenManager()
 	if tokenManager == nil {
 		return nil, errors.New("token manager not initialized")
 	}
@@ -433,7 +413,7 @@ func (a *KiroAuthenticator) performRefresh(ctx context.Context) (*oauth2.Token, 
 	}
 	req.Header.Set("Content-Type", "application/json")
 
-	resp, err := a.httpClient.Do(req)
+	resp, err := a.BaseAuthenticator.GetHTTPClient().Do(req)
 	if err != nil {
 		return nil, fmt.Errorf("failed to send refresh request: %w", err)
 	}
@@ -497,24 +477,29 @@ func (a *KiroAuthenticator) Authenticate(ctx context.Context) error {
 	// Try to refresh if needed (using new GetToken logic essentially, or just GetToken)
 	_, err = a.GetToken(ctx)
 	if err != nil {
-		a.logger.ErrorLog("[Kiro Auth] Initial token check/refresh failed: %v", err)
+		a.GetLogger().ErrorLog("[Kiro Auth] Initial token check/refresh failed: %v", err)
 	}
 
-	if a.credentials.AccessToken == "" {
+	a.mu.RLock()
+	accessToken := a.credentials.AccessToken
+	a.mu.RUnlock()
+	if accessToken == "" {
 		return fmt.Errorf("no valid access token found in credentials")
 	}
 
 	// Save to multi-token store if available
-	if a.multiTokenMgr != nil {
+	multiTokenMgr := a.GetMultiTokenManager()
+	if multiTokenMgr != nil {
+		a.mu.RLock()
 		// Extract email from token response
 		tokenResponse := make(map[string]interface{})
 		tokenResponse["access_token"] = a.credentials.AccessToken
 		tokenResponse["refresh_token"] = a.credentials.RefreshToken
 		tokenResponse["token_type"] = "Bearer"
 
-		email, err := a.multiTokenMgr.ExtractEmail(ctx, "kiro", tokenResponse, a.credentials.AccessToken)
+		email, err := multiTokenMgr.ExtractEmail(ctx, "kiro", tokenResponse, a.credentials.AccessToken)
 		if err != nil {
-			a.logger.WarningLog("[Kiro Auth] Failed to extract email: %v", err)
+			a.GetLogger().WarnLog("[Kiro Auth] Failed to extract email: %v", err)
 			email = ""
 		}
 
@@ -540,16 +525,17 @@ func (a *KiroAuthenticator) Authenticate(ctx context.Context) error {
 			LastUsed:     now.UnixMilli(),
 			CreatedAt:    now.UnixMilli(),
 		}
+		a.mu.RUnlock()
 
 		// Save token to multi-token store
-		if err := a.multiTokenMgr.SaveToken("kiro", providerToken); err != nil {
-			a.logger.WarningLog("[Kiro Auth] Failed to save token to multi-token store: %v", err)
+		if err := multiTokenMgr.SaveToken("kiro", providerToken); err != nil {
+			a.GetLogger().WarnLog("[Kiro Auth] Failed to save token to multi-token store: %v", err)
 		} else {
-			a.logger.InfoLog("[Kiro Auth] Credentials saved to multi-token store")
+			a.GetLogger().InfoLog("[Kiro Auth] Credentials saved to multi-token store")
 		}
 	}
 
-	a.logger.DebugLog("[Kiro Auth] Authentication successful using existing credentials")
+	a.GetLogger().DebugLog("[Kiro Auth] Authentication successful using existing credentials")
 	return nil
 }
 

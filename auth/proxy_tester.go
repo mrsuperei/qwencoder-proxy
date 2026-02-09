@@ -17,11 +17,11 @@ import (
 
 // ProxyTester handles testing proxy connections.
 type ProxyTester struct {
-	logger *logging.Logger
+	logger logging.Logger
 }
 
 // NewProxyTester creates a new ProxyTester.
-func NewProxyTester(logger *logging.Logger) *ProxyTester {
+func NewProxyTester(logger logging.Logger) *ProxyTester {
 	return &ProxyTester{logger: logger}
 }
 
@@ -82,7 +82,7 @@ func (pt *ProxyTester) TestConnection(ctx context.Context, proxyConfig *ProxyCon
 		// Provide more helpful error messages
 		errStr := err.Error()
 		result.Error = formatProxyError(errStr)
-		pt.logger.WarningLog("[ProxyTester] Connection failed - %s:%d - %s",
+		pt.logger.WarnLog("[ProxyTester] Connection failed - %s:%d - %s",
 			proxyConfig.Host, proxyConfig.Port, result.Error)
 		return result, nil
 	}

@@ -225,7 +225,7 @@ func TestDoRequestWithProxy(t *testing.T) {
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
 			provider := NewProvider(nil)
-			provider.tokenManager = tt.tokenManager
+			provider.SetTokenManager(tt.tokenManager)
 
 			var server *httptest.Server
 			if tt.expectProxyErr {
@@ -325,7 +325,7 @@ func TestGenerateContentWithTokenManager(t *testing.T) {
 
 	// Test without token manager (backward compatibility)
 	t.Run("without token manager", func(t *testing.T) {
-		provider.tokenManager = nil
+		provider.SetTokenManager(nil)
 
 		request := map[string]interface{}{
 			"contents": []map[string]interface{}{
@@ -347,7 +347,7 @@ func TestGenerateContentWithTokenManager(t *testing.T) {
 	// Test with token manager
 	t.Run("with token manager", func(t *testing.T) {
 		// Create a mock token store
-		store := auth.NewMultiTokenStore("test", "", provider.logger)
+		store := auth.NewMultiTokenStore("test", "", provider.GetLogger())
 
 		// Add a test token
 		token := auth.ProviderToken{
@@ -368,10 +368,10 @@ func TestGenerateContentWithTokenManager(t *testing.T) {
 
 		// Create token manager
 		factory := newMockClientFactory()
-		proxyHealthTracker := auth.NewProxyHealthTracker(provider.logger, 5, 5*time.Minute)
-		tokenManager := auth.NewTokenManager(store, auth.NewRandomSelectionStrategy(), provider.logger, factory, proxyHealthTracker)
+		proxyHealthTracker := auth.NewProxyHealthTracker(provider.GetLogger(), 5, 5*time.Minute)
+		tokenManager := auth.NewTokenManager(store, auth.NewRandomSelectionStrategy(), provider.GetLogger(), factory, proxyHealthTracker)
 
-		provider.tokenManager = tokenManager
+		provider.SetTokenManager(tokenManager)
 
 		request := map[string]interface{}{
 			"contents": []map[string]interface{}{
@@ -416,7 +416,7 @@ func TestGenerateContentStreamWithTokenManager(t *testing.T) {
 
 	// Test without token manager (backward compatibility)
 	t.Run("without token manager", func(t *testing.T) {
-		provider.tokenManager = nil
+		provider.SetTokenManager(nil)
 
 		request := map[string]interface{}{
 			"contents": []map[string]interface{}{
@@ -441,7 +441,7 @@ func TestGenerateContentStreamWithTokenManager(t *testing.T) {
 	// Test with token manager
 	t.Run("with token manager", func(t *testing.T) {
 		// Create a mock token store
-		store := auth.NewMultiTokenStore("test", "", provider.logger)
+		store := auth.NewMultiTokenStore("test", "", provider.GetLogger())
 
 		// Add a test token
 		token := auth.ProviderToken{
@@ -462,10 +462,10 @@ func TestGenerateContentStreamWithTokenManager(t *testing.T) {
 
 		// Create token manager
 		factory := newMockClientFactory()
-		proxyHealthTracker := auth.NewProxyHealthTracker(provider.logger, 5, 5*time.Minute)
-		tokenManager := auth.NewTokenManager(store, auth.NewRandomSelectionStrategy(), provider.logger, factory, proxyHealthTracker)
+		proxyHealthTracker := auth.NewProxyHealthTracker(provider.GetLogger(), 5, 5*time.Minute)
+		tokenManager := auth.NewTokenManager(store, auth.NewRandomSelectionStrategy(), provider.GetLogger(), factory, proxyHealthTracker)
 
-		provider.tokenManager = tokenManager
+		provider.SetTokenManager(tokenManager)
 
 		request := map[string]interface{}{
 			"contents": []map[string]interface{}{
@@ -509,7 +509,7 @@ func TestProxyHealthTracking(t *testing.T) {
 	provider.projectID = "test-project"
 
 	// Create a mock token store
-	store := auth.NewMultiTokenStore("test", "", provider.logger)
+	store := auth.NewMultiTokenStore("test", "", provider.GetLogger())
 
 	// Add a test token with proxy configuration
 	token := auth.ProviderToken{
@@ -532,10 +532,10 @@ func TestProxyHealthTracking(t *testing.T) {
 
 	// Create token manager with proxy health tracker
 	factory := newMockClientFactory()
-	proxyHealthTracker := auth.NewProxyHealthTracker(provider.logger, 5, 5*time.Minute)
-	tokenManager := auth.NewTokenManager(store, auth.NewRandomSelectionStrategy(), provider.logger, factory, proxyHealthTracker)
+	proxyHealthTracker := auth.NewProxyHealthTracker(provider.GetLogger(), 5, 5*time.Minute)
+	tokenManager := auth.NewTokenManager(store, auth.NewRandomSelectionStrategy(), provider.GetLogger(), factory, proxyHealthTracker)
 
-	provider.tokenManager = tokenManager
+	provider.SetTokenManager(tokenManager)
 
 	// Make a request
 	request := map[string]interface{}{
@@ -577,7 +577,7 @@ func TestProxyErrorClassification(t *testing.T) {
 	provider.projectID = "test-project"
 
 	// Create a mock token store
-	store := auth.NewMultiTokenStore("test", "", provider.logger)
+	store := auth.NewMultiTokenStore("test", "", provider.GetLogger())
 
 	// Add a test token
 	token := auth.ProviderToken{
@@ -598,10 +598,10 @@ func TestProxyErrorClassification(t *testing.T) {
 
 	// Create token manager with proxy health tracker
 	factory := newMockClientFactory()
-	proxyHealthTracker := auth.NewProxyHealthTracker(provider.logger, 5, 5*time.Minute)
-	tokenManager := auth.NewTokenManager(store, auth.NewRandomSelectionStrategy(), provider.logger, factory, proxyHealthTracker)
+	proxyHealthTracker := auth.NewProxyHealthTracker(provider.GetLogger(), 5, 5*time.Minute)
+	tokenManager := auth.NewTokenManager(store, auth.NewRandomSelectionStrategy(), provider.GetLogger(), factory, proxyHealthTracker)
 
-	provider.tokenManager = tokenManager
+	provider.SetTokenManager(tokenManager)
 
 	// Make a request that will fail
 	request := map[string]interface{}{
@@ -632,21 +632,21 @@ func TestSetTokenManager(t *testing.T) {
 	provider := NewProvider(nil)
 
 	// Initially tokenManager should be nil
-	if provider.tokenManager != nil {
+	if provider.GetTokenManager() != nil {
 		t.Error("Expected tokenManager to be nil initially")
 	}
 
 	// Create a token manager
-	store := auth.NewMultiTokenStore("test", "", provider.logger)
+	store := auth.NewMultiTokenStore("test", "", provider.GetLogger())
 	factory := newMockClientFactory()
-	proxyHealthTracker := auth.NewProxyHealthTracker(provider.logger, 5, 5*time.Minute)
-	tokenManager := auth.NewTokenManager(store, auth.NewRandomSelectionStrategy(), provider.logger, factory, proxyHealthTracker)
+	proxyHealthTracker := auth.NewProxyHealthTracker(provider.GetLogger(), 5, 5*time.Minute)
+	tokenManager := auth.NewTokenManager(store, auth.NewRandomSelectionStrategy(), provider.GetLogger(), factory, proxyHealthTracker)
 
 	// Set the token manager
 	provider.SetTokenManager(tokenManager)
 
 	// Check that tokenManager is set
-	if provider.tokenManager != tokenManager {
+	if provider.GetTokenManager() != tokenManager {
 		t.Error("tokenManager was not set correctly")
 	}
 }
@@ -665,7 +665,7 @@ func TestBackwardCompatibility(t *testing.T) {
 	provider.dailyBaseURL = server.URL
 	provider.isInitialized = true
 	provider.projectID = "test-project"
-	provider.tokenManager = nil
+	provider.SetTokenManager(nil)
 
 	// Test ListModels
 	_, err := provider.ListModels(context.Background())

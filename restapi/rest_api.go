@@ -79,7 +79,7 @@ type Server struct {
 	config            *Config
 	registry          *ProviderRegistry
 	stateManager      *StateManager
-	logger            *logging.Logger
+	logger            logging.Logger
 	httpClient        *http.Client
 	tokenStores       map[string]*auth.MultiTokenStore // providerID -> MultiTokenStore
 	tokenManagers     map[string]*auth.TokenManager    // providerID -> TokenManager
@@ -87,13 +87,13 @@ type Server struct {
 }
 
 // NewServer creates a new OAuth REST API server
-func NewServer(config *Config, logger *logging.Logger) *Server {
+func NewServer(config *Config, logger logging.Logger) *Server {
 	if config == nil {
 		config = DefaultConfig()
 	}
 	if logger == nil {
 		// Create a simple logger if none provided
-		logger = &logging.Logger{}
+		logger = logging.NewLogger()
 	}
 
 	// Create multi-token manager
@@ -278,7 +278,7 @@ func (s *Server) getTokenStore(providerID string) (*auth.MultiTokenStore, error)
 
 	store := auth.NewMultiTokenStore(providerID, credsPath, s.logger)
 	if err := store.Load(); err != nil {
-		s.logger.WarningLog("Failed to load token store for %s: %v", providerID, err)
+		s.logger.WarnLog("Failed to load token store for %s: %v", providerID, err)
 	}
 
 	s.tokenStores[providerID] = store
@@ -809,7 +809,7 @@ func (s *Server) handleCallback(w http.ResponseWriter, r *http.Request) {
 
 	// Check if this code has already been processed (idempotency)
 	if s.stateManager.IsCodeProcessed(code) {
-		s.logger.WarningLog("[Callback] Duplicate callback detected - code already processed: %s", code)
+		s.logger.WarnLog("[Callback] Duplicate callback detected - code already processed: %s", code)
 		// Return success to avoid confusing the user (the original processing was successful)
 		s.writeCallbackHTML(w, true, "", "")
 		return
@@ -1026,12 +1026,12 @@ func (s *Server) handleGetToken(w http.ResponseWriter, r *http.Request, provider
 	// Update LastUsed timestamp
 	store, err := s.multiTokenManager.GetTokenStore(providerID)
 	if err != nil {
-		s.logger.WarningLog("Failed to get token store: %v", err)
+		s.logger.WarnLog("Failed to get token store: %v", err)
 	} else {
 		if err := store.UpdateToken(token.ID, func(t *auth.ProviderToken) {
 			t.LastUsed = auth.GetCurrentTimestamp()
 		}); err != nil {
-			s.logger.WarningLog("Failed to update LastUsed timestamp: %v", err)
+			s.logger.WarnLog("Failed to update LastUsed timestamp: %v", err)
 		}
 	}
 
@@ -1190,7 +1190,7 @@ func (s *Server) saveCredentials(providerID string, creds auth.OAuthCreds, token
 		var err error
 		email, err = s.multiTokenManager.ExtractEmail(context.Background(), providerID, tokenResponse, creds.AccessToken)
 		if err != nil {
-			s.logger.WarningLog("Failed to extract email for %s: %v", providerID, err)
+			s.logger.WarnLog("Failed to extract email for %s: %v", providerID, err)
 			email = ""
 		}
 	}
@@ -1415,13 +1415,13 @@ func (s *Server) handleAddToken(w http.ResponseWriter, r *http.Request, provider
 		extractor := auth.NewEmailExtractionManager(s.logger)
 		emailExtractor, err := extractor.GetExtractor(providerID)
 		if err != nil {
-			s.logger.WarningLog("Failed to get email extractor for %s: %v", providerID, err)
+			s.logger.WarnLog("Failed to get email extractor for %s: %v", providerID, err)
 			email = "unknown@example.com"
 		} else {
 			if extractedEmail, err := emailExtractor.ExtractEmail(context.Background(), nil, req.AccessToken); err == nil {
 				email = extractedEmail
 			} else {
-				s.logger.WarningLog("Failed to extract email for %s: %v", providerID, err)
+				s.logger.WarnLog("Failed to extract email for %s: %v", providerID, err)
 				email = "unknown@example.com"
 			}
 		}
@@ -1639,7 +1639,7 @@ func (s *Server) getProxyConfigHandler(w http.ResponseWriter, r *http.Request, p
 	// Get proxy health tracker
 	proxyHealthTracker, err := s.multiTokenManager.GetProxyHealthTracker(providerID)
 	if err != nil {
-		s.logger.WarningLog("[getProxyConfig] Failed to get proxy health tracker for %s: %v", providerID, err)
+		s.logger.WarnLog("[getProxyConfig] Failed to get proxy health tracker for %s: %v", providerID, err)
 	}
 
 	// Get health status
@@ -1843,7 +1843,7 @@ func (s *Server) handleProxyTest(w http.ResponseWriter, r *http.Request) {
 
 	// Only allow POST method
 	if r.Method != http.MethodPost {
-		s.logger.WarningLog("[ProxyTest] Method not allowed: %s", r.Method)
+		s.logger.WarnLog("[ProxyTest] Method not allowed: %s", r.Method)
 		WriteError(w, http.StatusMethodNotAllowed, "method_not_allowed", "Only POST method is allowed")
 		return
 	}
@@ -1914,7 +1914,7 @@ func (s *Server) handleProxyTest(w http.ResponseWriter, r *http.Request) {
 		s.logger.InfoLog("[ProxyTest] Test successful - Host: %s:%d, Latency: %dms", req.Host, req.Port, result.LatencyMs)
 	} else {
 		response.Message = "Proxy connection failed"
-		s.logger.WarningLog("[ProxyTest] Test failed - Host: %s:%d, Error: %s", req.Host, req.Port, result.Error)
+		s.logger.WarnLog("[ProxyTest] Test failed - Host: %s:%d, Error: %s", req.Host, req.Port, result.Error)
 	}
 
 	WriteJSON(w, http.StatusOK, response)
