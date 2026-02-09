@@ -5,7 +5,9 @@ import (
 	"github.com/sunbankio/qwencoder-proxy/provider"
 )
 
-// OpenAIConverter handles OpenAI format conversions
+// OpenAIConverter is a pass-through converter for the OpenAI protocol.
+// It returns requests and responses unchanged since the OpenAI format
+// is used directly without conversion.
 type OpenAIConverter struct{}
 
 // NewOpenAIConverter creates a new OpenAI converter

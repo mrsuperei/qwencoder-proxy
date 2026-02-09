@@ -14,6 +14,8 @@ func NewQwenConverter() *QwenConverter {
 }
 
 // ToOpenAIRequest converts Qwen format to OpenAI format
+// ToOpenAIRequest is a placeholder implementation for future extensibility.
+// Currently returns the request unchanged as no conversion is needed.
 func (c *QwenConverter) ToOpenAIRequest(native interface{}) (interface{}, error) {
 	return native, nil
 }
@@ -118,11 +120,15 @@ func (c *QwenConverter) ToOpenAIStreamChunk(native interface{}, model string) (i
 }
 
 // FromOpenAIRequest converts OpenAI format to Qwen format
+// FromOpenAIRequest is a placeholder implementation for future extensibility.
+// Currently returns the request unchanged as no conversion is needed.
 func (c *QwenConverter) FromOpenAIRequest(req interface{}) (interface{}, error) {
 	return req, nil
 }
 
 // FromOpenAIResponse converts OpenAI format to Qwen format
+// FromOpenAIResponse is a placeholder implementation for future extensibility.
+// Currently returns the response unchanged as no conversion is needed.
 func (c *QwenConverter) FromOpenAIResponse(resp interface{}) (interface{}, error) {
 	return resp, nil
 }

@@ -17,6 +17,8 @@ func NewClaudeConverter() *ClaudeConverter {
 }
 
 // ToOpenAIRequest converts Claude format to OpenAI format
+// ToOpenAIRequest is a placeholder implementation for future extensibility.
+// Currently returns the request unchanged as no conversion is needed.
 func (c *ClaudeConverter) ToOpenAIRequest(native interface{}) (interface{}, error) {
 	// For now, return as-is - we'll implement proper conversion later
 	return native, nil
@@ -294,6 +296,8 @@ func (c *ClaudeConverter) FromOpenAIRequest(req interface{}) (interface{}, error
 }
 
 // FromOpenAIResponse converts OpenAI format to Claude format
+// FromOpenAIResponse is a placeholder implementation for future extensibility.
+// Currently returns the response unchanged as no conversion is needed.
 func (c *ClaudeConverter) FromOpenAIResponse(resp interface{}) (interface{}, error) {
 	// For now, return as-is - we'll implement proper conversion later
 	return resp, nil
