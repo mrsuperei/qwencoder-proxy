@@ -228,20 +228,19 @@ func TestQwenAuthenticator_GetHTTPClient(t *testing.T) {
 }
 
 func TestQwenAuthenticator_BackwardCompatibility(t *testing.T) {
-	t.Run("existing GetToken method falls back to qwenclient", func(t *testing.T) {
+	t.Run("existing GetToken method returns error when token manager is nil", func(t *testing.T) {
 		logger := logging.NewLogger()
-		// Create authenticator with token manager
+		// Create authenticator with nil token manager
 		authenticator := NewQwenAuthenticator(nil, logger)
 
 		// Get token using existing method
-		// This should fall back to qwenclient.GetValidTokenAndEndpoint()
-		// which will fail because we don't have credentials
+		// This should return an error because token manager is not initialized
 		ctx := context.Background()
 		_, err := authenticator.GetToken(ctx)
 
-		// Should get an error because we don't have qwenclient credentials
+		// Should get an error because token manager is not initialized
 		assert.Error(t, err)
-		assert.Contains(t, err.Error(), "credentials not found")
+		assert.Contains(t, err.Error(), "token manager not initialized")
 	})
 
 	t.Run("existing IsAuthenticated method still works", func(t *testing.T) {

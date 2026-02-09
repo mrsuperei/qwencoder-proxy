@@ -19,7 +19,6 @@ import (
 	"github.com/sunbankio/qwencoder-proxy/auth"
 	"github.com/sunbankio/qwencoder-proxy/logging"
 	"github.com/sunbankio/qwencoder-proxy/provider"
-	"github.com/sunbankio/qwencoder-proxy/qwenclient"
 )
 
 const (
@@ -77,25 +76,29 @@ func (a *QwenAuthenticator) Authenticate(ctx context.Context) error {
 
 // GetToken returns a valid access token
 func (a *QwenAuthenticator) GetToken(ctx context.Context) (string, error) {
-	token, _, err := qwenclient.GetValidTokenAndEndpoint()
+	if a.tokenManager == nil {
+		return "", errors.New("token manager not initialized")
+	}
+
+	token, err := a.tokenManager.SelectToken()
 	if err != nil {
 		// If we get an auth error, try to trigger the authentication flow
-		if strings.Contains(err.Error(), "credentials not found") || strings.Contains(err.Error(), "failed to refresh token") {
+		if strings.Contains(err.Error(), "no tokens available") {
 			// Trigger authentication flow to get new credentials
 			authErr := auth.AuthenticateWithOAuth(ctx, a.logger, a.multiTokenMgr)
 			if authErr != nil {
 				return "", fmt.Errorf("authentication required but failed: %v. Error getting token: %w", authErr, err)
 			}
 			// Try again after authentication
-			token, _, err := qwenclient.GetValidTokenAndEndpoint()
+			token, err = a.tokenManager.SelectToken()
 			if err != nil {
 				return "", err
 			}
-			return token, nil
+			return token.AccessToken, nil
 		}
 		return "", err
 	}
-	return token, nil
+	return token.AccessToken, nil
 }
 
 // IsAuthenticated checks if valid credentials exist
@@ -384,14 +387,7 @@ func (p *Provider) GenerateContent(ctx context.Context, model string, request in
 			p.GetLogger().DebugLog("[Qwen] GenerateContent using token %s with direct connection", tokenID)
 		}
 	} else {
-		// No token manager, fall back to qwenclient for backward compatibility
-		token, _, err := qwenclient.GetValidTokenAndEndpoint()
-		if err != nil {
-			return nil, fmt.Errorf("failed to get token: %w", err)
-		}
-		_ = token // Token is used below for authorization
-		client = p.GetHTTPClient()
-		tokenID = "fallback"
+		return nil, errors.New("token manager not initialized")
 	}
 
 	// Log the original request before conversion
@@ -405,23 +401,12 @@ func (p *Provider) GenerateContent(ctx context.Context, model string, request in
 
 	p.GetLogger().DebugLog("[Qwen] Request body being sent: %s", string(reqBody))
 
-	// Get endpoint from qwenclient for backward compatibility
-	_, endpoint, err := qwenclient.GetValidTokenAndEndpoint()
-	if err != nil {
-		p.GetLogger().WarnLog("[Qwen] Failed to get endpoint from qwenclient: %v", err)
-		// Use default endpoint
-		endpoint = DefaultBaseURL
-	}
-
-	// Ensure the endpoint ends with /v1 for the Qwen API
-	normalizedEndpoint := endpoint
-	if !strings.HasSuffix(normalizedEndpoint, "/v1") {
-		normalizedEndpoint = normalizedEndpoint + "/v1"
-	}
+	// Use the default endpoint from auth package
+	endpoint := auth.DefaultQwenBaseURL
 
 	// Since this is called from the OpenAI handler for /v1/chat/completions,
 	// we construct the appropriate path
-	url := fmt.Sprintf("%s/chat/completions", normalizedEndpoint)
+	url := fmt.Sprintf("%s/chat/completions", endpoint)
 	p.GetLogger().DebugLog("[Qwen] Constructed target URL: %s", url)
 
 	req, err := http.NewRequestWithContext(ctx, "POST", url, bytes.NewReader(reqBody))
@@ -492,14 +477,7 @@ func (p *Provider) GenerateContentStream(ctx context.Context, model string, requ
 			p.GetLogger().DebugLog("[Qwen] GenerateContentStream using token %s with direct connection", tokenID)
 		}
 	} else {
-		// No token manager, fall back to qwenclient for backward compatibility
-		token, _, err := qwenclient.GetValidTokenAndEndpoint()
-		if err != nil {
-			return nil, fmt.Errorf("failed to get token: %w", err)
-		}
-		_ = token // Token is used below for authorization
-		client = p.GetHTTPClient()
-		tokenID = "fallback"
+		return nil, errors.New("token manager not initialized")
 	}
 
 	// Convert request to proper format for Qwen API
@@ -508,21 +486,9 @@ func (p *Provider) GenerateContentStream(ctx context.Context, model string, requ
 		return nil, fmt.Errorf("failed to marshal request: %w", err)
 	}
 
-	// Get endpoint from qwenclient for backward compatibility
-	_, endpoint, err := qwenclient.GetValidTokenAndEndpoint()
-	if err != nil {
-		p.GetLogger().WarnLog("[Qwen] Failed to get endpoint from qwenclient: %v", err)
-		// Use default endpoint
-		endpoint = DefaultBaseURL
-	}
-
-	// Ensure the endpoint ends with /v1 for the Qwen API
-	normalizedEndpoint := endpoint
-	if !strings.HasSuffix(normalizedEndpoint, "/v1") {
-		normalizedEndpoint = normalizedEndpoint + "/v1"
-	}
-
-	url := fmt.Sprintf("%s/chat/completions", normalizedEndpoint)
+	// Use the default endpoint from auth package
+	endpoint := auth.DefaultQwenBaseURL
+	url := fmt.Sprintf("%s/chat/completions", endpoint)
 	p.GetLogger().DebugLog("[Qwen] Constructed streaming target URL: %s", url)
 
 	req, err := http.NewRequestWithContext(ctx, "POST", url, bytes.NewReader(reqBody))
