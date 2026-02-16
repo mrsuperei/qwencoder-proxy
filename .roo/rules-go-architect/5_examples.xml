@@ -1,0 +1,356 @@
+<examples>
+  <overview>
+    Complete workflow examples demonstrating how go-architect mode handles
+    various Go design and architecture scenarios.
+  </overview>
+
+  <example name="designing_a_new_service">
+    <description>
+      Designing a new Go service with proper package structure, interfaces,
+      and concurrency patterns.
+    </description>
+    <context>
+      User needs to create a new authentication service that handles OAuth
+      flows, token management, and concurrent requests.
+    </context>
+    <workflow>
+      <step number="1">
+        <action>Analyze requirements</action>
+        <details>
+          - Understand OAuth flows needed (authorization code, client credentials)
+          - Identify token storage requirements
+          - Determine concurrency needs (multiple concurrent auth requests)
+        </details>
+      </step>
+
+      <step number="2">
+        <action>Review existing codebase</action>
+        <tools>
+          <tool>list_files - Check existing auth package structure</tool>
+          <tool>read_file - Examine existing interfaces and implementations</tool>
+        </tools>
+      </step>
+
+      <step number="3">
+        <action>Design package structure</action>
+        <design>
+          <package name="auth">
+            <file>types.go - Token, Credentials, Config types</file>
+            <file>interfaces.go - Authenticator, TokenStore interfaces</file>
+            <file>oauth.go - OAuth implementation</file>
+            <file>token_manager.go - Token management with cache</file>
+            <file>errors.go - Custom error types</file>
+          </package>
+        </design>
+      </step>
+
+      <step number="4">
+        <action>Define interfaces</action>
+        <code><![CDATA[
+type Authenticator interface {
+    Authenticate(ctx context.Context, req AuthRequest) (*Token, error)
+    Refresh(ctx context.Context, token *Token) (*Token, error)
+    Revoke(ctx context.Context, tokenID string) error
+}
+
+type TokenStore interface {
+    Get(ctx context.Context, tokenID string) (*Token, error)
+    Set(ctx context.Context, token *Token, ttl time.Duration) error
+    Delete(ctx context.Context, tokenID string) error
+}
+        ]]></code>
+      </step>
+
+      <step number="5">
+        <action>Design concurrency strategy</action>
+        <strategy>
+          <pattern>Worker pool for concurrent token refreshes</pattern>
+          <pattern>Channels for token cache updates</pattern>
+          <pattern>sync.RWMutex for cache access</pattern>
+          <pattern>context.Context for cancellation</pattern>
+        </strategy>
+      </step>
+
+      <step number="6">
+        <action>Document error handling strategy</action>
+        <errors>
+          <error>ErrInvalidCredentials - sentinel error for auth failures</error>
+          <error>ErrTokenExpired - sentinel for expired tokens</error>
+          <error>Wrap all errors with context using fmt.Errorf</error>
+        </errors>
+      </step>
+
+      <step number="7">
+        <action>Create implementation plan</action>
+        <tasks>
+          <task>Create types.go with all data structures</task>
+          <task>Create interfaces.go with all interfaces</task>
+          <task>Implement OAuth authenticator</task>
+          <task>Implement in-memory token store</task>
+          <task>Add concurrent token refresh worker</task>
+          <task>Write unit tests for each component</task>
+          <task>Write integration tests for auth flows</task>
+        </tasks>
+      </step>
+    </workflow>
+    <handoff>
+      <mode>go-code</mode>
+      <context>
+        Provide complete design specification including:
+        - Package structure
+        - Interface definitions
+        - Concurrency patterns to use
+        - Error handling strategy
+        - Implementation task order
+      </context>
+    </handoff>
+  </example>
+
+  <example name="refactoring_for_testability">
+    <description>
+      Refactoring existing Go code to improve testability by introducing
+      interfaces and dependency injection.
+    </description>
+    <context>
+      Existing code has hardcoded database connections making it difficult
+      to test. Need to refactor for better testability.
+    </context>
+    <workflow>
+      <step number="1">
+        <action>Analyze current code</action>
+        <tools>
+          <tool>read_file - Examine the code to refactor</tool>
+          <tool>search_files - Find all database access points</tool>
+        </tools>
+      </step>
+
+      <step number="2">
+        <action>Identify dependencies</action>
+        <dependencies>
+          <dependency>Direct sql.DB usage</dependency>
+          <dependency>Hardcoded connection strings</dependency>
+          <dependency>Tight coupling to database implementation</dependency>
+        </dependencies>
+      </step>
+
+      <step number="3">
+        <action>Design repository interface</action>
+        <code><![CDATA[
+type UserRepository interface {
+    FindByID(ctx context.Context, id string) (*User, error)
+    FindByEmail(ctx context.Context, email string) (*User, error)
+    Create(ctx context.Context, user *User) error
+    Update(ctx context.Context, user *User) error
+    Delete(ctx context.Context, id string) error
+}
+        ]]></code>
+      </step>
+
+      <step number="4">
+        <action>Design dependency injection</action>
+        <code><![CDATA[
+type UserService struct {
+    repo UserRepository
+    log  Logger
+}
+
+func NewUserService(repo UserRepository, log Logger) *UserService {
+    return &UserService{
+        repo: repo,
+        log:  log,
+    }
+}
+        ]]></code>
+      </step>
+
+      <step number="5">
+        <action>Plan refactoring steps</action>
+        <steps>
+          <step>Create UserRepository interface</step>
+          <step>Implement SQLUserRepository</step>
+          <step>Create MockUserRepository for tests</step>
+          <step>Refactor UserService to use interface</step>
+          <step>Update main.go to wire dependencies</step>
+          <step>Write tests using mock repository</step>
+        </steps>
+      </step>
+    </workflow>
+  </example>
+
+  <example name="designing_concurrent_processor">
+    <description>
+      Designing a concurrent data processor using Go's concurrency primitives.
+    </description>
+    <context>
+      Need to process a large number of items concurrently with controlled
+      parallelism and proper error handling.
+    </context>
+    <workflow>
+      <step number="1">
+        <action>Understand requirements</action>
+        <requirements>
+          <requirement>Process 10,000+ items</requirement>
+          <requirement>Limit to 10 concurrent workers</require>
+          <requirement>Support cancellation</requirement>
+          <requirement>Collect all results and errors</requirement>
+        </requirements>
+      </step>
+
+      <step number="2">
+        <action>Design worker pool pattern</action>
+        <components>
+          <component>Job channel - buffered channel for input</component>
+          <component>Result channel - buffered channel for output</component>
+          <component>Worker goroutines - fixed number of workers</component>
+          <component>sync.WaitGroup - wait for completion</component>
+          <component>context.Context - cancellation support</component>
+        </components>
+      </step>
+
+      <step number="3>
+        <action>Define types</action>
+        <code><![CDATA[
+type Job struct {
+    ID   string
+    Data []byte
+}
+
+type Result struct {
+    JobID string
+    Data  []byte
+    Err   error
+}
+
+type Processor struct {
+    numWorkers int
+    jobChan    chan Job
+    resultChan chan Result
+}
+        ]]></code>
+      </step>
+
+      <step number="4">
+        <action>Design worker function</action>
+        <code><![CDATA[
+func (p *Processor) worker(ctx context.Context, wg *sync.WaitGroup) {
+    defer wg.Done()
+    for {
+        select {
+        case <-ctx.Done():
+            return
+        case job, ok := <-p.jobChan:
+            if !ok {
+                return
+            }
+            result := p.processJob(ctx, job)
+            p.resultChan <- result
+        }
+    }
+}
+        ]]></code>
+      </step>
+
+      <step number="5">
+        <action>Plan error handling</action>
+        <strategy>
+          <item>Collect all errors in results</item>
+          <item>Continue processing on individual failures</item>
+          <item>Use context for cancellation on fatal errors</item>
+          <item>Provide summary of successes and failures</item>
+        </strategy>
+      </step>
+
+      <step number="6">
+        <action>Design testing strategy</action>
+        <tests>
+          <test>Unit test for worker function</test>
+          <test>Integration test for full processor</test>
+          <test>Benchmark for performance</test>
+          <test>Test cancellation behavior</test>
+        </tests>
+      </step>
+    </workflow>
+  </example>
+
+  <example name="designing_api_package">
+    <description>
+      Designing a clean API package with proper HTTP handlers and middleware.
+    </description>
+    <context>
+      Creating a REST API for user management with proper error handling,
+      request validation, and middleware.
+    </context>
+    <workflow>
+      <step number="1">
+        <action>Design package structure</action>
+        <package name="api">
+          <file>handler.go - HTTP handlers</file>
+          <file>middleware.go - HTTP middleware</file>
+          <file>response.go - Response helpers</file>
+          <file>errors.go - HTTP error types</file>
+        </package>
+      </step>
+
+      <step number="2">
+        <action>Define handler interface</action>
+        <code><![CDATA[
+type Handler interface {
+    ServeHTTP(w http.ResponseWriter, r *http.Request)
+}
+
+type UserHandler struct {
+    service UserService
+    logger  Logger
+}
+        ]]></code>
+      </step>
+
+      <step number="3">
+        <action>Design middleware chain</action>
+        <middleware>
+          <item>Logging middleware</item>
+          <item>Recovery middleware</item>
+          <item>Authentication middleware</item>
+          <item>Request ID middleware</item>
+          <item>CORS middleware</item>
+        </middleware>
+      </step>
+
+      <step number="4">
+        <action>Design error handling</action>
+        <code><![CDATA[
+type HTTPError struct {
+    Code    int    `json:"code"`
+    Message string `json:"message"`
+}
+
+func (e *HTTPError) Error() string {
+    return e.Message
+}
+
+func WriteError(w http.ResponseWriter, err error) {
+    if httpErr, ok := err.(*HTTPError); ok {
+        w.WriteHeader(httpErr.Code)
+        json.NewEncoder(w).Encode(httpErr)
+        return
+    }
+    w.WriteHeader(http.StatusInternalServerError)
+    json.NewEncoder(w).Encode(HTTPError{
+        Code:    500,
+        Message: "Internal server error",
+    })
+}
+        ]]></code>
+      </step>
+
+      <step number="5">
+        <action>Design request validation</action>
+        <strategy>
+          <item>Define request structs with validation tags</item>
+          <item>Create validator middleware</item>
+          <item>Return 400 for invalid requests</item>
+        </strategy>
+      </step>
+    </workflow>
+  </example>
+</examples>

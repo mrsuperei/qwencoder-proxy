@@ -11,7 +11,7 @@ import (
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
 
-	"github.com/sunbankio/qwencoder-proxy/auth"
+	auth "github.com/sunbankio/qwencoder-proxy/internal/token"
 )
 
 // MockAuthenticator is a mock implementation for testing

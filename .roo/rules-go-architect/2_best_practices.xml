@@ -1,0 +1,249 @@
+<best_practices>
+  <general_principles>
+    <principle priority="high">
+      <name>Follow Go Idioms</name>
+      <description>
+        Always use idiomatic Go patterns and conventions. Go has a strong culture of
+        simplicity and clarity. Avoid patterns from other languages that don't fit Go's design.
+      </description>
+      <rationale>
+        Idiomatic Go code is more readable, maintainable, and performs better.
+        The Go community values simple, clear solutions over clever abstractions.
+      </rationale>
+      <example>
+        <scenario>Handling errors</scenario>
+        <good>Always check errors immediately and handle or return them</good>
+        <bad>Ignore errors or use try-catch style patterns</bad>
+      </example>
+    </principle>
+
+    <principle priority="high">
+      <name>Interface Design</name>
+      <description>
+        Design small, focused interfaces that define behavior, not data.
+        Interfaces should be accepted as parameters and structs should be returned.
+      </description>
+      <rationale>
+        Small interfaces are easier to implement and test. They promote loose coupling
+        and make code more flexible and testable.
+      </rationale>
+      <example>
+        <scenario>Defining interfaces</scenario>
+        <good>
+          type Reader interface {
+            Read(p []byte) (n int, err error)
+          }
+        </good>
+        <bad>
+          type BigInterface interface {
+            Read() []byte
+            Write([]byte) error
+            Close() error
+            // ... many more methods
+          }
+        </bad>
+      </example>
+    </principle>
+
+    <principle priority="high">
+      <name>Package Organization</name>
+      <description>
+        Organize packages by their responsibility, not by layer. Each package should
+        have a single, well-defined purpose. Avoid circular dependencies between packages.
+      </description>
+      <rationale>
+        Clear package boundaries make code easier to navigate, understand, and maintain.
+        They also prevent import cycles which are not allowed in Go.
+      </rationale>
+    </principle>
+  </general_principles>
+
+  <go_code_conventions>
+    <convention category="naming">
+      <rule>Use Go naming conventions</rule>
+      <examples>
+        <good>
+          - Package names: lowercase, single word, descriptive
+          - Exported names: PascalCase (e.g., HttpClient)
+          - Unexported names: camelCase (e.g., httpClient)
+          - Interface names: usually -er suffix (e.g., Reader, Writer)
+          - Constants: PascalCase or UPPER_CASE
+        </good>
+        <bad>
+          - Package names: mixedCase or underscores
+          - Inconsistent capitalization
+          - Abbreviations without context
+        </bad>
+      </examples>
+    </convention>
+
+    <convention category="file_structure">
+      <rule>Organize Go files logically</rule>
+      <template>
+        // Standard file organization:
+        // - types.go - Type definitions and interfaces
+        // - methods.go - Methods for types
+        // - helpers.go - Helper functions
+        // - errors.go - Custom error types
+        // - doc.go - Package documentation
+        // - {type}_test.go - Tests for specific type
+        // - integration_test.go - Integration tests
+      </template>
+    </convention>
+
+    <convention category="error_handling">
+      <rule>Handle errors explicitly and properly</rule>
+      <template>
+        // Always check errors
+        result, err := someFunction()
+        if err != nil {
+            return fmt.Errorf("context: %w", err)
+        }
+
+        // Wrap errors with context
+        if err != nil {
+            return fmt.Errorf("operation failed: %w", err)
+        }
+
+        // Use sentinel errors for expected cases
+        var ErrNotFound = errors.New("not found")
+      </template>
+    </convention>
+  </go_code_conventions>
+
+  <concurrency_patterns>
+    <pattern name="goroutine_lifecycle">
+      <description>Properly manage goroutine lifecycles</description>
+      <guidelines>
+        <guideline>Always provide a way to stop goroutines</guideline>
+        <guideline>Use context.Context for cancellation</guideline>
+        <guideline>Use sync.WaitGroup to wait for completion</guideline>
+      </guidelines>
+      <example>
+        <code><![CDATA[
+func worker(ctx context.Context, wg *sync.WaitGroup, jobs <-chan Job) {
+    defer wg.Done()
+
+    for {
+        select {
+        case <-ctx.Done():
+            return
+        case job, ok := <-jobs:
+            if !ok {
+                return
+            }
+            process(job)
+        }
+    }
+}
+        ]]></code>
+      </example>
+    </pattern>
+
+    <pattern name="channel_usage">
+      <description>Use channels appropriately for communication</description>
+      <guidelines>
+        <guideline>Prefer buffered channels for producers/consumers</guideline>
+        <guideline>Close channels from the producer side only</guideline>
+        <guideline>Use range over channels for consumers</guideline>
+      </guidelines>
+      <example>
+        <code><![CDATA[
+// Producer
+func produce(ctx context.Context, out chan<- Result) {
+    defer close(out)
+    for _, item := range items {
+        select {
+        case <-ctx.Done():
+            return
+        case out <- process(item):
+        }
+    }
+}
+
+// Consumer
+func consume(in <-chan Result) {
+    for result := range in {
+        handle(result)
+    }
+}
+        ]]></code>
+      </example>
+    </pattern>
+  </concurrency_patterns>
+
+  <common_pitfalls>
+    <pitfall>
+      <description>Ignoring errors</description>
+      <why_problematic>
+        Ignoring errors leads to silent failures and makes debugging difficult.
+        Go's explicit error handling is a feature, not a bug.
+      </why_problematic>
+      <correct_approach>
+        Always handle errors by either returning them (with context), logging them,
+        or explicitly ignoring them with a comment explaining why.
+      </correct_approach>
+    </pitfall>
+
+    <pitfall>
+      <description>Overusing goroutines</description>
+      <why_problematic>
+        Spawning too many goroutines can exhaust memory and degrade performance.
+        Concurrency adds complexity that should be justified by real benefits.
+      </why_problematic>
+      <correct_approach>
+        Use goroutines when you have actual concurrent work to do. Consider
+        worker pools with bounded concurrency for managing many tasks.
+      </correct_approach>
+    </pitfall>
+
+    <pitfall>
+      <description>Creating circular package dependencies</description>
+      <why_problematic>
+        Go does not allow import cycles. Circular dependencies indicate poor
+        package organization and make code difficult to understand.
+      </why_problematic>
+      <correct_approach>
+        Refactor to eliminate cycles by:
+        - Moving shared code to a new package
+        - Using interfaces to break dependencies
+        - Reorganizing package responsibilities
+      </correct_approach>
+    </pitfall>
+
+    <pitfall>
+      <description>Using globals for mutable state</description>
+      <why_problematic>
+        Global mutable state makes code hard to test, reason about, and can cause
+        race conditions in concurrent code.
+      </why_problematic>
+      <correct_approach>
+        Pass dependencies explicitly through function parameters or struct fields.
+        Use dependency injection patterns for better testability.
+      </correct_approach>
+    </pitfall>
+  </common_pitfalls>
+
+  <quality_checklist>
+    <category name="before_starting">
+      <item>Understand the full requirements and constraints</item>
+      <item>Review existing codebase patterns and conventions</item>
+      <item>Check go.mod for available dependencies</item>
+      <item>Identify potential circular dependencies</item>
+    </category>
+
+    <category name="during_design">
+      <item>Design small, focused interfaces</item>
+      <item>Plan proper error handling strategy</item>
+      <item>Consider concurrency needs and patterns</item>
+      <item>Define clear package boundaries</item>
+    </category>
+
+    <category name="before_handoff">
+      <item>Document all technical decisions</item>
+      <item>Specify Go idioms and patterns to use</item>
+      <item>Include testing strategy</item>
+      <item>Provide clear implementation roadmap</item>
+    </category>
+  </quality_checklist>
+</best_practices>

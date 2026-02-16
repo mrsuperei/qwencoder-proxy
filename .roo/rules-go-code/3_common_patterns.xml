@@ -1,0 +1,561 @@
+<common_patterns>
+  <overview>
+    Common Go implementation patterns and code templates that should be used
+    when writing Go code. These patterns represent idiomatic Go solutions to
+    common problems.
+  </overview>
+
+  <pattern_category name="structural_patterns">
+    <pattern name="constructor">
+      <description>
+        Create constructors with NewX() naming convention. Accept interfaces,
+        return concrete structs.
+      </description>
+      <template>
+        <code><![CDATA[
+// NewService creates a new Service with the given dependencies.
+func NewService(repo Repository, logger Logger) *Service {
+    return &Service{
+        repo:   repo,
+        logger: logger,
+        config: DefaultConfig(),
+    }
+}
+
+// DefaultConfig returns the default configuration.
+func DefaultConfig() *Config {
+    return &Config{
+        Timeout: 30 * time.Second,
+        Retries: 3,
+    }
+}
+        ]]></code>
+      </template>
+    </pattern>
+
+    <pattern name="interface_implementation_check">
+      <description>
+        Add compile-time check to ensure types implement interfaces.
+      </description>
+      <template>
+        <code><![CDATA[
+// Ensure MyType implements MyInterface at compile time.
+var _ MyInterface = (*MyType)(nil)
+
+// Ensure MyType implements io.Reader at compile time.
+var _ io.Reader = (*MyType)(nil)
+        ]]></code>
+      </template>
+    </pattern>
+
+    <pattern name="method_chaining">
+      <description>
+        Use method chaining for fluent APIs, especially for builders.
+      </description>
+      <template>
+        <code><![CDATA[
+type Builder struct {
+    name     string
+    timeout  time.Duration
+    enabled  bool
+}
+
+func NewBuilder() *Builder {
+    return &Builder{
+        timeout: 30 * time.Second,
+    }
+}
+
+func (b *Builder) WithName(name string) *Builder {
+    b.name = name
+    return b
+}
+
+func (b *Builder) WithTimeout(timeout time.Duration) *Builder {
+    b.timeout = timeout
+    return b
+}
+
+func (b *Builder) WithEnabled(enabled bool) *Builder {
+    b.enabled = enabled
+    return b
+}
+
+func (b *Builder) Build() (*Service, error) {
+    if b.name == "" {
+        return nil, errors.New("name is required")
+    }
+    return &Service{
+        name:    b.name,
+        timeout: b.timeout,
+        enabled: b.enabled,
+    }, nil
+}
+
+// Usage
+service, err := NewBuilder().
+    WithName("my-service").
+    WithTimeout(60*time.Second).
+    WithEnabled(true).
+    Build()
+        ]]></code>
+      </template>
+    </pattern>
+  </pattern_category>
+
+  <pattern_category name="error_handling_patterns">
+    <pattern name="error_wrapping">
+      <description>
+        Wrap errors with context using fmt.Errorf with %w verb.
+      </description>
+      <template>
+        <code><![CDATA[
+import (
+    "errors"
+    "fmt"
+)
+
+// Wrap error with context
+result, err := someFunction()
+if err != nil {
+    return nil, fmt.Errorf("failed to process: %w", err)
+}
+
+// Check for specific errors
+if errors.Is(err, ErrNotFound) {
+    // handle not found
+}
+
+// Extract error type
+var notFoundErr *NotFoundError
+if errors.As(err, &notFoundErr) {
+    // handle specific error type
+}
+        ]]></code>
+      </template>
+    </pattern>
+
+    <pattern name="sentinel_errors">
+      <description>
+        Define sentinel errors for expected error conditions.
+      </description>
+      <template>
+        <code><![CDATA[
+var (
+    ErrNotFound    = errors.New("not found")
+    ErrAlreadyExists = errors.New("already exists")
+    ErrInvalidInput = errors.New("invalid input")
+)
+
+func FindUser(id string) (*User, error) {
+    user, err := db.Query(id)
+    if err != nil {
+        return nil, fmt.Errorf("query failed: %w", err)
+    }
+    if user == nil {
+        return nil, ErrNotFound
+    }
+    return user, nil
+}
+
+// Usage
+user, err := FindUser("123")
+if err != nil {
+    if errors.Is(err, ErrNotFound) {
+        // handle not found
+    }
+    return err
+}
+        ]]></code>
+      </template>
+    </pattern>
+
+    <pattern name="custom_error_types">
+      <description>
+        Create custom error types for domain-specific errors.
+      </description>
+      <template>
+        <code><![CDATA[
+// ValidationError represents a validation error with field details.
+type ValidationError struct {
+    Field   string
+    Message string
+    Err     error
+}
+
+func (e *ValidationError) Error() string {
+    if e.Err != nil {
+        return fmt.Sprintf("%s: %s: %v", e.Field, e.Message, e.Err)
+    }
+    return fmt.Sprintf("%s: %s", e.Field, e.Message)
+}
+
+func (e *ValidationError) Unwrap() error {
+    return e.Err
+}
+
+// NewValidationError creates a new validation error.
+func NewValidationError(field, message string) *ValidationError {
+    return &ValidationError{
+        Field:   field,
+        Message: message,
+    }
+}
+
+// WrapValidationError wraps an existing error with validation context.
+func WrapValidationError(field, message string, err error) *ValidationError {
+    return &ValidationError{
+        Field:   field,
+        Message: message,
+        Err:     err,
+    }
+}
+        ]]></code>
+      </template>
+    </pattern>
+  </pattern_category>
+
+  <pattern_category name="concurrency_patterns">
+    <pattern name="worker_pool">
+      <description>
+        Implement a worker pool for controlled concurrency.
+      </description>
+      <template>
+        <code><![CDATA[
+type Job struct {
+    ID   string
+    Data []byte
+}
+
+type Result struct {
+    JobID string
+    Data  []byte
+    Err   error
+}
+
+type WorkerPool struct {
+    numWorkers int
+    jobChan    chan Job
+    resultChan chan Result
+    wg         sync.WaitGroup
+}
+
+func NewWorkerPool(numWorkers, bufferSize int) *WorkerPool {
+    return &WorkerPool{
+        numWorkers: numWorkers,
+        jobChan:    make(chan Job, bufferSize),
+        resultChan: make(chan Result, bufferSize),
+    }
+}
+
+func (p *WorkerPool) Start(ctx context.Context) {
+    for i := 0; i < p.numWorkers; i++ {
+        p.wg.Add(1)
+        go p.worker(ctx, i)
+    }
+}
+
+func (p *WorkerPool) worker(ctx context.Context, id int) {
+    defer p.wg.Done()
+    for {
+        select {
+        case <-ctx.Done():
+            return
+        case job, ok := <-p.jobChan:
+            if !ok {
+                return
+            }
+            result := p.processJob(ctx, job)
+            p.resultChan <- result
+        }
+    }
+}
+
+func (p *WorkerPool) processJob(ctx context.Context, job Job) Result {
+    // Process the job
+    return Result{JobID: job.ID}
+}
+
+func (p *WorkerPool) Submit(job Job) {
+    p.jobChan <- job
+}
+
+func (p *WorkerPool) Results() <-chan Result {
+    return p.resultChan
+}
+
+func (p *WorkerPool) Stop() {
+    close(p.jobChan)
+    p.wg.Wait()
+    close(p.resultChan)
+}
+        ]]></code>
+      </template>
+    </pattern>
+
+    <pattern name="singleton_with_once">
+      <description>
+        Implement thread-safe singleton using sync.Once.
+      </description>
+      <template>
+        <code><![CDATA[
+type singleton struct {
+    config *Config
+}
+
+var (
+    instance *singleton
+    once     sync.Once
+)
+
+func GetInstance() *singleton {
+    once.Do(func() {
+        instance = &singleton{
+            config: loadConfig(),
+        }
+    })
+    return instance
+}
+        ]]></code>
+      </template>
+    </pattern>
+
+    <pattern name="rate_limiter">
+      <description>
+        Implement a rate limiter using channels.
+      </description>
+      <template>
+        <code><![CDATA[
+type RateLimiter struct {
+    ticker   *time.Ticker
+    requests chan struct{}
+}
+
+func NewRateLimiter(rate time.Duration, burst int) *RateLimiter {
+    rl := &RateLimiter{
+        ticker:   time.NewTicker(rate),
+        requests: make(chan struct{}, burst),
+    }
+
+    // Fill the burst capacity
+    for i := 0; i < burst; i++ {
+        rl.requests <- struct{}{}
+    }
+
+    go rl.run()
+    return rl
+}
+
+func (rl *RateLimiter) run() {
+    for range rl.ticker.C {
+        select {
+        case rl.requests <- struct{}{}:
+        default:
+            // Channel is full, drop token
+        }
+    }
+}
+
+func (rl *RateLimiter) Allow() bool {
+    select {
+    case <-rl.requests:
+        return true
+    default:
+        return false
+    }
+}
+
+func (rl *RateLimiter) Stop() {
+    rl.ticker.Stop()
+}
+        ]]></code>
+      </template>
+    </pattern>
+  </pattern_category>
+
+  <pattern_category name="http_patterns">
+    <pattern name="http_handler">
+      <description>
+        Implement HTTP handlers with proper error handling and JSON responses.
+      </description>
+      <template>
+        <code><![CDATA[
+type Handler struct {
+    service Service
+    logger  Logger
+}
+
+func NewHandler(service Service, logger Logger) *Handler {
+    return &Handler{
+        service: service,
+        logger:  logger,
+    }
+}
+
+func (h *Handler) CreateUser(w http.ResponseWriter, r *http.Request) {
+    ctx := r.Context()
+
+    var req CreateUserRequest
+    if err := json.NewDecoder(r.Body).Decode(&req); err != nil {
+        h.writeError(w, http.StatusBadRequest, "invalid request body")
+        return
+    }
+
+    user, err := h.service.CreateUser(ctx, req)
+    if err != nil {
+        h.handleError(w, err)
+        return
+    }
+
+    h.writeJSON(w, http.StatusCreated, user)
+}
+
+func (h *Handler) writeJSON(w http.ResponseWriter, status int, data interface{}) {
+    w.Header().Set("Content-Type", "application/json")
+    w.WriteHeader(status)
+    json.NewEncoder(w).Encode(data)
+}
+
+func (h *Handler) writeError(w http.ResponseWriter, status int, message string) {
+    h.writeJSON(w, status, map[string]string{"error": message})
+}
+
+func (h *Handler) handleError(w http.ResponseWriter, err error) {
+    if errors.Is(err, ErrNotFound) {
+        h.writeError(w, http.StatusNotFound, "resource not found")
+        return
+    }
+    h.logger.Error("internal error", "error", err)
+    h.writeError(w, http.StatusInternalServerError, "internal server error")
+}
+        ]]></code>
+      </template>
+    </pattern>
+
+    <pattern name="middleware">
+      <description>
+        Implement HTTP middleware chain.
+      </description>
+      <template>
+        <code><![CDATA[
+type Middleware func(http.Handler) http.Handler
+
+func Chain(h http.Handler, middlewares ...Middleware) http.Handler {
+    for i := len(middlewares) - 1; i >= 0; i-- {
+        h = middlewares[i](h)
+    }
+    return h
+}
+
+func LoggingMiddleware(logger Logger) Middleware {
+    return func(next http.Handler) http.Handler {
+        return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+            start := time.Now()
+            next.ServeHTTP(w, r)
+            logger.Info("request",
+                "method", r.Method,
+                "path", r.URL.Path,
+                "duration", time.Since(start),
+            )
+        })
+    }
+}
+
+func AuthMiddleware(auth Authenticator) Middleware {
+    return func(next http.Handler) http.Handler {
+        return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+            token := r.Header.Get("Authorization")
+            if token == "" {
+                http.Error(w, "unauthorized", http.StatusUnauthorized)
+                return
+            }
+
+            user, err := auth.Validate(r.Context(), token)
+            if err != nil {
+                http.Error(w, "unauthorized", http.StatusUnauthorized)
+                return
+            }
+
+            ctx := context.WithValue(r.Context(), "user", user)
+            next.ServeHTTP(w, r.WithContext(ctx))
+        })
+    }
+}
+
+// Usage
+handler := NewHandler(service, logger)
+http.Handle("/", Chain(handler,
+    LoggingMiddleware(logger),
+    AuthMiddleware(authenticator),
+))
+        ]]></code>
+      </template>
+    </pattern>
+  </pattern_category>
+
+  <pattern_category name="testing_patterns">
+    <pattern name="mock_interface">
+      <description>
+        Create a mock implementation for testing.
+      </description>
+      <template>
+        <code><![CDATA[
+// MockRepository is a mock implementation of Repository.
+type MockRepository struct {
+    mu       sync.Mutex
+    users    map[string]*User
+    findErr  error
+    createErr error
+}
+
+func NewMockRepository() *MockRepository {
+    return &MockRepository{
+        users: make(map[string]*User),
+    }
+}
+
+func (m *MockRepository) FindByID(ctx context.Context, id string) (*User, error) {
+    m.mu.Lock()
+    defer m.mu.Unlock()
+
+    if m.findErr != nil {
+        return nil, m.findErr
+    }
+
+    return m.users[id], nil
+}
+
+func (m *MockRepository) Create(ctx context.Context, user *User) error {
+    m.mu.Lock()
+    defer m.mu.Unlock()
+
+    if m.createErr != nil {
+        return m.createErr
+    }
+
+    m.users[user.ID] = user
+    return nil
+}
+
+func (m *MockRepository) SetFindError(err error) {
+    m.mu.Lock()
+    defer m.mu.Unlock()
+    m.findErr = err
+}
+
+func (m *MockRepository) SetCreateError(err error) {
+    m.mu.Lock()
+    defer m.mu.Unlock()
+    m.createErr = err
+}
+
+func (m *MockRepository) AddUser(user *User) {
+    m.mu.Lock()
+    defer m.mu.Unlock()
+    m.users[user.ID] = user
+}
+        ]]></code>
+      </template>
+    </pattern>
+  </pattern_category>
+</common_patterns>

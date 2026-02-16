@@ -65,7 +65,7 @@ func (pr *ProviderRegistry) registerDefaultProviders() {
 
 	// Gemini - Authorization Code Flow
 	pr.RegisterProvider(&ProviderConfig{
-		ID:           "gemini",
+		ID:           "gemini-cli",
 		Name:         "Gemini (Google)",
 		Flow:         "authorization_code",
 		ClientID:     "681255809395-oo8ft2oprdrnp9e3aqf6av3hmdib135j.apps.googleusercontent.com",
@@ -73,7 +73,7 @@ func (pr *ProviderRegistry) registerDefaultProviders() {
 		AuthURL:      "https://accounts.google.com/o/oauth2/v2/auth",
 		TokenURL:     "https://oauth2.googleapis.com/token",
 		Scopes:       []string{"https://www.googleapis.com/auth/cloud-platform", "https://www.googleapis.com/auth/userinfo.email", "https://www.googleapis.com/auth/userinfo.profile", "openid"},
-		CredsDir:     ".gemini",
+		CredsDir:     ".gemini-cli",
 		CredsFile:    "oauth_creds.json",
 	})
 

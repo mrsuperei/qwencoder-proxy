@@ -1,0 +1,442 @@
+<common_patterns>
+  <overview>
+    Common Go patterns and idioms that should be used when designing Go applications.
+    These patterns represent best practices and established conventions in the Go community.
+  </overview>
+
+  <pattern_category name="structural_patterns">
+    <pattern name="interface_based_design">
+      <description>
+        Design around interfaces to enable loose coupling and testability.
+        Define interfaces for behaviors that need to be abstracted.
+      </description>
+      <when_to_use>
+        When you need to decouple implementation details, enable testing with mocks,
+        or provide multiple implementations of a behavior.
+      </when_to_use>
+      <example>
+        <code><![CDATA[
+// Define the interface
+type Authenticator interface {
+    Authenticate(ctx context.Context, credentials Credentials) (Token, error)
+    Refresh(ctx context.Context, token Token) (Token, error)
+}
+
+// Implementation
+type OAuthAuthenticator struct {
+    client *http.Client
+    config OAuthConfig
+}
+
+func (a *OAuthAuthenticator) Authenticate(ctx context.Context, credentials Credentials) (Token, error) {
+    // implementation
+}
+
+// Usage with interface
+func NewService(auth Authenticator) *Service {
+    return &Service{auth: auth}
+}
+        ]]></code>
+      </example>
+    </pattern>
+
+    <pattern name="functional_options">
+      <description>
+        Use functional options pattern for configurable constructors.
+        This provides a clean API for optional parameters.
+      </description>
+      <when_to_use>
+        When constructing structs with many optional configuration parameters.
+      </when_to_use>
+      <example>
+        <code><![CDATA[
+type Server struct {
+    addr    string
+    timeout time.Duration
+    logger  Logger
+}
+
+type Option func(*Server)
+
+func WithTimeout(timeout time.Duration) Option {
+    return func(s *Server) {
+        s.timeout = timeout
+    }
+}
+
+func WithLogger(logger Logger) Option {
+    return func(s *Server) {
+        s.logger = logger
+    }
+}
+
+func NewServer(addr string, opts ...Option) *Server {
+    s := &Server{
+        addr:    addr,
+        timeout: 30 * time.Second,
+    }
+    for _, opt := range opts {
+        opt(s)
+    }
+    return s
+}
+
+// Usage
+server := NewServer(":8080",
+    WithTimeout(60*time.Second),
+    WithLogger(myLogger),
+)
+        ]]></code>
+      </example>
+    </pattern>
+
+    <pattern name="repository_pattern">
+      <description>
+        Separate data access logic from business logic using repository interfaces.
+        This makes testing easier and allows swapping storage implementations.
+      </description>
+      <when_to_use>
+        When working with databases, external APIs, or any data storage mechanism.
+      </when_to_use>
+      <example>
+        <code><![CDATA[
+// Repository interface
+type UserRepository interface {
+    GetByID(ctx context.Context, id string) (*User, error)
+    Create(ctx context.Context, user *User) error
+    Update(ctx context.Context, user *User) error
+    Delete(ctx context.Context, id string) error
+}
+
+// Implementation
+type SQLUserRepository struct {
+    db *sql.DB
+}
+
+func (r *SQLUserRepository) GetByID(ctx context.Context, id string) (*User, error) {
+    // SQL implementation
+}
+
+// Service uses the interface
+type UserService struct {
+    repo UserRepository
+}
+
+func (s *UserService) GetUser(ctx context.Context, id string) (*User, error) {
+    return s.repo.GetByID(ctx, id)
+}
+        ]]></code>
+      </example>
+    </pattern>
+  </pattern_category>
+
+  <pattern_category name="error_handling_patterns">
+    <pattern name="error_wrapping">
+      <description>
+        Wrap errors with context using fmt.Errorf with %w verb to preserve
+        the original error for error checking with errors.Is and errors.As.
+      </description>
+      <when_to_use>
+        Whenever returning an error from a function to provide additional context.
+      </when_to_use>
+      <example>
+        <code><![CDATA[
+import (
+    "errors"
+    "fmt"
+)
+
+var ErrNotFound = errors.New("not found")
+
+func LoadUser(id string) (*User, error) {
+    user, err := db.Query(id)
+    if err != nil {
+        return nil, fmt.Errorf("failed to query user %s: %w", id, err)
+    }
+    if user == nil {
+        return nil, fmt.Errorf("user %s: %w", id, ErrNotFound)
+    }
+    return user, nil
+}
+
+// Checking errors
+if err := LoadUser("123"); err != nil {
+    if errors.Is(err, ErrNotFound) {
+        // handle not found
+    }
+    return err
+}
+        ]]></code>
+      </example>
+    </pattern>
+
+    <pattern name="sentinel_errors">
+      <description>
+        Define exported error variables for expected error conditions that
+        callers may need to check specifically.
+      </description>
+      <when_to_use>
+        For errors that callers need to handle differently, like "not found"
+        or "already exists".
+      </when_to_use>
+      <example>
+        <code><![CDATA[
+var (
+    ErrUserNotFound    = errors.New("user not found")
+    ErrInvalidCredentials = errors.New("invalid credentials")
+    ErrRateLimitExceeded  = errors.New("rate limit exceeded")
+)
+
+func Authenticate(username, password string) error {
+    user, err := repo.FindByUsername(username)
+    if err != nil {
+        return fmt.Errorf("failed to find user: %w", err)
+    }
+    if user == nil {
+        return ErrUserNotFound
+    }
+    if !user.CheckPassword(password) {
+        return ErrInvalidCredentials
+    }
+    return nil
+}
+        ]]></code>
+      </example>
+    </pattern>
+  </pattern_category>
+
+  <pattern_category name="concurrency_patterns">
+    <pattern name="worker_pool">
+      <description>
+        Use a worker pool to limit concurrent goroutines and process work items.
+        This prevents resource exhaustion and provides controlled concurrency.
+      </description>
+      <when_to_use>
+        When processing many tasks concurrently but need to limit resource usage.
+      </when_to_use>
+      <example>
+        <code><![CDATA[
+type Job struct {
+    ID   string
+    Data []byte
+}
+
+type Result struct {
+    JobID string
+    Err   error
+}
+
+func worker(ctx context.Context, id int, jobs <-chan Job, results chan<- Result) {
+    for job := range jobs {
+        select {
+        case <-ctx.Done():
+            return
+        default:
+            err := processJob(job)
+            results <- Result{JobID: job.ID, Err: err}
+        }
+    }
+}
+
+func StartWorkers(ctx context.Context, numWorkers int, jobs []Job) []Result {
+    jobChan := make(chan Job, len(jobs))
+    resultChan := make(chan Result, len(jobs))
+
+    // Start workers
+    var wg sync.WaitGroup
+    for i := 0; i < numWorkers; i++ {
+        wg.Add(1)
+        go func(id int) {
+            defer wg.Done()
+            worker(ctx, id, jobChan, resultChan)
+        }(i)
+    }
+
+    // Send jobs
+    for _, job := range jobs {
+        jobChan <- job
+    }
+    close(jobChan)
+
+    // Wait for completion
+    go func() {
+        wg.Wait()
+        close(resultChan)
+    }()
+
+    // Collect results
+    var results []Result
+    for result := range resultChan {
+        results = append(results, result)
+    }
+    return results
+}
+        ]]></code>
+      </example>
+    </pattern>
+
+    <pattern name="context_propagation">
+      <description>
+        Pass context.Context through your call chain to enable cancellation,
+        timeouts, and request-scoped values.
+      </description>
+      <when_to_use>
+        For any operation that may need to be cancelled or have a timeout,
+        especially I/O operations and long-running computations.
+      </when_to_use>
+      <example>
+        <code><![CDATA[
+func (s *Service) ProcessData(ctx context.Context, input string) (string, error) {
+    // Add timeout
+    ctx, cancel := context.WithTimeout(ctx, 5*time.Second)
+    defer cancel()
+
+    // Pass context to dependencies
+    data, err := s.repo.Fetch(ctx, input)
+    if err != nil {
+        return "", fmt.Errorf("fetch failed: %w", err)
+    }
+
+    // Check for cancellation
+    select {
+    case <-ctx.Done():
+        return "", ctx.Err()
+    default:
+    }
+
+    result, err := s.process(ctx, data)
+    if err != nil {
+        return "", fmt.Errorf("process failed: %w", err)
+    }
+
+    return result, nil
+}
+        ]]></code>
+      </example>
+    </pattern>
+
+    <pattern name="fan_out_fan_in">
+      <description>
+        Distribute work to multiple goroutines (fan out) and collect results
+        (fan in) for parallel processing.
+      </description>
+      <when_to_use>
+        When tasks can be processed independently and you want to speed up
+        processing through parallelism.
+      </when_to_use>
+      <example>
+        <code><![CDATA[
+func processParallel(ctx context.Context, items []Item) ([]Result, error) {
+    // Fan out: start a goroutine for each item
+    resultChan := make(chan Result, len(items))
+    var wg sync.WaitGroup
+
+    for _, item := range items {
+        wg.Add(1)
+        go func(item Item) {
+            defer wg.Done()
+            result := processItem(ctx, item)
+            resultChan <- result
+        }(item)
+    }
+
+    // Wait for all goroutines to finish
+    go func() {
+        wg.Wait()
+        close(resultChan)
+    }()
+
+    // Fan in: collect all results
+    var results []Result
+    for result := range resultChan {
+        results = append(results, result)
+    }
+
+    return results, nil
+}
+        ]]></code>
+      </example>
+    </pattern>
+  </pattern_category>
+
+  <pattern_category name="testing_patterns">
+    <pattern name="table_driven_tests">
+      <description>
+        Use table-driven tests for testing multiple scenarios with similar logic.
+        This makes tests more maintainable and easier to extend.
+      </description>
+      <when_to_use>
+        When testing a function with multiple input/output combinations.
+      </when_to_use>
+      <example>
+        <code><![CDATA[
+func TestAdd(t *testing.T) {
+    tests := []struct {
+        name     string
+        a, b     int
+        expected int
+    }{
+        {"positive numbers", 2, 3, 5},
+        {"negative numbers", -2, -3, -5},
+        {"mixed", -2, 3, 1},
+        {"zero", 0, 0, 0},
+    }
+
+    for _, tt := range tests {
+        t.Run(tt.name, func(t *testing.T) {
+            result := Add(tt.a, tt.b)
+            if result != tt.expected {
+                t.Errorf("Add(%d, %d) = %d, want %d",
+                    tt.a, tt.b, result, tt.expected)
+            }
+        })
+    }
+}
+        ]]></code>
+      </example>
+    </pattern>
+
+    <pattern name="test_helpers">
+      <description>
+        Create helper functions for common test setup and teardown to reduce
+        code duplication in tests.
+      </description>
+      <when_to_use>
+        When multiple tests need similar setup or test data.
+      </when_to_use>
+      <example>
+        <code><![CDATA[
+// testhelpers.go
+func setupTestDB(t *testing.T) *sql.DB {
+    db, err := sql.Open("sqlite3", ":memory:")
+    if err != nil {
+        t.Fatalf("failed to open test db: %v", err)
+    }
+    // Run migrations
+    if err := runMigrations(db); err != nil {
+        t.Fatalf("failed to run migrations: %v", err)
+    }
+    return db
+}
+
+func cleanupTestDB(t *testing.T, db *sql.DB) {
+    if err := db.Close(); err != nil {
+        t.Logf("failed to close db: %v", err)
+    }
+}
+
+// test_file.go
+func TestUserService(t *testing.T) {
+    db := setupTestDB(t)
+    defer cleanupTestDB(t, db)
+
+    repo := NewSQLUserRepository(db)
+    service := NewUserService(repo)
+
+    // ... tests
+}
+        ]]></code>
+      </example>
+    </pattern>
+  </pattern_category>
+</common_patterns>

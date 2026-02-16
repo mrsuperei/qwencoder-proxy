@@ -16,7 +16,7 @@ import (
 	"strings"
 	"time"
 
-	"github.com/sunbankio/qwencoder-proxy/auth"
+	tokenpkg "github.com/sunbankio/qwencoder-proxy/internal/token"
 	"github.com/sunbankio/qwencoder-proxy/logging"
 	"github.com/sunbankio/qwencoder-proxy/provider"
 )
@@ -41,13 +41,13 @@ type Provider struct {
 
 // QwenAuthenticator wraps the multi-token manager for token selection
 type QwenAuthenticator struct {
-	tokenManager  *auth.TokenManager
-	multiTokenMgr *auth.MultiTokenManager
+	tokenManager  *tokenpkg.TokenManager
+	multiTokenMgr *tokenpkg.MultiTokenManager
 	logger        logging.Logger
 }
 
 // NewQwenAuthenticator creates a new Qwen authenticator with token manager
-func NewQwenAuthenticator(tokenManager *auth.TokenManager, logger logging.Logger) *QwenAuthenticator {
+func NewQwenAuthenticator(tokenManager *tokenpkg.TokenManager, logger logging.Logger) *QwenAuthenticator {
 	return &QwenAuthenticator{
 		tokenManager:  tokenManager,
 		multiTokenMgr: nil,
@@ -56,7 +56,7 @@ func NewQwenAuthenticator(tokenManager *auth.TokenManager, logger logging.Logger
 }
 
 // NewQwenAuthenticatorWithMultiTokenManager creates a new Qwen authenticator with both token manager and multi-token manager
-func NewQwenAuthenticatorWithMultiTokenManager(tokenManager *auth.TokenManager, multiTokenMgr *auth.MultiTokenManager, logger logging.Logger) *QwenAuthenticator {
+func NewQwenAuthenticatorWithMultiTokenManager(tokenManager *tokenpkg.TokenManager, multiTokenMgr *tokenpkg.MultiTokenManager, logger logging.Logger) *QwenAuthenticator {
 	return &QwenAuthenticator{
 		tokenManager:  tokenManager,
 		multiTokenMgr: multiTokenMgr,
@@ -65,13 +65,13 @@ func NewQwenAuthenticatorWithMultiTokenManager(tokenManager *auth.TokenManager, 
 }
 
 // SetMultiTokenManager sets the multi-token manager
-func (a *QwenAuthenticator) SetMultiTokenManager(multiTokenMgr *auth.MultiTokenManager) {
+func (a *QwenAuthenticator) SetMultiTokenManager(multiTokenMgr *tokenpkg.MultiTokenManager) {
 	a.multiTokenMgr = multiTokenMgr
 }
 
 // Authenticate performs the authentication flow
 func (a *QwenAuthenticator) Authenticate(ctx context.Context) error {
-	return auth.AuthenticateWithOAuth(ctx, a.logger, a.multiTokenMgr)
+	return AuthenticateWithDeviceFlow(ctx, a.logger, a.multiTokenMgr)
 }
 
 // GetToken returns a valid access token
@@ -85,7 +85,7 @@ func (a *QwenAuthenticator) GetToken(ctx context.Context) (string, error) {
 		// If we get an auth error, try to trigger the authentication flow
 		if strings.Contains(err.Error(), "no tokens available") {
 			// Trigger authentication flow to get new credentials
-			authErr := auth.AuthenticateWithOAuth(ctx, a.logger, a.multiTokenMgr)
+			authErr := AuthenticateWithDeviceFlow(ctx, a.logger, a.multiTokenMgr)
 			if authErr != nil {
 				return "", fmt.Errorf("authentication required but failed: %v. Error getting token: %w", authErr, err)
 			}
@@ -164,7 +164,7 @@ func NewProvider() *Provider {
 
 // NewProviderWithTokenManager creates a new Qwen provider with token manager
 // Uses BaseProvider for common functionality
-func NewProviderWithTokenManager(tokenManager *auth.TokenManager, logger logging.Logger) *Provider {
+func NewProviderWithTokenManager(tokenManager *tokenpkg.TokenManager, logger logging.Logger) *Provider {
 	return &Provider{
 		BaseProvider:  provider.NewBaseProvider(logger, 5*time.Minute),
 		authenticator: NewQwenAuthenticator(tokenManager, logger),
@@ -381,7 +381,7 @@ func (p *Provider) GenerateContent(ctx context.Context, model string, request in
 		tokenID = selectedToken.ID
 
 		// Log proxy usage
-		if selectedToken.Proxy != nil && selectedToken.Proxy.Enabled {
+		if selectedToken.Proxy != nil {
 			p.GetLogger().DebugLog("[Qwen] GenerateContent using token %s with proxy: %s:%d", tokenID, selectedToken.Proxy.Host, selectedToken.Proxy.Port)
 		} else {
 			p.GetLogger().DebugLog("[Qwen] GenerateContent using token %s with direct connection", tokenID)
@@ -401,8 +401,8 @@ func (p *Provider) GenerateContent(ctx context.Context, model string, request in
 
 	p.GetLogger().DebugLog("[Qwen] Request body being sent: %s", string(reqBody))
 
-	// Use the default endpoint from auth package
-	endpoint := auth.DefaultQwenBaseURL
+	// Use the default endpoint from qwen package
+	endpoint := DefaultBaseURL
 
 	// Since this is called from the OpenAI handler for /v1/chat/completions,
 	// we construct the appropriate path
@@ -471,7 +471,7 @@ func (p *Provider) GenerateContentStream(ctx context.Context, model string, requ
 		tokenID = selectedToken.ID
 
 		// Log proxy usage
-		if selectedToken.Proxy != nil && selectedToken.Proxy.Enabled {
+		if selectedToken.Proxy != nil {
 			p.GetLogger().DebugLog("[Qwen] GenerateContentStream using token %s with proxy: %s:%d", tokenID, selectedToken.Proxy.Host, selectedToken.Proxy.Port)
 		} else {
 			p.GetLogger().DebugLog("[Qwen] GenerateContentStream using token %s with direct connection", tokenID)
@@ -486,8 +486,8 @@ func (p *Provider) GenerateContentStream(ctx context.Context, model string, requ
 		return nil, fmt.Errorf("failed to marshal request: %w", err)
 	}
 
-	// Use the default endpoint from auth package
-	endpoint := auth.DefaultQwenBaseURL
+	// Use the default endpoint from qwen package
+	endpoint := DefaultBaseURL
 	url := fmt.Sprintf("%s/chat/completions", endpoint)
 	p.GetLogger().DebugLog("[Qwen] Constructed streaming target URL: %s", url)
 

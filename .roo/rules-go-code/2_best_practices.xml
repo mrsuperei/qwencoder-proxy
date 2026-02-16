@@ -1,0 +1,399 @@
+<best_practices>
+  <general_principles>
+    <principle priority="high">
+      <name>Write Idiomatic Go</name>
+      <description>
+        Follow Go's idioms and conventions. Go code should be simple, clear,
+        and readable. Avoid patterns from other languages that don't fit Go's design.
+      </description>
+      <rationale>
+        Idiomatic Go code is easier to read, maintain, and understand by other Go developers.
+        The Go community values simplicity over cleverness.
+      </rationale>
+      <example>
+        <scenario>Returning multiple values</scenario>
+        <good>
+          result, err := someFunction()
+          if err != nil {
+              return err
+          }
+        </good>
+        <bad>
+          try {
+              result := someFunction()
+          } catch (e) {
+              // Go doesn't have try-catch
+          }
+        </bad>
+      </example>
+    </principle>
+
+    <principle priority="high">
+      <name>Keep Functions Small</name>
+      <description>
+        Functions should do one thing and do it well. If a function is getting
+        long or complex, break it into smaller functions.
+      </description>
+      <rationale>
+        Small functions are easier to test, understand, and reuse. They also
+        reduce cognitive load when reading code.
+      </rationale>
+      <example>
+        <scenario>Processing a request</scenario>
+        <good>
+          func handleRequest(r Request) (Response, error) {
+              data, err := parseRequest(r)
+              if err != nil {
+                  return Response{}, err
+              }
+              result, err := processData(data)
+              if err != nil {
+                  return Response{}, err
+              }
+              return formatResponse(result), nil
+          }
+        </good>
+        <bad>
+          func handleRequest(r Request) (Response, error) {
+              // 100 lines of mixed parsing, processing, and formatting
+          }
+        </bad>
+      </example>
+    </principle>
+
+    <principle priority="high">
+      <name>Handle Errors Explicitly</name>
+      <description>
+        Always check errors and handle them appropriately. Never ignore errors
+        without a clear reason and comment explaining why.
+      </description>
+      <rationale>
+        Explicit error handling is a core feature of Go. Ignoring errors leads
+        to silent failures and makes debugging difficult.
+      </rationale>
+      <example>
+        <scenario>Handling errors</scenario>
+        <good>
+          data, err := readFile(path)
+          if err != nil {
+              return fmt.Errorf("failed to read file: %w", err)
+          }
+        </good>
+        <bad>
+          data, _ := readFile(path) // Never do this!
+        </bad>
+      </example>
+    </principle>
+  </general_principles>
+
+  <go_code_conventions>
+    <convention category="imports">
+      <rule>Organize imports properly</rule>
+      <template>
+        <code><![CDATA[
+import (
+    // Standard library
+    "context"
+    "fmt"
+    "time"
+
+    // Third-party packages
+    "github.com/gin-gonic/gin"
+    "go.uber.org/zap"
+
+    // Local packages
+    "myproject/internal/auth"
+    "myproject/internal/config"
+)
+        ]]></code>
+      </template>
+      <guidelines>
+        <guideline>Group imports: stdlib, third-party, local</guideline>
+        <guideline>Remove unused imports</guideline>
+        <guideline>Use blank line between groups</guideline>
+      </guidelines>
+    </convention>
+
+    <convention category="constants">
+      <rule>Define constants at package level</rule>
+      <template>
+        <code><![CDATA[
+const (
+    DefaultTimeout = 30 * time.Second
+    MaxRetries     = 3
+    Version        = "1.0.0"
+)
+
+var (
+    ErrNotFound = errors.New("not found")
+    ErrInvalid  = errors.New("invalid input")
+)
+        ]]></code>
+      </template>
+    </convention>
+
+    <convention category="structs">
+      <rule>Define structs with clear field names</rule>
+      <template>
+        <code><![CDATA[
+// User represents a user in the system.
+type User struct {
+    ID        string    `json:"id"`
+    Name      string    `json:"name"`
+    Email     string    `json:"email"`
+    CreatedAt time.Time `json:"created_at"`
+    UpdatedAt time.Time `json:"updated_at"`
+}
+        ]]></code>
+      </template>
+      <guidelines>
+        <guideline>Use JSON tags for serialization</guideline>
+        <guideline>Group related fields together</guideline>
+        <guideline>Use pointer types for optional fields</guideline>
+      </guidelines>
+    </convention>
+
+    <convention category="interfaces">
+      <rule>Define small, focused interfaces</rule>
+      <template>
+        <code><![CDATA[
+// Reader can read data.
+type Reader interface {
+    Read(p []byte) (n int, err error)
+}
+
+// Writer can write data.
+type Writer interface {
+    Write(p []byte) (n int, err error)
+}
+
+// ReadWriter combines Reader and Writer.
+type ReadWriter interface {
+    Reader
+    Writer
+}
+        ]]></code>
+      </template>
+      <guidelines>
+        <guideline>Keep interfaces small (1-3 methods)</guideline>
+        <guideline>Use composition for combining interfaces</guideline>
+        <guideline>Define interfaces where they're used</guideline>
+      </guidelines>
+    </convention>
+  </go_code_conventions>
+
+  <testing_best_practices>
+    <practice name="table_driven_tests">
+      <description>
+        Use table-driven tests for testing multiple scenarios with similar logic.
+      </description>
+      <template>
+        <code><![CDATA[
+func TestAdd(t *testing.T) {
+    tests := []struct {
+        name     string
+        a, b     int
+        expected int
+    }{
+        {"positive", 2, 3, 5},
+        {"negative", -2, -3, -5},
+        {"zero", 0, 0, 0},
+    }
+
+    for _, tt := range tests {
+        t.Run(tt.name, func(t *testing.T) {
+            result := Add(tt.a, tt.b)
+            if result != tt.expected {
+                t.Errorf("Add(%d, %d) = %d, want %d",
+                    tt.a, tt.b, result, tt.expected)
+            }
+        })
+    }
+}
+        ]]></code>
+      </template>
+    </practice>
+
+    <practice name="test_helpers">
+      <description>
+        Create helper functions for common test setup.
+      </description>
+      <template>
+        <code><![CDATA[
+// setupTestDB creates a test database.
+func setupTestDB(t *testing.T) *sql.DB {
+    db, err := sql.Open("sqlite3", ":memory:")
+    if err != nil {
+        t.Fatalf("failed to open test db: %v", err)
+    }
+    return db
+}
+
+// assertEqual compares two values.
+func assertEqual[T comparable](t *testing.T, got, want T) {
+    t.Helper()
+    if got != want {
+        t.Errorf("got %v, want %v", got, want)
+    }
+}
+        ]]></code>
+      </template>
+    </practice>
+
+    <practice name="subtests">
+      <description>
+        Use t.Run() for organizing related tests.
+      </description>
+      <template>
+        <code><![CDATA[
+func TestUserService(t *testing.T) {
+    t.Run("Create", testCreateUser)
+    t.Run("Get", testGetUser)
+    t.Run("Update", testUpdateUser)
+    t.Run("Delete", testDeleteUser)
+}
+
+func testCreateUser(t *testing.T) {
+    // test implementation
+}
+        ]]></code>
+      </template>
+    </practice>
+  </testing_best_practices>
+
+  <concurrency_best_practices>
+    <practice name="goroutine_lifecycle">
+      <description>
+        Always provide a way to stop goroutines.
+      </description>
+      <template>
+        <code><![CDATA[
+func worker(ctx context.Context, jobs <-chan Job) {
+    for {
+        select {
+        case <-ctx.Done():
+            return
+        case job, ok := <-jobs:
+            if !ok {
+                return
+            }
+            process(job)
+        }
+    }
+}
+        ]]></code>
+      </template>
+    </practice>
+
+    <practice name="channel_closing">
+      <description>
+        Close channels only from the sender side.
+      </description>
+      <template>
+        <code><![CDATA[
+// Sender
+func sender(ctx context.Context, out chan<- Result) {
+    defer close(out)
+    for _, item := range items {
+        select {
+        case <-ctx.Done():
+            return
+        case out <- process(item):
+        }
+    }
+}
+
+// Receiver
+func receiver(in <-chan Result) {
+    for result := range in {
+        handle(result)
+    }
+}
+        ]]></code>
+      </template>
+    </practice>
+
+    <practice name="race_detection">
+      <description>
+        Run tests with race detector to find race conditions.
+      </description>
+      <command>go test -race ./...</command>
+    </practice>
+  </concurrency_best_practices>
+
+  <common_pitfalls>
+    <pitfall>
+      <description>Ignoring errors</description>
+      <why_problematic>
+        Silent failures make debugging extremely difficult.
+      </why_problematic>
+      <correct_approach>
+        Always handle errors. Use blank identifier only with a comment explaining why.
+      </correct_approach>
+    </pitfall>
+
+    <pitfall>
+      <description>Using panic for normal errors</description>
+      <why_problematic>
+        Panic should only be used for unrecoverable errors. Normal errors should be returned.
+      </why_problematic>
+      <correct_approach>
+        Return errors instead of panicking. Use panic only for truly exceptional conditions.
+      </correct_approach>
+    </pitfall>
+
+    <pitfall>
+      <description>Creating goroutines without cleanup</description>
+      <why_problematic>
+        Goroutines that never exit cause goroutine leaks and memory issues.
+      </why_problematic>
+      <correct_approach>
+        Always provide a way to stop goroutines using context or done channels.
+      </correct_approach>
+    </pitfall>
+
+    <pitfall>
+      <description>Using globals for mutable state</description>
+      <why_problematic>
+        Global mutable state makes code hard to test and can cause race conditions.
+      </why_problematic>
+      <correct_approach>
+        Pass dependencies through function parameters or struct fields.
+      </correct_approach>
+    </pitfall>
+
+    <pitfall>
+      <description>Not checking for nil pointers</description>
+      <why_problematic>
+        Dereferencing nil pointers causes panics.
+      </why_problematic>
+      <correct_approach>
+        Check for nil before dereferencing pointers, especially from external sources.
+      </correct_approach>
+    </pitfall>
+  </common_pitfalls>
+
+  <quality_checklist>
+    <category name="before_writing">
+      <item>Understand the requirements fully</item>
+      <item>Review existing code patterns</item>
+      <item>Check available dependencies</item>
+      <item>Plan the implementation approach</item>
+    </category>
+
+    <category name="while_writing">
+      <item>Follow Go naming conventions</item>
+      <item>Handle all errors explicitly</item>
+      <item>Add appropriate comments</item>
+      <item>Keep functions small and focused</item>
+    </category>
+
+    <category name="after_writing">
+      <item>Run gofmt to format code</item>
+      <item>Run go vet for static analysis</item>
+      <item>Run go test -race for race detection</item>
+      <item>Write tests for new code</item>
+      <item>Update documentation if needed</item>
+    </category>
+  </quality_checklist>
+</best_practices>

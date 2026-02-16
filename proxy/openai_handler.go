@@ -7,8 +7,8 @@ import (
 	"net/http"
 	"strings"
 
-	"github.com/sunbankio/qwencoder-proxy/auth"
 	"github.com/sunbankio/qwencoder-proxy/converter"
+	auth "github.com/sunbankio/qwencoder-proxy/internal/token"
 	"github.com/sunbankio/qwencoder-proxy/logging"
 	"github.com/sunbankio/qwencoder-proxy/provider"
 )
@@ -279,6 +279,13 @@ func RegisterOpenAIRoutes(mux *http.ServeMux, factory *provider.Factory, convFac
 	mux.Handle("/v1/", NewOpenAIHandler(factory, convFactory))
 }
 
+// RegisterOpenAIRoutesWithTokenManager registers all OpenAI-compatible routes with token manager support
+// The general /v1/ route uses nil token manager as providers have their own
+func RegisterOpenAIRoutesWithTokenManager(mux *http.ServeMux, factory *provider.Factory, convFactory *converter.Factory, tokenManager *auth.TokenManager) {
+	// General route - use nil token manager since providers have their own
+	mux.Handle("/v1/", NewOpenAIHandlerWithTokenManager(factory, convFactory, nil))
+}
+
 // RegisterProviderSpecificRoutes registers provider-specific OpenAI-compatible routes
 func RegisterProviderSpecificRoutes(mux *http.ServeMux, factory *provider.Factory, convFactory *converter.Factory) {
 	// Provider-specific routes
@@ -287,4 +294,39 @@ func RegisterProviderSpecificRoutes(mux *http.ServeMux, factory *provider.Factor
 	mux.Handle("/kiro/v1/", NewProviderSpecificHandler(factory, convFactory, provider.ProviderKiro))
 	mux.Handle("/antigravity/v1/", NewProviderSpecificHandler(factory, convFactory, provider.ProviderAntigravity))
 	mux.Handle("/iflow/v1/", NewProviderSpecificHandler(factory, convFactory, provider.ProviderIFlow))
+}
+
+// RegisterProviderSpecificRoutesWithTokenManager registers provider-specific OpenAI-compatible routes with token manager support
+// Each provider route uses its respective token manager for proxy-aware token selection
+func RegisterProviderSpecificRoutesWithTokenManager(mux *http.ServeMux, factory *provider.Factory, convFactory *converter.Factory, tokenManagers map[provider.ProviderType]*auth.TokenManager) {
+	// Provider-specific routes with token managers
+	if tm, ok := tokenManagers[provider.ProviderQwen]; ok {
+		mux.Handle("/qwen/v1/", NewProviderSpecificHandlerWithTokenManager(factory, convFactory, provider.ProviderQwen, tm))
+	} else {
+		mux.Handle("/qwen/v1/", NewProviderSpecificHandlerWithTokenManager(factory, convFactory, provider.ProviderQwen, nil))
+	}
+
+	if tm, ok := tokenManagers[provider.ProviderGeminiCLI]; ok {
+		mux.Handle("/gemini/v1/", NewProviderSpecificHandlerWithTokenManager(factory, convFactory, provider.ProviderGeminiCLI, tm))
+	} else {
+		mux.Handle("/gemini/v1/", NewProviderSpecificHandlerWithTokenManager(factory, convFactory, provider.ProviderGeminiCLI, nil))
+	}
+
+	if tm, ok := tokenManagers[provider.ProviderKiro]; ok {
+		mux.Handle("/kiro/v1/", NewProviderSpecificHandlerWithTokenManager(factory, convFactory, provider.ProviderKiro, tm))
+	} else {
+		mux.Handle("/kiro/v1/", NewProviderSpecificHandlerWithTokenManager(factory, convFactory, provider.ProviderKiro, nil))
+	}
+
+	if tm, ok := tokenManagers[provider.ProviderAntigravity]; ok {
+		mux.Handle("/antigravity/v1/", NewProviderSpecificHandlerWithTokenManager(factory, convFactory, provider.ProviderAntigravity, tm))
+	} else {
+		mux.Handle("/antigravity/v1/", NewProviderSpecificHandlerWithTokenManager(factory, convFactory, provider.ProviderAntigravity, nil))
+	}
+
+	if tm, ok := tokenManagers[provider.ProviderIFlow]; ok {
+		mux.Handle("/iflow/v1/", NewProviderSpecificHandlerWithTokenManager(factory, convFactory, provider.ProviderIFlow, tm))
+	} else {
+		mux.Handle("/iflow/v1/", NewProviderSpecificHandlerWithTokenManager(factory, convFactory, provider.ProviderIFlow, nil))
+	}
 }

@@ -11,8 +11,8 @@ import (
 	"strings"
 	"testing"
 
-	"github.com/sunbankio/qwencoder-proxy/auth"
 	"github.com/sunbankio/qwencoder-proxy/converter"
+	"github.com/sunbankio/qwencoder-proxy/internal/token"
 	"github.com/sunbankio/qwencoder-proxy/logging"
 	"github.com/sunbankio/qwencoder-proxy/provider"
 )
@@ -156,7 +156,7 @@ func TestNewOpenAIHandler(t *testing.T) {
 func TestNewOpenAIHandlerWithTokenManager(t *testing.T) {
 	factory := provider.NewFactory()
 	convFactory := converter.NewFactory()
-	tokenManager := auth.NewTokenManager(nil, auth.NewRandomSelectionStrategy(), logging.NewLogger(), nil, nil)
+	tokenManager := token.NewTokenManager(nil, token.NewRandomSelectionStrategy(), logging.NewLogger(), nil, nil)
 
 	handler := NewOpenAIHandlerWithTokenManager(factory, convFactory, tokenManager)
 
@@ -187,7 +187,7 @@ func TestNewProviderSpecificHandler(t *testing.T) {
 func TestNewProviderSpecificHandlerWithTokenManager(t *testing.T) {
 	factory := provider.NewFactory()
 	convFactory := converter.NewFactory()
-	tokenManager := auth.NewTokenManager(nil, auth.NewRandomSelectionStrategy(), logging.NewLogger(), nil, nil)
+	tokenManager := token.NewTokenManager(nil, token.NewRandomSelectionStrategy(), logging.NewLogger(), nil, nil)
 
 	handler := NewProviderSpecificHandlerWithTokenManager(factory, convFactory, provider.ProviderGeminiCLI, tokenManager)
 

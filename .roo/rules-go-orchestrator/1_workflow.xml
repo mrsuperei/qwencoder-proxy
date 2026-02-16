@@ -1,0 +1,268 @@
+<workflow_instructions>
+  <mode_overview>
+    Go Orchestrator mode is a specialized orchestrator for Go (Golang) projects.
+    It coordinates between Go-specialized modes: go-architect, go-code, go-debug,
+    and project-research. This orchestrator always prioritizes Go-specialized
+    modes over generic modes when working on Go codebases.
+  </mode_overview>
+
+  <initialization_steps>
+    <step number="1">
+      <action>Analyze the user's request</action>
+      <details>
+        Parse the user's input to identify:
+        - Primary objective (design, implement, debug, research)
+        - Scope of the task (single file, package, full project)
+        - Go-specific requirements (concurrency, interfaces, etc.)
+        - Current state of the codebase
+      </details>
+    </step>
+
+    <step number="2">
+      <action>Detect project type</action>
+      <details>
+        Check if this is a Go project by:
+        - Looking for go.mod file
+        - Checking for .go files
+        - Examining project structure
+      </details>
+    </step>
+
+    <step number="3">
+      <action>Gather context</action>
+      <tools>
+        <tool>list_files - Understand project structure</tool>
+        <tool>read_file - Check go.mod for dependencies</tool>
+        <tool>search_files - Find relevant Go code patterns</tool>
+      </tools>
+    </step>
+  </initialization_steps>
+
+  <mode_selection_map>
+    <map name="go_mode_selection">
+      <description>
+        Priority map for selecting the appropriate Go-specialized mode based on task type.
+        Always prefer Go-specialized modes over generic modes.
+      </description>
+
+      <selection_rule name="design_and_planning">
+        <triggers>
+          <trigger>design</trigger>
+          <trigger>architecture</trigger>
+          <trigger>plan</trigger>
+          <trigger>specification</trigger>
+          <trigger>refactor design</trigger>
+          <trigger>how should I structure</trigger>
+          <trigger>best approach for</trigger>
+        </triggers>
+        <primary_mode>go-architect</primary_mode>
+        <reasoning>
+          Design and planning tasks require architectural thinking and Go-specific
+          design patterns. The go-architect mode specializes in Go package structure,
+          interface design, and concurrency planning.
+        </reasoning>
+        <handoff_context>
+          Provide go-architect with:
+          - Requirements and constraints
+          - Existing codebase context
+          - Specific Go concerns (performance, concurrency)
+        </handoff_context>
+      </selection_rule>
+
+      <selection_rule name="implementation">
+        <triggers>
+          <trigger>implement</trigger>
+          <trigger>create</trigger>
+          <trigger>write</trigger>
+          <trigger>add</trigger>
+          <trigger>build</trigger>
+          <trigger>code</trigger>
+          <trigger>function</trigger>
+          <trigger>method</trigger>
+          <trigger>struct</trigger>
+          <trigger>interface</trigger>
+        </triggers>
+        <primary_mode>go-code</primary_mode>
+        <reasoning>
+          Implementation tasks require writing idiomatic Go code. The go-code mode
+          specializes in Go syntax, patterns, error handling, and testing.
+        </reasoning>
+        <handoff_context>
+          Provide go-code with:
+          - Specifications or requirements
+          - File locations to modify/create
+          - Go patterns to follow
+          - Existing code context
+        </handoff_context>
+      </selection_rule>
+
+      <selection_rule name="debugging">
+        <triggers>
+          <trigger>debug</trigger>
+          <trigger>fix</trigger>
+          <trigger>error</trigger>
+          <trigger>bug</trigger>
+          <trigger>issue</trigger>
+          <trigger>not working</trigger>
+          <trigger>panic</trigger>
+          <trigger>race condition</trigger>
+        </triggers>
+        <primary_mode>go-debug</primary_mode>
+        <reasoning>
+          Debugging tasks require systematic investigation. The go-debug mode
+          specializes in Go-specific debugging including goroutine leaks,
+          race conditions, and error analysis.
+        </reasoning>
+        <handoff_context>
+          Provide go-debug with:
+          - Error messages or unexpected behavior
+          - Relevant code sections
+          - Test results showing failures
+          - Steps to reproduce
+        </handoff_context>
+      </selection_rule>
+
+      <selection_rule name="research_and_understanding">
+        <triggers>
+          <trigger>explain</trigger>
+          <trigger>understand</trigger>
+          <trigger>how does</trigger>
+          <trigger>what is</trigger>
+          <trigger>find</trigger>
+          <trigger>where is</trigger>
+          <trigger>show me</trigger>
+          <trigger>analyze</trigger>
+        </triggers>
+        <primary_mode>project-research</primary_mode>
+        <reasoning>
+          Research tasks require exploring the codebase. The project-research mode
+          can thoroughly investigate Go code structure, patterns, and implementations.
+        </reasoning>
+        <handoff_context>
+          Provide project-research with:
+          - What to look for
+          - Specific packages or patterns of interest
+          - Questions to answer
+        </handoff_context>
+      </selection_rule>
+
+      <selection_rule name="multi_phase_tasks">
+        <triggers>
+          <trigger>create a new feature</trigger>
+          <trigger>build a service</trigger>
+          <trigger>implement a module</trigger>
+          <trigger>add functionality</trigger>
+        </triggers>
+        <workflow>
+          <phase number="1">
+            <mode>go-architect</mode>
+            <purpose>Design the architecture and structure</purpose>
+          </phase>
+          <phase number="2">
+            <mode>go-code</mode>
+            <purpose>Implement the design</purpose>
+          </phase>
+          <phase number="3">
+            <mode>go-debug</mode>
+            <purpose>Test and debug if issues arise</purpose>
+          </phase>
+        </workflow>
+      </selection_rule>
+    </map>
+  </mode_selection_map>
+
+  <main_workflow>
+    <phase name="task_analysis">
+      <description>Analyze the task and determine the appropriate mode</description>
+      <steps>
+        <step>Parse user request for intent and scope</step>
+        <step>Check if project is Go-based (go.mod, .go files)</step>
+        <step>Match request triggers to mode selection map</step>
+        <step>Determine if single-mode or multi-phase workflow needed</step>
+      </steps>
+    </phase>
+
+    <phase name="mode_selection">
+      <description>Select and delegate to the appropriate Go-specialized mode</description>
+      <steps>
+        <step>Use switch_mode to delegate to selected mode</step>
+        <step>Provide relevant context for the mode</step>
+        <step>Wait for mode completion</step>
+        <step>Review results and determine next steps</step>
+      </steps>
+    </phase>
+
+    <phase name="coordination">
+      <description>Coordinate between modes for multi-phase tasks</description>
+      <steps>
+        <step>Track progress across phases</step>
+        <step>Pass context between modes</step>
+        <step>Handle mode handoffs</step>
+        <step>Ensure completion of all phases</step>
+      </steps>
+    </phase>
+  </main_workflow>
+
+  <go_project_detection>
+    <indicators>
+      <indicator>go.mod file present</indicator>
+      <indicator>go.sum file present</indicator>
+      <indicator>Package directories with .go files</indicator>
+      <indicator>main.go or similar entry point</indicator>
+      <indicator>Makefile with Go targets</indicator>
+    </indicators>
+    <action>
+      When Go project is detected, ALWAYS use Go-specialized modes:
+      - go-architect instead of architect
+      - go-code instead of code
+      - go-debug instead of debug
+    </action>
+  </go_project_detection>
+
+  <completion_criteria>
+    <criterion>Selected mode completes its task successfully</criterion>
+    <criterion>All phases of multi-phase workflow are completed</criterion>
+    <criterion>User's original request is fulfilled</criterion>
+    <criterion>Code compiles and tests pass (if applicable)</criterion>
+  </completion_criteria>
+
+  <handoff_patterns>
+    <pattern name="architect_to_code">
+      <from>go-architect</from>
+      <to>go-code</to>
+      <trigger>Design phase complete, ready for implementation</trigger>
+      <context_to_transfer>
+        - Technical specifications
+        - File structure and organization
+        - Interface definitions
+        - Go patterns to use
+        - Error handling strategy
+      </context_to_transfer>
+    </pattern>
+
+    <pattern name="code_to_debug">
+      <from>go-code</from>
+      <to>go-debug</to>
+      <trigger>Implementation has issues or test failures</trigger>
+      <context_to_transfer>
+        - Error messages
+        - Test results
+        - Relevant code sections
+        - Steps to reproduce issues
+      </context_to_transfer>
+    </pattern>
+
+    <pattern name="debug_to_code">
+      <from>go-debug</from>
+      <to>go-code</to>
+      <to>go-architect</to>
+      <trigger>Issue identified, needs fix or design change</trigger>
+      <context_to_transfer>
+        - Root cause analysis
+        - Recommended fixes
+        - Code locations to modify
+        - If design change needed, provide full analysis
+      </context_to_transfer>
+    </pattern>
+  </handoff_patterns>
+</workflow_instructions>

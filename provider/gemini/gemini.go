@@ -13,7 +13,6 @@ import (
 	"strings"
 	"time"
 
-	"github.com/sunbankio/qwencoder-proxy/auth"
 	"github.com/sunbankio/qwencoder-proxy/logging"
 	"github.com/sunbankio/qwencoder-proxy/provider"
 )
@@ -39,17 +38,17 @@ var SupportedModels = []string{
 type Provider struct {
 	*provider.BaseProvider // Embedded base provider provides common fields and methods
 	baseURL                string
-	authenticator          *auth.GeminiAuthenticator
+	authenticator          *Authenticator
 	projectID              string
 	projectInitError       error // Store any initialization error to prevent repeated attempts
 }
 
 // NewProvider creates a new Gemini provider
 // Uses BaseProvider for common functionality
-func NewProvider(authenticator *auth.GeminiAuthenticator) *Provider {
+func NewProvider(authenticator *Authenticator) *Provider {
 	if authenticator == nil {
 		// Use direct instantiation for now - will be updated to use factory in later phase
-		authenticator = auth.NewGeminiAuthenticator(nil)
+		authenticator = NewAuthenticator(nil)
 	}
 	return &Provider{
 		BaseProvider:  provider.NewBaseProvider(logging.NewLogger(), 5*time.Minute),
@@ -320,7 +319,7 @@ func (p *Provider) initializeProject(ctx context.Context) error {
 			tokenID = selectedToken.ID
 
 			// Log proxy usage
-			if selectedToken.Proxy != nil && selectedToken.Proxy.Enabled {
+			if selectedToken.Proxy != nil && selectedToken.Proxy.Type != "none" {
 				p.GetLogger().DebugLog("[Gemini] Using token %s with proxy: %s:%d", tokenID, selectedToken.Proxy.Host, selectedToken.Proxy.Port)
 			} else {
 				p.GetLogger().DebugLog("[Gemini] Using token %s with direct connection", tokenID)
@@ -521,7 +520,7 @@ func (p *Provider) GenerateContent(ctx context.Context, model string, request in
 		tokenID = selectedToken.ID
 
 		// Log proxy usage
-		if selectedToken.Proxy != nil && selectedToken.Proxy.Enabled {
+		if selectedToken.Proxy != nil && selectedToken.Proxy.Type != "none" {
 			p.GetLogger().DebugLog("[Gemini] GenerateContent using token %s with proxy: %s:%d", tokenID, selectedToken.Proxy.Host, selectedToken.Proxy.Port)
 		} else {
 			p.GetLogger().DebugLog("[Gemini] GenerateContent using token %s with direct connection", tokenID)
@@ -707,7 +706,7 @@ func (p *Provider) GenerateContentStream(ctx context.Context, model string, requ
 		tokenID = selectedToken.ID
 
 		// Log proxy usage
-		if selectedToken.Proxy != nil && selectedToken.Proxy.Enabled {
+		if selectedToken.Proxy != nil && selectedToken.Proxy.Type != "none" {
 			p.GetLogger().DebugLog("[Gemini] GenerateContentStream using token %s with proxy: %s:%d", tokenID, selectedToken.Proxy.Host, selectedToken.Proxy.Port)
 		} else {
 			p.GetLogger().DebugLog("[Gemini] GenerateContentStream using token %s with direct connection", tokenID)

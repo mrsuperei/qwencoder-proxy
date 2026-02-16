@@ -11,7 +11,7 @@ import (
 	"testing"
 	"time"
 
-	"github.com/sunbankio/qwencoder-proxy/auth"
+	"github.com/sunbankio/qwencoder-proxy/internal/token"
 	"github.com/sunbankio/qwencoder-proxy/logging"
 	"github.com/sunbankio/qwencoder-proxy/provider/gemini"
 )
@@ -38,7 +38,7 @@ func TestNewGeminiHandler(t *testing.T) {
 // TestNewGeminiHandlerWithTokenManager tests the constructor with token manager
 func TestNewGeminiHandlerWithTokenManager(t *testing.T) {
 	provider := gemini.NewProvider(nil)
-	tokenManager := auth.NewTokenManager(nil, auth.NewRandomSelectionStrategy(), logging.NewLogger(), nil, nil)
+	tokenManager := token.NewTokenManager(nil, token.NewRandomSelectionStrategy(), logging.NewLogger(), nil, nil)
 
 	handler := NewGeminiHandlerWithTokenManager(provider, tokenManager)
 
@@ -440,8 +440,8 @@ func TestGeminiServeHTTPWithMethodNotAllowed(t *testing.T) {
 // TestGeminiHandlerWithTokenManagerIntegration tests handler with token manager integration
 func TestGeminiHandlerWithTokenManagerIntegration(t *testing.T) {
 	// Create a mock token store with a token
-	store := auth.NewMultiTokenStore("test", ".test-gemini-handler.json", logging.NewLogger())
-	token := auth.ProviderToken{
+	store := token.NewMultiTokenStore("test", ".test-gemini-handler.json", logging.NewLogger())
+	providerToken := token.ProviderToken{
 		ID:          "test-token",
 		AccessToken: "test-access-token",
 		Email:       "test@example.com",
@@ -449,13 +449,13 @@ func TestGeminiHandlerWithTokenManagerIntegration(t *testing.T) {
 		Healthy:     true,
 		HealthScore: 1.0,
 	}
-	if err := store.AddToken(token); err != nil {
+	if err := store.AddToken(providerToken); err != nil {
 		t.Fatal(err)
 	}
 
 	// Create a mock token manager
-	strategy := auth.NewRandomSelectionStrategy()
-	tokenManager := auth.NewTokenManager(store, strategy, logging.NewLogger(), nil, nil)
+	strategy := token.NewRandomSelectionStrategy()
+	tokenManager := token.NewTokenManager(store, strategy, logging.NewLogger(), nil, nil)
 
 	// Create handler with token manager
 	provider := gemini.NewProvider(nil)

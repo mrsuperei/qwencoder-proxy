@@ -1,0 +1,305 @@
+<mode_mapping>
+  <overview>
+    Complete mapping of task types to Go-specialized modes. This mapping ensures
+    that the orchestrator always selects the appropriate Go-specialized mode for
+    any given task in a Go codebase.
+  </overview>
+
+  <mode_definitions>
+    <mode slug="go-architect">
+      <name>🏗️ Go Architect</name>
+      <purpose>
+        Design and planning for Go projects. Specializes in Go package structure,
+        interface design, concurrency patterns, and architectural decisions.
+      </purpose>
+      <capabilities>
+        <capability>Design package structure and organization</capability>
+        <capability>Define interfaces and their contracts</capability>
+        <capability>Plan concurrency strategies (goroutines, channels)</capability>
+        <capability>Design error handling strategies</capability>
+        <capability>Create technical specifications</capability>
+        <capability>Plan refactoring approaches</capability>
+      </capabilities>
+      <best_for>
+        <task>Designing new services or modules</task>
+        <task>Planning refactoring efforts</task>
+        <task>Designing interfaces and abstractions</task>
+        <task>Planning concurrency patterns</task>
+        <task>Creating technical specifications</task>
+      </best_for>
+    </mode>
+
+    <mode slug="go-code">
+      <name>💻 Go Code</name>
+      <purpose>
+        Implementation of Go code. Specializes in writing idiomatic Go,
+        proper error handling, testing, and following Go best practices.
+      </purpose>
+      <capabilities>
+        <capability>Write idiomatic Go code</capability>
+        <capability>Implement interfaces</capability>
+        <capability>Add proper error handling</capability>
+        <capability>Write unit and integration tests</capability>
+        <capability>Implement concurrency patterns</capability>
+        <capability>Follow Go code conventions</capability>
+      </capabilities>
+      <best_for>
+        <task>Implementing new features</task>
+        <task>Writing functions and methods</task>
+        <task>Creating structs and types</task>
+        <task>Writing tests</task>
+        <task>Refactoring existing code</task>
+      </best_for>
+    </mode>
+
+    <mode slug="go-debug">
+      <name>🪲 Go Debug</name>
+      <purpose>
+        Debugging Go code. Specializes in Go-specific debugging including
+        goroutine leaks, race conditions, and error analysis.
+      </purpose>
+      <capabilities>
+        <capability>Investigate goroutine leaks</capability>
+        <capability>Debug race conditions</capability>
+        <capability>Analyze panic and stack traces</capability>
+        <capability>Debug concurrency issues</capability>
+        <capability>Analyze error propagation</capability>
+        <capability>Profile performance issues</capability>
+      </capabilities>
+      <best_for>
+        <task>Fixing bugs</task>
+        <task>Investigating race conditions</task>
+        <task>Debugging goroutine issues</task>
+        <task>Analyzing panics</task>
+        <task>Performance debugging</task>
+      </best_for>
+    </mode>
+
+    <mode slug="project-research">
+      <name>🔍 Project Research</name>
+      <purpose>
+        Research and exploration of codebases. Can analyze Go code structure,
+        patterns, and implementations.
+      </purpose>
+      <capabilities>
+        <capability>Explore codebase structure</capability>
+        <capability>Find implementations of patterns</capability>
+        <capability>Analyze dependencies</capability>
+        <capability>Document code organization</capability>
+        <capability>Explain code functionality</capability>
+      </capabilities>
+      <best_for>
+        <task>Understanding existing code</task>
+        <task>Finding where features are implemented</task>
+        <task>Analyzing code patterns</task>
+        <task>Exploring project structure</task>
+        <task>Documenting codebase</task>
+      </best_for>
+    </mode>
+  </mode_definitions>
+
+  <task_to_mode_mapping>
+    <mapping category="design_tasks">
+      <task keywords="design,architecture,plan,spec,structure,organize,refactor design">
+        <primary_mode>go-architect</primary_mode>
+        <fallback_modes>
+          <mode>project-research - for understanding existing structure</mode>
+        </fallback_modes>
+      </task>
+      <task keywords="interface,abstract,contract,api design">
+        <primary_mode>go-architect</primary_mode>
+      </task>
+      <task keywords="concurrency,goroutine,channel,parallel">
+        <primary_mode>go-architect</primary_mode>
+        <secondary_mode>go-code - for implementation</secondary_mode>
+      </task>
+    </mapping>
+
+    <mapping category="implementation_tasks">
+      <task keywords="implement,create,write,add,build,code,function,method">
+        <primary_mode>go-code</primary_mode>
+        <fallback_modes>
+          <mode>go-architect - if design is needed first</mode>
+        </fallback_modes>
+      </task>
+      <task keywords="struct,type,enum,const">
+        <primary_mode>go-code</primary_mode>
+      </task>
+      <task keywords="test,unit test,integration test,benchmark">
+        <primary_mode>go-code</primary_mode>
+      </task>
+      <task keywords="refactor,cleanup,improve">
+        <primary_mode>go-code</primary_mode>
+        <prerequisite_mode>go-architect - for complex refactorings</prerequisite_mode>
+      </task>
+    </mapping>
+
+    <mapping category="debugging_tasks">
+      <task keywords="debug,fix,error,bug,issue,problem,failure">
+        <primary_mode>go-debug</primary_mode>
+        <fallback_modes>
+          <mode>project-research - for understanding context</mode>
+        </fallback_modes>
+      </task>
+      <task keywords="panic,stack trace,fatal">
+        <primary_mode>go-debug</primary_mode>
+      </task>
+      <task keywords="race condition,data race,goroutine leak">
+        <primary_mode>go-debug</primary_mode>
+      </task>
+      <task keywords="slow,performance,timeout">
+        <primary_mode>go-debug</primary_mode>
+      </task>
+    </mapping>
+
+    <mapping category="research_tasks">
+      <task keywords="explain,understand,how,what,where,find,show,analyze">
+        <primary_mode>project-research</primary_mode>
+      </task>
+      <task keywords="document,describe,summarize">
+        <primary_mode>project-research</primary_mode>
+      </task>
+      <task keywords="explore,navigate,search">
+        <primary_mode>project-research</primary_mode>
+      </task>
+    </mapping>
+  </task_to_mode_mapping>
+
+  <workflow_templates>
+    <workflow name="new_feature">
+      <description>Creating a new feature from scratch</description>
+      <steps>
+        <step mode="go-architect">
+          <task>Design the feature architecture</task>
+          <deliverables>
+            <deliverable>Package structure</deliverable>
+            <deliverable>Interface definitions</deliverable>
+            <deliverable>Concurrency strategy (if needed)</deliverable>
+            <deliverable>Error handling approach</deliverable>
+          </deliverables>
+        </step>
+        <step mode="go-code">
+          <task>Implement the feature</task>
+          <deliverables>
+            <deliverable>Type definitions</deliverable>
+            <deliverable>Interface implementations</deliverable>
+            <deliverable>Business logic</deliverable>
+            <deliverable>Unit tests</deliverable>
+          </deliverables>
+        </step>
+        <step mode="go-debug">
+          <task>Test and debug (if issues arise)</task>
+          <condition>Only if tests fail or issues found</condition>
+        </step>
+      </steps>
+    </workflow>
+
+    <workflow name="bug_fix">
+      <description>Fixing a bug in existing code</description>
+      <steps>
+        <step mode="project-research">
+          <task>Understand the code and locate the issue</task>
+          <deliverables>
+            <deliverable>Location of bug</deliverable>
+            <deliverable>Understanding of affected code</deliverable>
+          </deliverables>
+        </step>
+        <step mode="go-debug">
+          <task>Investigate and diagnose the bug</task>
+          <deliverables>
+            <deliverable>Root cause analysis</deliverable>
+            <deliverable>Recommended fix approach</deliverable>
+          </deliverables>
+        </step>
+        <step mode="go-code">
+          <task>Implement the fix</task>
+          <deliverables>
+            <deliverable>Fixed code</deliverable>
+            <deliverable>Tests for the fix</deliverable>
+          </deliverables>
+        </step>
+      </steps>
+    </workflow>
+
+    <workflow name="refactoring">
+      <description>Refactoring existing code</description>
+      <steps>
+        <step mode="project-research">
+          <task>Analyze current code structure</task>
+          <deliverables>
+            <deliverable>Current state analysis</deliverable>
+            <deliverable>Identified issues</deliverable>
+          </deliverables>
+        </step>
+        <step mode="go-architect">
+          <task>Design refactoring approach</task>
+          <deliverables>
+            <deliverable>Refactoring plan</deliverable>
+            <deliverable>New structure design</deliverable>
+            <deliverable>Migration strategy</deliverable>
+          </deliverables>
+        </step>
+        <step mode="go-code">
+          <task>Implement refactoring</task>
+          <deliverables>
+            <deliverable>Refactored code</deliverable>
+            <deliverable>Updated tests</deliverable>
+          </deliverables>
+        </step>
+      </steps>
+    </workflow>
+
+    <workflow name="code_review_understanding">
+      <description>Understanding and explaining code</description>
+      <steps>
+        <step mode="project-research">
+          <task>Analyze the code</task>
+          <deliverables>
+            <deliverable>Code explanation</deliverable>
+            <deliverable>Pattern identification</deliverable>
+            <deliverable>Architecture overview</deliverable>
+          </deliverables>
+        </step>
+      </steps>
+    </workflow>
+  </workflow_templates>
+
+  <priority_rules>
+    <rule priority="1">
+      <description>Always prefer Go-specialized modes</description>
+      <condition>Working on Go codebase</condition>
+      <action>
+        Use go-architect instead of architect
+        Use go-code instead of code
+        Use go-debug instead of debug
+      </action>
+    </rule>
+
+    <rule priority="2">
+      <description>Design before implementation</description>
+      <condition>Complex feature or new module</condition>
+      <action>
+        Start with go-architect for design
+        Then switch to go-code for implementation
+      </action>
+    </rule>
+
+    <rule priority="3">
+      <description>Research before action</description>
+      <condition>Unfamiliar code or complex bug</condition>
+      <action>
+        Start with project-research to understand
+        Then switch to appropriate mode
+      </action>
+    </rule>
+
+    <rule priority="4">
+      <description>Debug before fix</description>
+      <condition>Known bug or error</condition>
+      <action>
+        Use go-debug to investigate
+        Then use go-code to implement fix
+      </action>
+    </rule>
+  </priority_rules>
+</mode_mapping>

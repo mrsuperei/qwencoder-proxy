@@ -8,7 +8,7 @@ import (
 	"sync"
 	"time"
 
-	"github.com/sunbankio/qwencoder-proxy/auth"
+	"github.com/sunbankio/qwencoder-proxy/internal/token"
 )
 
 // OAuthState represents the state for an authorization code flow
@@ -23,17 +23,17 @@ type OAuthState struct {
 
 // DevicePollState represents the state for a device code flow
 type DevicePollState struct {
-	PollID       string           // Unique poll identifier
-	Provider     string           // Provider ID
-	DeviceCode   string           // Device code from OAuth provider
-	ExpiresAt    time.Time        // Poll expiration time
-	Interval     time.Duration    // Polling interval
-	Status       string           // Current status: "pending", "authorized", "error"
-	Tokens       *auth.OAuthCreds // OAuth tokens when authorized
-	ErrorCode    string           // Error code if status is "error"
-	ErrorMessage string           // Error message if status is "error"
-	LastPolledAt time.Time        // Last time this poll was queried
-	CreatedAt    time.Time        // Creation time
+	PollID       string            // Unique poll identifier
+	Provider     string            // Provider ID
+	DeviceCode   string            // Device code from OAuth provider
+	ExpiresAt    time.Time         // Poll expiration time
+	Interval     time.Duration     // Polling interval
+	Status       string            // Current status: "pending", "authorized", "error"
+	Tokens       *token.OAuthCreds // OAuth tokens when authorized
+	ErrorCode    string            // Error code if status is "error"
+	ErrorMessage string            // Error message if status is "error"
+	LastPolledAt time.Time         // Last time this poll was queried
+	CreatedAt    time.Time         // Creation time
 }
 
 // StateManager manages in-memory state for OAuth flows
@@ -139,7 +139,7 @@ func (sm *StateManager) CreatePoll(provider, deviceCode string, interval time.Du
 }
 
 // UpdatePoll updates a device poll state with new status and optional tokens
-func (sm *StateManager) UpdatePoll(pollID, status string, tokens *auth.OAuthCreds) error {
+func (sm *StateManager) UpdatePoll(pollID, status string, tokens *token.OAuthCreds) error {
 	sm.mu.Lock()
 	defer sm.mu.Unlock()
 

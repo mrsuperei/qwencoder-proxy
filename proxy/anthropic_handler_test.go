@@ -11,7 +11,7 @@ import (
 	"testing"
 	"time"
 
-	"github.com/sunbankio/qwencoder-proxy/auth"
+	"github.com/sunbankio/qwencoder-proxy/internal/token"
 	"github.com/sunbankio/qwencoder-proxy/logging"
 	"github.com/sunbankio/qwencoder-proxy/provider/kiro"
 )
@@ -38,7 +38,7 @@ func TestNewAnthropicHandler(t *testing.T) {
 // TestNewAnthropicHandlerWithTokenManager tests the constructor with token manager
 func TestNewAnthropicHandlerWithTokenManager(t *testing.T) {
 	provider := kiro.NewProvider(nil)
-	tokenManager := auth.NewTokenManager(nil, auth.NewRandomSelectionStrategy(), logging.NewLogger(), nil, nil)
+	tokenManager := token.NewTokenManager(nil, token.NewRandomSelectionStrategy(), logging.NewLogger(), nil, nil)
 
 	handler := NewAnthropicHandlerWithTokenManager(provider, tokenManager)
 
@@ -378,8 +378,8 @@ func TestAnthropicServeHTTPWithMethodNotAllowed(t *testing.T) {
 // TestAnthropicHandlerWithTokenManagerIntegration tests handler with token manager integration
 func TestAnthropicHandlerWithTokenManagerIntegration(t *testing.T) {
 	// Create a mock token store with a token
-	store := auth.NewMultiTokenStore("test", ".test-anthropic-handler.json", logging.NewLogger())
-	token := auth.ProviderToken{
+	store := token.NewMultiTokenStore("test", ".test-anthropic-handler.json", logging.NewLogger())
+	providerToken := token.ProviderToken{
 		ID:          "test-token",
 		AccessToken: "test-access-token",
 		Email:       "test@example.com",
@@ -387,13 +387,13 @@ func TestAnthropicHandlerWithTokenManagerIntegration(t *testing.T) {
 		Healthy:     true,
 		HealthScore: 1.0,
 	}
-	if err := store.AddToken(token); err != nil {
+	if err := store.AddToken(providerToken); err != nil {
 		t.Fatal(err)
 	}
 
 	// Create a mock token manager
-	strategy := auth.NewRandomSelectionStrategy()
-	tokenManager := auth.NewTokenManager(store, strategy, logging.NewLogger(), nil, nil)
+	strategy := token.NewRandomSelectionStrategy()
+	tokenManager := token.NewTokenManager(store, strategy, logging.NewLogger(), nil, nil)
 
 	// Create handler with token manager
 	provider := kiro.NewProvider(nil)

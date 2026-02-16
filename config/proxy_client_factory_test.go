@@ -6,7 +6,7 @@ import (
 	"testing"
 	"time"
 
-	"github.com/sunbankio/qwencoder-proxy/auth"
+	auth "github.com/sunbankio/qwencoder-proxy/internal/token"
 	"github.com/sunbankio/qwencoder-proxy/logging"
 )
 
@@ -55,8 +55,7 @@ func TestGetClientNoneType(t *testing.T) {
 	factory := NewProxyAwareHTTPClientFactory(baseConfig, logger, 50)
 
 	proxyConfig := &auth.ProxyConfig{
-		Type:    auth.ProxyTypeNone,
-		Enabled: false,
+		Type: auth.ProxyTypeNone,
 	}
 
 	client := factory.GetClient(proxyConfig)
@@ -72,17 +71,15 @@ func TestGetClientCaching(t *testing.T) {
 	factory := NewProxyAwareHTTPClientFactory(baseConfig, logger, 50)
 
 	proxyConfig1 := &auth.ProxyConfig{
-		Type:    auth.ProxyTypeHTTP,
-		Host:    "proxy.example.com",
-		Port:    8080,
-		Enabled: true,
+		Type: auth.ProxyTypeHTTP,
+		Host: "proxy.example.com",
+		Port: 8080,
 	}
 
 	proxyConfig2 := &auth.ProxyConfig{
-		Type:    auth.ProxyTypeHTTP,
-		Host:    "proxy.example.com",
-		Port:    8080,
-		Enabled: true,
+		Type: auth.ProxyTypeHTTP,
+		Host: "proxy.example.com",
+		Port: 8080,
 	}
 
 	client1 := factory.GetClient(proxyConfig1)
@@ -106,17 +103,15 @@ func TestGetClientDifferentConfigs(t *testing.T) {
 	factory := NewProxyAwareHTTPClientFactory(baseConfig, logger, 50)
 
 	proxyConfig1 := &auth.ProxyConfig{
-		Type:    auth.ProxyTypeHTTP,
-		Host:    "proxy1.example.com",
-		Port:    8080,
-		Enabled: true,
+		Type: auth.ProxyTypeHTTP,
+		Host: "proxy1.example.com",
+		Port: 8080,
 	}
 
 	proxyConfig2 := &auth.ProxyConfig{
-		Type:    auth.ProxyTypeHTTP,
-		Host:    "proxy2.example.com",
-		Port:    8080,
-		Enabled: true,
+		Type: auth.ProxyTypeHTTP,
+		Host: "proxy2.example.com",
+		Port: 8080,
 	}
 
 	client1 := factory.GetClient(proxyConfig1)
@@ -145,7 +140,6 @@ func TestGetClientCredentialsExcluded(t *testing.T) {
 		Port:     8080,
 		Username: "user1",
 		Password: "pass1",
-		Enabled:  true,
 	}
 
 	proxyConfig2 := &auth.ProxyConfig{
@@ -154,7 +148,6 @@ func TestGetClientCredentialsExcluded(t *testing.T) {
 		Port:     8080,
 		Username: "user2",
 		Password: "pass2",
-		Enabled:  true,
 	}
 
 	client1 := factory.GetClient(proxyConfig1)
@@ -185,30 +178,27 @@ func TestCreateClientWithProxy(t *testing.T) {
 		{
 			name: "HTTP proxy",
 			config: &auth.ProxyConfig{
-				Type:    auth.ProxyTypeHTTP,
-				Host:    "proxy.example.com",
-				Port:    8080,
-				Enabled: true,
+				Type: auth.ProxyTypeHTTP,
+				Host: "proxy.example.com",
+				Port: 8080,
 			},
 			wantErr: false,
 		},
 		{
 			name: "HTTPS proxy",
 			config: &auth.ProxyConfig{
-				Type:    auth.ProxyTypeHTTPS,
-				Host:    "secure.proxy.com",
-				Port:    443,
-				Enabled: true,
+				Type: auth.ProxyTypeHTTPS,
+				Host: "secure.proxy.com",
+				Port: 443,
 			},
 			wantErr: false,
 		},
 		{
 			name: "SOCKS5 proxy",
 			config: &auth.ProxyConfig{
-				Type:    auth.ProxyTypeSOCKS5,
-				Host:    "socks.example.com",
-				Port:    1080,
-				Enabled: true,
+				Type: auth.ProxyTypeSOCKS5,
+				Host: "socks.example.com",
+				Port: 1080,
 			},
 			wantErr: false,
 		},
@@ -242,10 +232,9 @@ func TestClearCache(t *testing.T) {
 
 	// Add some clients to cache
 	proxyConfig := &auth.ProxyConfig{
-		Type:    auth.ProxyTypeHTTP,
-		Host:    "proxy.example.com",
-		Port:    8080,
-		Enabled: true,
+		Type: auth.ProxyTypeHTTP,
+		Host: "proxy.example.com",
+		Port: 8080,
 	}
 
 	factory.GetClient(proxyConfig)
@@ -269,10 +258,9 @@ func TestLRUEviction(t *testing.T) {
 	// Fill cache to capacity
 	for i := 0; i < 3; i++ {
 		proxyConfig := &auth.ProxyConfig{
-			Type:    auth.ProxyTypeHTTP,
-			Host:    "proxy.example.com",
-			Port:    8080 + i,
-			Enabled: true,
+			Type: auth.ProxyTypeHTTP,
+			Host: "proxy.example.com",
+			Port: 8080 + i,
 		}
 		factory.GetClient(proxyConfig)
 	}
@@ -283,19 +271,17 @@ func TestLRUEviction(t *testing.T) {
 
 	// Access the first client to make it MRU
 	proxyConfig1 := &auth.ProxyConfig{
-		Type:    auth.ProxyTypeHTTP,
-		Host:    "proxy.example.com",
-		Port:    8080,
-		Enabled: true,
+		Type: auth.ProxyTypeHTTP,
+		Host: "proxy.example.com",
+		Port: 8080,
 	}
 	client1 := factory.GetClient(proxyConfig1)
 
 	// Add a fourth client, should evict the LRU (port 8081)
 	proxyConfig4 := &auth.ProxyConfig{
-		Type:    auth.ProxyTypeHTTP,
-		Host:    "proxy.example.com",
-		Port:    8083,
-		Enabled: true,
+		Type: auth.ProxyTypeHTTP,
+		Host: "proxy.example.com",
+		Port: 8083,
 	}
 	factory.GetClient(proxyConfig4)
 
@@ -306,10 +292,9 @@ func TestLRUEviction(t *testing.T) {
 
 	// First client should still be in cache (was accessed)
 	proxyConfig1Check := &auth.ProxyConfig{
-		Type:    auth.ProxyTypeHTTP,
-		Host:    "proxy.example.com",
-		Port:    8080,
-		Enabled: true,
+		Type: auth.ProxyTypeHTTP,
+		Host: "proxy.example.com",
+		Port: 8080,
 	}
 	client1Check := factory.GetClient(proxyConfig1Check)
 	if client1 != client1Check {
@@ -400,7 +385,6 @@ func TestAuthenticatedProxyClient(t *testing.T) {
 				Port:     8080,
 				Username: "testuser",
 				Password: "testpass",
-				Enabled:  true,
 			},
 			wantAuth: true,
 		},
@@ -412,7 +396,6 @@ func TestAuthenticatedProxyClient(t *testing.T) {
 				Port:     443,
 				Username: "secureuser",
 				Password: "securepass",
-				Enabled:  true,
 			},
 			wantAuth: true,
 		},
@@ -424,7 +407,6 @@ func TestAuthenticatedProxyClient(t *testing.T) {
 				Port:     1080,
 				Username: "socksuser",
 				Password: "sockspass",
-				Enabled:  true,
 			},
 			wantAuth: true,
 		},
@@ -473,28 +455,25 @@ func TestUnauthenticatedProxyClient(t *testing.T) {
 		{
 			name: "HTTP proxy without authentication",
 			config: &auth.ProxyConfig{
-				Type:    auth.ProxyTypeHTTP,
-				Host:    "proxy.example.com",
-				Port:    8080,
-				Enabled: true,
+				Type: auth.ProxyTypeHTTP,
+				Host: "proxy.example.com",
+				Port: 8080,
 			},
 		},
 		{
 			name: "HTTPS proxy without authentication",
 			config: &auth.ProxyConfig{
-				Type:    auth.ProxyTypeHTTPS,
-				Host:    "secure.proxy.com",
-				Port:    443,
-				Enabled: true,
+				Type: auth.ProxyTypeHTTPS,
+				Host: "secure.proxy.com",
+				Port: 443,
 			},
 		},
 		{
 			name: "SOCKS5 proxy without authentication",
 			config: &auth.ProxyConfig{
-				Type:    auth.ProxyTypeSOCKS5,
-				Host:    "socks.example.com",
-				Port:    1080,
-				Enabled: true,
+				Type: auth.ProxyTypeSOCKS5,
+				Host: "socks.example.com",
+				Port: 1080,
 			},
 		},
 	}
@@ -533,10 +512,9 @@ func TestNewClientAfterClearing(t *testing.T) {
 
 	// Add a client to cache
 	proxyConfig := &auth.ProxyConfig{
-		Type:    auth.ProxyTypeHTTP,
-		Host:    "proxy.example.com",
-		Port:    8080,
-		Enabled: true,
+		Type: auth.ProxyTypeHTTP,
+		Host: "proxy.example.com",
+		Port: 8080,
 	}
 
 	client1 := factory.GetClient(proxyConfig)
@@ -575,22 +553,19 @@ func TestLRUEvictionOrder(t *testing.T) {
 
 	// Create three clients in order
 	config1 := &auth.ProxyConfig{
-		Type:    auth.ProxyTypeHTTP,
-		Host:    "proxy.example.com",
-		Port:    8080,
-		Enabled: true,
+		Type: auth.ProxyTypeHTTP,
+		Host: "proxy.example.com",
+		Port: 8080,
 	}
 	config2 := &auth.ProxyConfig{
-		Type:    auth.ProxyTypeHTTP,
-		Host:    "proxy.example.com",
-		Port:    8081,
-		Enabled: true,
+		Type: auth.ProxyTypeHTTP,
+		Host: "proxy.example.com",
+		Port: 8081,
 	}
 	config3 := &auth.ProxyConfig{
-		Type:    auth.ProxyTypeHTTP,
-		Host:    "proxy.example.com",
-		Port:    8082,
-		Enabled: true,
+		Type: auth.ProxyTypeHTTP,
+		Host: "proxy.example.com",
+		Port: 8082,
 	}
 
 	client1 := factory.GetClient(config1)
@@ -607,10 +582,9 @@ func TestLRUEvictionOrder(t *testing.T) {
 
 	// Add a fourth config, should evict config1 (LRU)
 	config4 := &auth.ProxyConfig{
-		Type:    auth.ProxyTypeHTTP,
-		Host:    "proxy.example.com",
-		Port:    8083,
-		Enabled: true,
+		Type: auth.ProxyTypeHTTP,
+		Host: "proxy.example.com",
+		Port: 8083,
 	}
 	_ = factory.GetClient(config4)
 
@@ -648,10 +622,9 @@ func TestAllClientsEvictedWhenFull(t *testing.T) {
 	var clients []*http.Client
 	for i := 0; i < 5; i++ {
 		config := &auth.ProxyConfig{
-			Type:    auth.ProxyTypeHTTP,
-			Host:    "proxy.example.com",
-			Port:    8080 + i,
-			Enabled: true,
+			Type: auth.ProxyTypeHTTP,
+			Host: "proxy.example.com",
+			Port: 8080 + i,
 		}
 		client := factory.GetClient(config)
 		clients = append(clients, client)
@@ -664,22 +637,19 @@ func TestAllClientsEvictedWhenFull(t *testing.T) {
 
 	// The first three clients should have been evicted
 	config0 := &auth.ProxyConfig{
-		Type:    auth.ProxyTypeHTTP,
-		Host:    "proxy.example.com",
-		Port:    8080,
-		Enabled: true,
+		Type: auth.ProxyTypeHTTP,
+		Host: "proxy.example.com",
+		Port: 8080,
 	}
 	config1 := &auth.ProxyConfig{
-		Type:    auth.ProxyTypeHTTP,
-		Host:    "proxy.example.com",
-		Port:    8081,
-		Enabled: true,
+		Type: auth.ProxyTypeHTTP,
+		Host: "proxy.example.com",
+		Port: 8081,
 	}
 	config2 := &auth.ProxyConfig{
-		Type:    auth.ProxyTypeHTTP,
-		Host:    "proxy.example.com",
-		Port:    8082,
-		Enabled: true,
+		Type: auth.ProxyTypeHTTP,
+		Host: "proxy.example.com",
+		Port: 8082,
 	}
 
 	client0Check := factory.GetClient(config0)
@@ -706,16 +676,14 @@ func TestNewClientAfterEviction(t *testing.T) {
 
 	// Fill cache
 	config1 := &auth.ProxyConfig{
-		Type:    auth.ProxyTypeHTTP,
-		Host:    "proxy.example.com",
-		Port:    8080,
-		Enabled: true,
+		Type: auth.ProxyTypeHTTP,
+		Host: "proxy.example.com",
+		Port: 8080,
 	}
 	config2 := &auth.ProxyConfig{
-		Type:    auth.ProxyTypeHTTP,
-		Host:    "proxy.example.com",
-		Port:    8081,
-		Enabled: true,
+		Type: auth.ProxyTypeHTTP,
+		Host: "proxy.example.com",
+		Port: 8081,
 	}
 
 	client1 := factory.GetClient(config1)
@@ -727,10 +695,9 @@ func TestNewClientAfterEviction(t *testing.T) {
 
 	// Add a third config, should evict the first
 	config3 := &auth.ProxyConfig{
-		Type:    auth.ProxyTypeHTTP,
-		Host:    "proxy.example.com",
-		Port:    8082,
-		Enabled: true,
+		Type: auth.ProxyTypeHTTP,
+		Host: "proxy.example.com",
+		Port: 8082,
 	}
 	client3 := factory.GetClient(config3)
 
@@ -768,28 +735,25 @@ func TestTimeoutConfigurationApplied(t *testing.T) {
 		{
 			name: "HTTP proxy client timeout",
 			config: &auth.ProxyConfig{
-				Type:    auth.ProxyTypeHTTP,
-				Host:    "proxy.example.com",
-				Port:    8080,
-				Enabled: true,
+				Type: auth.ProxyTypeHTTP,
+				Host: "proxy.example.com",
+				Port: 8080,
 			},
 		},
 		{
 			name: "HTTPS proxy client timeout",
 			config: &auth.ProxyConfig{
-				Type:    auth.ProxyTypeHTTPS,
-				Host:    "secure.proxy.com",
-				Port:    443,
-				Enabled: true,
+				Type: auth.ProxyTypeHTTPS,
+				Host: "secure.proxy.com",
+				Port: 443,
 			},
 		},
 		{
 			name: "SOCKS5 proxy client timeout",
 			config: &auth.ProxyConfig{
-				Type:    auth.ProxyTypeSOCKS5,
-				Host:    "socks.example.com",
-				Port:    1080,
-				Enabled: true,
+				Type: auth.ProxyTypeSOCKS5,
+				Host: "socks.example.com",
+				Port: 1080,
 			},
 		},
 	}
@@ -828,19 +792,17 @@ func TestConnectionPoolingConfigured(t *testing.T) {
 		{
 			name: "HTTP proxy client connection pooling",
 			config: &auth.ProxyConfig{
-				Type:    auth.ProxyTypeHTTP,
-				Host:    "proxy.example.com",
-				Port:    8080,
-				Enabled: true,
+				Type: auth.ProxyTypeHTTP,
+				Host: "proxy.example.com",
+				Port: 8080,
 			},
 		},
 		{
 			name: "SOCKS5 proxy client connection pooling",
 			config: &auth.ProxyConfig{
-				Type:    auth.ProxyTypeSOCKS5,
-				Host:    "socks.example.com",
-				Port:    1080,
-				Enabled: true,
+				Type: auth.ProxyTypeSOCKS5,
+				Host: "socks.example.com",
+				Port: 1080,
 			},
 		},
 	}
@@ -891,10 +853,9 @@ func TestIdleConnectionTimeoutSet(t *testing.T) {
 		{
 			name: "HTTP proxy client idle timeout",
 			config: &auth.ProxyConfig{
-				Type:    auth.ProxyTypeHTTP,
-				Host:    "proxy.example.com",
-				Port:    8080,
-				Enabled: true,
+				Type: auth.ProxyTypeHTTP,
+				Host: "proxy.example.com",
+				Port: 8080,
 			},
 		},
 	}
@@ -937,10 +898,9 @@ func TestMaxIdleConnectionsSet(t *testing.T) {
 		{
 			name: "HTTP proxy client max idle connections",
 			config: &auth.ProxyConfig{
-				Type:    auth.ProxyTypeHTTP,
-				Host:    "proxy.example.com",
-				Port:    8080,
-				Enabled: true,
+				Type: auth.ProxyTypeHTTP,
+				Host: "proxy.example.com",
+				Port: 8080,
 			},
 		},
 	}
@@ -972,10 +932,9 @@ func TestInvalidProxyTypeError(t *testing.T) {
 
 	// Create a config with an invalid proxy type
 	proxyConfig := &auth.ProxyConfig{
-		Type:    auth.ProxyType("invalid"),
-		Host:    "proxy.example.com",
-		Port:    8080,
-		Enabled: true,
+		Type: auth.ProxyType("invalid"),
+		Host: "proxy.example.com",
+		Port: 8080,
 	}
 
 	// Should return a direct client instead of failing
@@ -1009,19 +968,17 @@ func TestInvalidHostError(t *testing.T) {
 		{
 			name: "Empty host",
 			config: &auth.ProxyConfig{
-				Type:    auth.ProxyTypeHTTP,
-				Host:    "",
-				Port:    8080,
-				Enabled: true,
+				Type: auth.ProxyTypeHTTP,
+				Host: "",
+				Port: 8080,
 			},
 		},
 		{
 			name: "Host with spaces",
 			config: &auth.ProxyConfig{
-				Type:    auth.ProxyTypeHTTP,
-				Host:    "invalid host",
-				Port:    8080,
-				Enabled: true,
+				Type: auth.ProxyTypeHTTP,
+				Host: "invalid host",
+				Port: 8080,
 			},
 		},
 	}
@@ -1050,28 +1007,25 @@ func TestInvalidPortError(t *testing.T) {
 		{
 			name: "Port 0",
 			config: &auth.ProxyConfig{
-				Type:    auth.ProxyTypeHTTP,
-				Host:    "proxy.example.com",
-				Port:    0,
-				Enabled: true,
+				Type: auth.ProxyTypeHTTP,
+				Host: "proxy.example.com",
+				Port: 0,
 			},
 		},
 		{
 			name: "Negative port",
 			config: &auth.ProxyConfig{
-				Type:    auth.ProxyTypeHTTP,
-				Host:    "proxy.example.com",
-				Port:    -1,
-				Enabled: true,
+				Type: auth.ProxyTypeHTTP,
+				Host: "proxy.example.com",
+				Port: -1,
 			},
 		},
 		{
 			name: "Port out of range",
 			config: &auth.ProxyConfig{
-				Type:    auth.ProxyTypeHTTP,
-				Host:    "proxy.example.com",
-				Port:    70000,
-				Enabled: true,
+				Type: auth.ProxyTypeHTTP,
+				Host: "proxy.example.com",
+				Port: 70000,
 			},
 		},
 	}
@@ -1100,19 +1054,17 @@ func TestInvalidSOCKS5ConfigError(t *testing.T) {
 		{
 			name: "SOCKS5 with empty host",
 			config: &auth.ProxyConfig{
-				Type:    auth.ProxyTypeSOCKS5,
-				Host:    "",
-				Port:    1080,
-				Enabled: true,
+				Type: auth.ProxyTypeSOCKS5,
+				Host: "",
+				Port: 1080,
 			},
 		},
 		{
 			name: "SOCKS5 with invalid port",
 			config: &auth.ProxyConfig{
-				Type:    auth.ProxyTypeSOCKS5,
-				Host:    "socks.example.com",
-				Port:    0,
-				Enabled: true,
+				Type: auth.ProxyTypeSOCKS5,
+				Host: "socks.example.com",
+				Port: 0,
 			},
 		},
 	}
@@ -1154,10 +1106,9 @@ func TestPortBoundaryValues(t *testing.T) {
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
 			config := &auth.ProxyConfig{
-				Type:    auth.ProxyTypeHTTP,
-				Host:    "proxy.example.com",
-				Port:    tt.port,
-				Enabled: true,
+				Type: auth.ProxyTypeHTTP,
+				Host: "proxy.example.com",
+				Port: tt.port,
 			}
 
 			client := factory.CreateClientWithProxy(config)
@@ -1192,7 +1143,6 @@ func TestEmptyStringsForOptionalFields(t *testing.T) {
 				Port:     8080,
 				Username: "",
 				Password: "",
-				Enabled:  true,
 			},
 			wantAuth: false,
 		},
@@ -1204,7 +1154,6 @@ func TestEmptyStringsForOptionalFields(t *testing.T) {
 				Port:     8080,
 				Username: "testuser",
 				Password: "",
-				Enabled:  true,
 			},
 			wantAuth: false,
 		},
@@ -1216,7 +1165,6 @@ func TestEmptyStringsForOptionalFields(t *testing.T) {
 				Port:     8080,
 				Username: "",
 				Password: "testpass",
-				Enabled:  true,
 			},
 			wantAuth: false,
 		},
@@ -1254,10 +1202,9 @@ func TestSpecialCharactersInHost(t *testing.T) {
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
 			config := &auth.ProxyConfig{
-				Type:    auth.ProxyTypeHTTP,
-				Host:    tt.host,
-				Port:    8080,
-				Enabled: true,
+				Type: auth.ProxyTypeHTTP,
+				Host: tt.host,
+				Port: 8080,
 			}
 
 			client := factory.CreateClientWithProxy(config)
@@ -1293,7 +1240,6 @@ func TestUnicodeCharactersInCredentials(t *testing.T) {
 				Port:     8080,
 				Username: tt.username,
 				Password: tt.password,
-				Enabled:  true,
 			}
 
 			client := factory.CreateClientWithProxy(config)
@@ -1314,10 +1260,9 @@ func TestLargeCacheSizes(t *testing.T) {
 	numClients := 500
 	for i := 0; i < numClients; i++ {
 		config := &auth.ProxyConfig{
-			Type:    auth.ProxyTypeHTTP,
-			Host:    "proxy.example.com",
-			Port:    8080 + i,
-			Enabled: true,
+			Type: auth.ProxyTypeHTTP,
+			Host: "proxy.example.com",
+			Port: 8080 + i,
 		}
 		factory.GetClient(config)
 	}
@@ -1349,10 +1294,9 @@ func TestConcurrentAccessToCache(t *testing.T) {
 		go func(id int) {
 			for j := 0; j < iterationsPerGoroutine; j++ {
 				config := &auth.ProxyConfig{
-					Type:    auth.ProxyTypeHTTP,
-					Host:    "proxy.example.com",
-					Port:    8080 + (j % 10), // Use only 10 different configs
-					Enabled: true,
+					Type: auth.ProxyTypeHTTP,
+					Host: "proxy.example.com",
+					Port: 8080 + (j % 10), // Use only 10 different configs
 				}
 				client := factory.GetClient(config)
 				if client == nil {
@@ -1385,10 +1329,9 @@ func TestGetClientWithUnknownProxyType(t *testing.T) {
 	factory := NewProxyAwareHTTPClientFactory(baseConfig, logger, 50)
 
 	proxyConfig := &auth.ProxyConfig{
-		Type:    auth.ProxyType("unknown"),
-		Host:    "proxy.example.com",
-		Port:    8080,
-		Enabled: true,
+		Type: auth.ProxyType("unknown"),
+		Host: "proxy.example.com",
+		Port: 8080,
 	}
 
 	client := factory.GetClient(proxyConfig)
@@ -1523,30 +1466,27 @@ func TestNewProxyConfigKey(t *testing.T) {
 		{
 			name: "ProxyTypeNone",
 			config: &auth.ProxyConfig{
-				Type:    auth.ProxyTypeNone,
-				Host:    "proxy.example.com",
-				Port:    8080,
-				Enabled: false,
+				Type: auth.ProxyTypeNone,
+				Host: "proxy.example.com",
+				Port: 8080,
 			},
 			wantNil: true,
 		},
 		{
 			name: "Valid HTTP config",
 			config: &auth.ProxyConfig{
-				Type:    auth.ProxyTypeHTTP,
-				Host:    "proxy.example.com",
-				Port:    8080,
-				Enabled: true,
+				Type: auth.ProxyTypeHTTP,
+				Host: "proxy.example.com",
+				Port: 8080,
 			},
 			wantNil: false,
 		},
 		{
 			name: "Valid SOCKS5 config",
 			config: &auth.ProxyConfig{
-				Type:    auth.ProxyTypeSOCKS5,
-				Host:    "socks.example.com",
-				Port:    1080,
-				Enabled: true,
+				Type: auth.ProxyTypeSOCKS5,
+				Host: "socks.example.com",
+				Port: 1080,
 			},
 			wantNil: false,
 		},
@@ -1570,10 +1510,9 @@ func TestGetClientWithNilKey(t *testing.T) {
 
 	// Create a config that will result in nil key (ProxyTypeNone)
 	proxyConfig := &auth.ProxyConfig{
-		Type:    auth.ProxyTypeNone,
-		Host:    "",
-		Port:    0,
-		Enabled: false,
+		Type: auth.ProxyTypeNone,
+		Host: "",
+		Port: 0,
 	}
 
 	client := factory.GetClient(proxyConfig)

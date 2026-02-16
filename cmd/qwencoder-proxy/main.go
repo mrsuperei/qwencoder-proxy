@@ -11,9 +11,9 @@ import (
 	"syscall"
 	"time"
 
-	"github.com/sunbankio/qwencoder-proxy/auth"
 	"github.com/sunbankio/qwencoder-proxy/config"
 	"github.com/sunbankio/qwencoder-proxy/converter"
+	"github.com/sunbankio/qwencoder-proxy/internal/token"
 	"github.com/sunbankio/qwencoder-proxy/logging"
 	"github.com/sunbankio/qwencoder-proxy/provider"
 	"github.com/sunbankio/qwencoder-proxy/provider/antigravity"
@@ -21,7 +21,6 @@ import (
 	"github.com/sunbankio/qwencoder-proxy/provider/iflow"
 	"github.com/sunbankio/qwencoder-proxy/provider/kiro"
 	"github.com/sunbankio/qwencoder-proxy/provider/qwen"
-	"github.com/sunbankio/qwencoder-proxy/proxy"
 	"github.com/sunbankio/qwencoder-proxy/restapi"
 )
 
@@ -52,7 +51,7 @@ func main() {
 	logger.InfoLog("Starting qwencoder-proxy server on port %s", cfg.Server.Port)
 
 	// Create multi-token manager
-	multiTokenMgr := auth.NewMultiTokenManager(logger)
+	multiTokenMgr := token.NewMultiTokenManager(logger)
 	if err := multiTokenMgr.Initialize(); err != nil {
 		logger.ErrorLog("Failed to initialize multi-token manager: %v", err)
 		os.Exit(1)
@@ -113,11 +112,8 @@ func main() {
 	// Register REST API routes (dashboard, providers, credentials, etc.)
 	restAPIServer.RegisterRoutes(mux)
 
-	// Register OpenAI-compatible routes
-	proxy.RegisterOpenAIRoutes(mux, providerFactory, converterFactory)
-
-	// Register provider-specific routes
-	proxy.RegisterProviderSpecificRoutes(mux, providerFactory, converterFactory)
+	// Register OpenAI-compatible routes with token manager integration
+	restAPIServer.RegisterProxyRoutes(mux, providerFactory, converterFactory)
 
 	// Apply middleware (CORS, logging)
 	handler := applyMiddleware(mux, logger, cfg)
@@ -161,7 +157,7 @@ func main() {
 // initializeProviders creates and registers all providers with token manager injection
 func initializeProviders(
 	factory *provider.Factory,
-	multiTokenMgr *auth.MultiTokenManager,
+	multiTokenMgr *token.MultiTokenManager,
 	logger logging.Logger,
 ) error {
 	logger.InfoLog("Initializing providers with token manager injection...")
@@ -172,20 +168,20 @@ func initializeProviders(
 	}
 
 	// Create and register Gemini provider
-	geminiAuth := auth.NewGeminiAuthenticator(nil)
+	geminiAuth := gemini.NewAuthenticator(nil)
 	geminiAuth.SetMultiTokenManager(multiTokenMgr)
 	geminiProvider := gemini.NewProvider(geminiAuth)
-	geminiTokenMgr, err := multiTokenMgr.GetTokenManager("gemini")
+	geminiTokenMgr, err := multiTokenMgr.GetTokenManager("gemini-cli")
 	if err != nil {
-		logger.WarnLog("Failed to get token manager for gemini: %v", err)
+		logger.WarnLog("Failed to get token manager for gemini-cli: %v", err)
 	} else {
 		geminiAuth.SetTokenManager(geminiTokenMgr)
 		factory.RegisterWithTokenManager(geminiProvider, geminiTokenMgr)
-		logger.InfoLog("Registered gemini provider with token manager")
+		logger.InfoLog("Registered gemini-cli provider with token manager")
 	}
 
 	// Create and register iFlow provider
-	iflowAuth := auth.NewIFlowAuthenticator(nil)
+	iflowAuth := iflow.NewAuthenticator(nil)
 	iflowAuth.SetMultiTokenManager(multiTokenMgr)
 	iflowProvider := iflow.NewProvider(iflowAuth)
 	iflowTokenMgr, err := multiTokenMgr.GetTokenManager("iflow")
@@ -198,7 +194,7 @@ func initializeProviders(
 	}
 
 	// Create and register Kiro provider
-	kiroAuth := auth.NewKiroAuthenticator(nil)
+	kiroAuth := kiro.NewAuthenticator(nil)
 	kiroAuth.SetMultiTokenManager(multiTokenMgr)
 	kiroProvider := kiro.NewProvider(kiroAuth)
 	kiroTokenMgr, err := multiTokenMgr.GetTokenManager("kiro")
@@ -221,7 +217,7 @@ func initializeProviders(
 	}
 
 	// Create and register Antigravity provider
-	antigravityAuth := auth.NewGeminiAuthenticator(nil)
+	antigravityAuth := antigravity.NewAuthenticator(nil)
 	antigravityAuth.SetMultiTokenManager(multiTokenMgr)
 	antigravityProvider := antigravity.NewProvider(antigravityAuth)
 	antigravityTokenMgr, err := multiTokenMgr.GetTokenManager("antigravity")
@@ -247,10 +243,10 @@ func initializeProviders(
 }
 
 // registerProviderConfigs registers provider configurations with multi-token manager
-func registerProviderConfigs(multiTokenMgr *auth.MultiTokenManager) error {
+func registerProviderConfigs(multiTokenMgr *token.MultiTokenManager) error {
 	// Register Gemini provider config
-	multiTokenMgr.RegisterProvider("gemini", auth.ProviderConfig{
-		ID:           "gemini",
+	multiTokenMgr.RegisterProvider("gemini-cli", token.ProviderConfig{
+		ID:           "gemini-cli",
 		ClientID:     "681255809395-oo8ft2oprdrnp9e3aqf6av3hmdib135j.apps.googleusercontent.com",
 		ClientSecret: "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",
 		AuthURL:      "https://accounts.google.com/o/oauth2/v2/auth",
@@ -265,7 +261,7 @@ func registerProviderConfigs(multiTokenMgr *auth.MultiTokenManager) error {
 	})
 
 	// Register iFlow provider config
-	multiTokenMgr.RegisterProvider("iflow", auth.ProviderConfig{
+	multiTokenMgr.RegisterProvider("iflow", token.ProviderConfig{
 		ID:           "iflow",
 		ClientID:     "10009311001",
 		ClientSecret: "4Z3YjXycVsQvyGF1etiNlIBB4RsqSDtW",
@@ -280,7 +276,7 @@ func registerProviderConfigs(multiTokenMgr *auth.MultiTokenManager) error {
 	})
 
 	// Register Kiro provider config
-	multiTokenMgr.RegisterProvider("kiro", auth.ProviderConfig{
+	multiTokenMgr.RegisterProvider("kiro", token.ProviderConfig{
 		ID:           "kiro",
 		ClientID:     "10009311001",
 		ClientSecret: "4Z3YjXycVsQvyGF1etiNlIBB4RsqSDtW",
@@ -291,7 +287,7 @@ func registerProviderConfigs(multiTokenMgr *auth.MultiTokenManager) error {
 	})
 
 	// Register Qwen provider config
-	multiTokenMgr.RegisterProvider("qwen", auth.ProviderConfig{
+	multiTokenMgr.RegisterProvider("qwen", token.ProviderConfig{
 		ID:           "qwen",
 		ClientID:     "10009311001",
 		ClientSecret: "4Z3YjXycVsQvyGF1etiNlIBB4RsqSDtW",
@@ -306,7 +302,7 @@ func registerProviderConfigs(multiTokenMgr *auth.MultiTokenManager) error {
 	})
 
 	// Register Antigravity provider config
-	multiTokenMgr.RegisterProvider("antigravity", auth.ProviderConfig{
+	multiTokenMgr.RegisterProvider("antigravity", token.ProviderConfig{
 		ID:           "antigravity",
 		ClientID:     "1071006060591-tmhssin2h21lcre235vtolojh4g403ep.apps.googleusercontent.com",
 		ClientSecret: "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",

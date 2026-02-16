@@ -1,0 +1,675 @@
+<examples>
+  <overview>
+    Complete workflow examples demonstrating how go-code mode handles
+    various Go implementation scenarios.
+  </overview>
+
+  <example name="implementing_a_service">
+    <description>
+      Implementing a new service with proper error handling, context usage,
+      and interface-based design.
+    </description>
+    <context>
+      Need to implement a UserService that handles user CRUD operations
+      with proper error handling and context propagation.
+    </context>
+    <workflow>
+      <step number="1">
+        <action>Review existing codebase</action>
+        <tools>
+          <tool>read_file - Check go.mod for dependencies</tool>
+          <tool>read_file - Review existing service patterns</tool>
+          <tool>search_files - Find repository interfaces</tool>
+        </tools>
+      </step>
+
+      <step number="2">
+        <action>Create types file</action>
+        <file>service/user_types.go</file>
+        <code><![CDATA[
+package service
+
+import "time"
+
+// User represents a user in the system.
+type User struct {
+    ID        string    `json:"id"`
+    Name      string    `json:"name"`
+    Email     string    `json:"email"`
+    CreatedAt time.Time `json:"created_at"`
+    UpdatedAt time.Time `json:"updated_at"`
+}
+
+// CreateUserRequest is the input for creating a user.
+type CreateUserRequest struct {
+    Name  string `json:"name"`
+    Email string `json:"email"`
+}
+
+// UpdateUserRequest is the input for updating a user.
+type UpdateUserRequest struct {
+    Name  *string `json:"name,omitempty"`
+    Email *string `json:"email,omitempty"`
+}
+        ]]></code>
+      </step>
+
+      <step number="3">
+        <action>Create service implementation</action>
+        <file>service/user_service.go</file>
+        <code><![CDATA[
+package service
+
+import (
+    "context"
+    "fmt"
+    "time"
+
+    "github.com/google/uuid"
+    "myproject/internal/repository"
+)
+
+var (
+    ErrUserNotFound = fmt.Errorf("user not found")
+    ErrInvalidEmail = fmt.Errorf("invalid email")
+)
+
+// UserService handles user business logic.
+type UserService struct {
+    repo   repository.UserRepository
+    logger Logger
+}
+
+// NewUserService creates a new UserService.
+func NewUserService(repo repository.UserRepository, logger Logger) *UserService {
+    return &UserService{
+        repo:   repo,
+        logger: logger,
+    }
+}
+
+// Create creates a new user.
+func (s *UserService) Create(ctx context.Context, req CreateUserRequest) (*User, error) {
+    if !isValidEmail(req.Email) {
+        return nil, ErrInvalidEmail
+    }
+
+    user := &User{
+        ID:        uuid.New().String(),
+        Name:      req.Name,
+        Email:     req.Email,
+        CreatedAt: time.Now(),
+        UpdatedAt: time.Now(),
+    }
+
+    if err := s.repo.Create(ctx, user); err != nil {
+        return nil, fmt.Errorf("failed to create user: %w", err)
+    }
+
+    s.logger.Info("user created", "id", user.ID)
+    return user, nil
+}
+
+// Get retrieves a user by ID.
+func (s *UserService) Get(ctx context.Context, id string) (*User, error) {
+    user, err := s.repo.FindByID(ctx, id)
+    if err != nil {
+        return nil, fmt.Errorf("failed to find user: %w", err)
+    }
+    if user == nil {
+        return nil, ErrUserNotFound
+    }
+    return user, nil
+}
+
+// Update updates an existing user.
+func (s *UserService) Update(ctx context.Context, id string, req UpdateUserRequest) (*User, error) {
+    user, err := s.Get(ctx, id)
+    if err != nil {
+        return nil, err
+    }
+
+    if req.Name != nil {
+        user.Name = *req.Name
+    }
+    if req.Email != nil {
+        if !isValidEmail(*req.Email) {
+            return nil, ErrInvalidEmail
+        }
+        user.Email = *req.Email
+    }
+    user.UpdatedAt = time.Now()
+
+    if err := s.repo.Update(ctx, user); err != nil {
+        return nil, fmt.Errorf("failed to update user: %w", err)
+    }
+
+    return user, nil
+}
+
+// Delete deletes a user by ID.
+func (s *UserService) Delete(ctx context.Context, id string) error {
+    if err := s.repo.Delete(ctx, id); err != nil {
+        return fmt.Errorf("failed to delete user: %w", err)
+    }
+    s.logger.Info("user deleted", "id", id)
+    return nil
+}
+
+func isValidEmail(email string) bool {
+    // Simple validation - use proper validation in production
+    return len(email) > 0 && contains(email, "@")
+}
+
+func contains(s, substr string) bool {
+    return len(s) >= len(substr) && s[:len(substr)] == substr ||
+        len(s) > len(substr) && contains(s[1:], substr)
+}
+        ]]></code>
+      </step>
+
+      <step number="4">
+        <action>Create tests</action>
+        <file>service/user_service_test.go</file>
+        <code><![CDATA[
+package service
+
+import (
+    "context"
+    "testing"
+
+    "github.com/stretchr/testify/assert"
+    "github.com/stretchr/testify/require"
+)
+
+type mockLogger struct{}
+
+func (m *mockLogger) Info(msg string, keyvals ...interface{}) {}
+func (m *mockLogger) Error(msg string, keyvals ...interface{}) {}
+
+type mockRepo struct {
+    users map[string]*User
+}
+
+func (m *mockRepo) FindByID(ctx context.Context, id string) (*User, error) {
+    return m.users[id], nil
+}
+
+func (m *mockRepo) Create(ctx context.Context, user *User) error {
+    m.users[user.ID] = user
+    return nil
+}
+
+func (m *mockRepo) Update(ctx context.Context, user *User) error {
+    m.users[user.ID] = user
+    return nil
+}
+
+func (m *mockRepo) Delete(ctx context.Context, id string) error {
+    delete(m.users, id)
+    return nil
+}
+
+func TestUserService_Create(t *testing.T) {
+    tests := []struct {
+        name    string
+        req     CreateUserRequest
+        wantErr bool
+    }{
+        {
+            name: "valid user",
+            req: CreateUserRequest{
+                Name:  "John Doe",
+                Email: "john@example.com",
+            },
+            wantErr: false,
+        },
+        {
+            name: "invalid email",
+            req: CreateUserRequest{
+                Name:  "John Doe",
+                Email: "invalid",
+            },
+            wantErr: true,
+        },
+    }
+
+    for _, tt := range tests {
+        t.Run(tt.name, func(t *testing.T) {
+            repo := &mockRepo{users: make(map[string]*User)}
+            logger := &mockLogger{}
+            svc := NewUserService(repo, logger)
+
+            user, err := svc.Create(context.Background(), tt.req)
+            if tt.wantErr {
+                assert.Error(t, err)
+                assert.Nil(t, user)
+            } else {
+                require.NoError(t, err)
+                assert.NotNil(t, user)
+                assert.NotEmpty(t, user.ID)
+                assert.Equal(t, tt.req.Name, user.Name)
+                assert.Equal(t, tt.req.Email, user.Email)
+            }
+        })
+    }
+}
+
+func TestUserService_Get(t *testing.T) {
+    repo := &mockRepo{users: make(map[string]*User)}
+    logger := &mockLogger{}
+    svc := NewUserService(repo, logger)
+
+    // Create a user first
+    created, err := svc.Create(context.Background(), CreateUserRequest{
+        Name:  "Jane Doe",
+        Email: "jane@example.com",
+    })
+    require.NoError(t, err)
+
+    // Get the user
+    user, err := svc.Get(context.Background(), created.ID)
+    require.NoError(t, err)
+    assert.Equal(t, created.ID, user.ID)
+    assert.Equal(t, "Jane Doe", user.Name)
+
+    // Get non-existent user
+    _, err = svc.Get(context.Background(), "non-existent")
+    assert.Error(t, err)
+    assert.ErrorIs(t, err, ErrUserNotFound)
+}
+        ]]></code>
+      </step>
+
+      <step number="5">
+        <action>Validate implementation</action>
+        <commands>
+          <command>go fmt ./service</command>
+          <command>go vet ./service</command>
+          <command>go test ./service</command>
+          <command>go test -race ./service</command>
+        </commands>
+      </step>
+    </workflow>
+  </example>
+
+  <example name="implementing_http_handler">
+    <description>
+      Implementing HTTP handlers with proper error handling and JSON responses.
+    </description>
+    <context>
+      Need to create HTTP handlers for the UserService with proper middleware
+      and error handling.
+    </context>
+    <workflow>
+      <step number="1">
+        <action>Create handler types</action>
+        <file>api/handlers.go</file>
+        <code><![CDATA[
+package api
+
+import (
+    "encoding/json"
+    "errors"
+    "net/http"
+
+    "myproject/internal/service"
+)
+
+// Handler handles HTTP requests.
+type Handler struct {
+    service *service.UserService
+    logger  Logger
+}
+
+// NewHandler creates a new Handler.
+func NewHandler(svc *service.UserService, logger Logger) *Handler {
+    return &Handler{
+        service: svc,
+        logger:  logger,
+    }
+}
+
+// ErrorResponse represents an error response.
+type ErrorResponse struct {
+    Error string `json:"error"`
+}
+
+// writeJSON writes a JSON response.
+func (h *Handler) writeJSON(w http.ResponseWriter, status int, data interface{}) {
+    w.Header().Set("Content-Type", "application/json")
+    w.WriteHeader(status)
+    json.NewEncoder(w).Encode(data)
+}
+
+// writeError writes an error response.
+func (h *Handler) writeError(w http.ResponseWriter, status int, message string) {
+    h.writeJSON(w, status, ErrorResponse{Error: message})
+}
+
+// handleError handles errors and writes appropriate responses.
+func (h *Handler) handleError(w http.ResponseWriter, err error) {
+    if errors.Is(err, service.ErrUserNotFound) {
+        h.writeError(w, http.StatusNotFound, "user not found")
+        return
+    }
+    if errors.Is(err, service.ErrInvalidEmail) {
+        h.writeError(w, http.StatusBadRequest, "invalid email")
+        return
+    }
+    h.logger.Error("internal error", "error", err)
+    h.writeError(w, http.StatusInternalServerError, "internal server error")
+}
+        ]]></code>
+      </step>
+
+      <step number="2">
+        <action>Create user handlers</action>
+        <file>api/user_handlers.go</file>
+        <code><![CDATA[
+package api
+
+import (
+    "encoding/json"
+    "net/http"
+
+    "myproject/internal/service"
+)
+
+// CreateUser handles POST /users
+func (h *Handler) CreateUser(w http.ResponseWriter, r *http.Request) {
+    var req service.CreateUserRequest
+    if err := json.NewDecoder(r.Body).Decode(&req); err != nil {
+        h.writeError(w, http.StatusBadRequest, "invalid request body")
+        return
+    }
+
+    user, err := h.service.Create(r.Context(), req)
+    if err != nil {
+        h.handleError(w, err)
+        return
+    }
+
+    h.writeJSON(w, http.StatusCreated, user)
+}
+
+// GetUser handles GET /users/:id
+func (h *Handler) GetUser(w http.ResponseWriter, r *http.Request) {
+    id := r.URL.Query().Get("id")
+    if id == "" {
+        h.writeError(w, http.StatusBadRequest, "id is required")
+        return
+    }
+
+    user, err := h.service.Get(r.Context(), id)
+    if err != nil {
+        h.handleError(w, err)
+        return
+    }
+
+    h.writeJSON(w, http.StatusOK, user)
+}
+
+// UpdateUser handles PUT /users/:id
+func (h *Handler) UpdateUser(w http.ResponseWriter, r *http.Request) {
+    id := r.URL.Query().Get("id")
+    if id == "" {
+        h.writeError(w, http.StatusBadRequest, "id is required")
+        return
+    }
+
+    var req service.UpdateUserRequest
+    if err := json.NewDecoder(r.Body).Decode(&req); err != nil {
+        h.writeError(w, http.StatusBadRequest, "invalid request body")
+        return
+    }
+
+    user, err := h.service.Update(r.Context(), id, req)
+    if err != nil {
+        h.handleError(w, err)
+        return
+    }
+
+    h.writeJSON(w, http.StatusOK, user)
+}
+
+// DeleteUser handles DELETE /users/:id
+func (h *Handler) DeleteUser(w http.ResponseWriter, r *http.Request) {
+    id := r.URL.Query().Get("id")
+    if id == "" {
+        h.writeError(w, http.StatusBadRequest, "id is required")
+        return
+    }
+
+    if err := h.service.Delete(r.Context(), id); err != nil {
+        h.handleError(w, err)
+        return
+    }
+
+    w.WriteHeader(http.StatusNoContent)
+}
+        ]]></code>
+      </step>
+
+      <step number="3">
+        <action>Create middleware</action>
+        <file>api/middleware.go</file>
+        <code><![CDATA[
+package api
+
+import (
+    "log"
+    "net/http"
+    "time"
+)
+
+// Logger is the interface for logging.
+type Logger interface {
+    Info(msg string, keyvals ...interface{})
+    Error(msg string, keyvals ...interface{})
+}
+
+// LoggingMiddleware logs HTTP requests.
+func LoggingMiddleware(logger Logger) func(http.Handler) http.Handler {
+    return func(next http.Handler) http.Handler {
+        return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+            start := time.Now()
+            next.ServeHTTP(w, r)
+            logger.Info("request",
+                "method", r.Method,
+                "path", r.URL.Path,
+                "duration", time.Since(start),
+            )
+        })
+    }
+}
+
+// RecoveryMiddleware recovers from panics.
+func RecoveryMiddleware(logger Logger) func(http.Handler) http.Handler {
+    return func(next http.Handler) http.Handler {
+        return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+            defer func() {
+                if err := recover(); err != nil {
+                    log.Printf("panic recovered: %v", err)
+                    http.Error(w, "internal server error", http.StatusInternalServerError)
+                }
+            }()
+            next.ServeHTTP(w, r)
+        })
+    }
+}
+        ]]></code>
+      </step>
+    </workflow>
+  </example>
+
+  <example name="implementing_worker_pool">
+    <description>
+      Implementing a worker pool for concurrent processing.
+    </description>
+    <context>
+      Need to process multiple items concurrently with controlled parallelism.
+    </context>
+    <workflow>
+      <step number="1">
+        <action>Create worker pool types</action>
+        <file>worker/pool.go</file>
+        <code><![CDATA[
+package worker
+
+import (
+    "context"
+    "sync"
+)
+
+// Job represents a unit of work.
+type Job struct {
+    ID   string
+    Data []byte
+}
+
+// Result represents the result of processing a job.
+type Result struct {
+    JobID string
+    Data  []byte
+    Err   error
+}
+
+// Pool manages a pool of workers.
+type Pool struct {
+    numWorkers int
+    jobChan    chan Job
+    resultChan chan Result
+    wg         sync.WaitGroup
+}
+
+// NewPool creates a new worker pool.
+func NewPool(numWorkers, bufferSize int) *Pool {
+    return &Pool{
+        numWorkers: numWorkers,
+        jobChan:    make(chan Job, bufferSize),
+        resultChan: make(chan Result, bufferSize),
+    }
+}
+
+// Start starts the worker pool.
+func (p *Pool) Start(ctx context.Context) {
+    for i := 0; i < p.numWorkers; i++ {
+        p.wg.Add(1)
+        go p.worker(ctx, i)
+    }
+}
+
+// worker processes jobs.
+func (p *Pool) worker(ctx context.Context, id int) {
+    defer p.wg.Done()
+    for {
+        select {
+        case <-ctx.Done():
+            return
+        case job, ok := <-p.jobChan:
+            if !ok {
+                return
+            }
+            result := p.processJob(ctx, job)
+            p.resultChan <- result
+        }
+    }
+}
+
+// processJob processes a single job.
+func (p *Pool) processJob(ctx context.Context, job Job) Result {
+    // Simulate processing
+    select {
+    case <-ctx.Done():
+        return Result{JobID: job.ID, Err: ctx.Err()}
+    default:
+        // Process the job
+        return Result{JobID: job.ID, Data: job.Data}
+    }
+}
+
+// Submit submits a job to the pool.
+func (p *Pool) Submit(job Job) {
+    p.jobChan <- job
+}
+
+// Results returns the result channel.
+func (p *Pool) Results() <-chan Result {
+    return p.resultChan
+}
+
+// Stop stops the worker pool.
+func (p *Pool) Stop() {
+    close(p.jobChan)
+    p.wg.Wait()
+    close(p.resultChan)
+}
+        ]]></code>
+      </step>
+
+      <step number="2">
+        <action>Create tests</action>
+        <file>worker/pool_test.go</file>
+        <code><![CDATA[
+package worker
+
+import (
+    "context"
+    "testing"
+    "time"
+
+    "github.com/stretchr/testify/assert"
+    "github.com/stretchr/testify/require"
+)
+
+func TestPool_ProcessJobs(t *testing.T) {
+    ctx := context.Background()
+    pool := NewPool(3, 10)
+    pool.Start(ctx)
+    defer pool.Stop()
+
+    jobs := make([]Job, 5)
+    for i := 0; i < 5; i++ {
+        jobs[i] = Job{ID: string(rune('a' + i)), Data: []byte("data")}
+        pool.Submit(jobs[i])
+    }
+
+    results := make([]Result, 0, 5)
+    timeout := time.After(5 * time.Second)
+
+    for {
+        select {
+        case result := <-pool.Results():
+            results = append(results, result)
+            if len(results) == 5 {
+                assert.Len(t, results, 5)
+                return
+            }
+        case <-timeout:
+            t.Fatal("timeout waiting for results")
+        }
+    }
+}
+
+func TestPool_Cancellation(t *testing.T) {
+    ctx, cancel := context.WithCancel(context.Background())
+    pool := NewPool(2, 5)
+    pool.Start(ctx)
+
+    // Submit some jobs
+    for i := 0; i < 3; i++ {
+        pool.Submit(Job{ID: string(rune('a' + i))})
+    }
+
+    // Cancel the context
+    cancel()
+
+    // Stop should complete without hanging
+    pool.Stop()
+}
+        ]]></code>
+      </step>
+    </workflow>
+  </example>
+</examples>

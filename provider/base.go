@@ -4,7 +4,7 @@ import (
 	"net/http"
 	"time"
 
-	"github.com/sunbankio/qwencoder-proxy/auth"
+	auth "github.com/sunbankio/qwencoder-proxy/internal/token"
 	"github.com/sunbankio/qwencoder-proxy/logging"
 )
 

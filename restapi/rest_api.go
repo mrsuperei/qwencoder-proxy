@@ -16,8 +16,11 @@ import (
 	"strings"
 	"time"
 
-	"github.com/sunbankio/qwencoder-proxy/auth"
+	"github.com/sunbankio/qwencoder-proxy/converter"
+	tokpkg "github.com/sunbankio/qwencoder-proxy/internal/token"
 	"github.com/sunbankio/qwencoder-proxy/logging"
+	"github.com/sunbankio/qwencoder-proxy/provider"
+	"github.com/sunbankio/qwencoder-proxy/proxy"
 	"golang.org/x/oauth2"
 )
 
@@ -37,9 +40,9 @@ type ProviderTokenInfo struct {
 
 // ProviderCredentialsInfo represents credentials info for a provider
 type ProviderCredentialsInfo struct {
-	ProviderID string              `json:"provider_id"`
-	Tokens     []ProviderTokenInfo `json:"tokens"`
-	Settings   auth.StoreSettings  `json:"settings"`
+	ProviderID string               `json:"provider_id"`
+	Tokens     []ProviderTokenInfo  `json:"tokens"`
+	Settings   tokpkg.StoreSettings `json:"settings"`
 }
 
 // TokenSelectionResponse represents the response when selecting a token
@@ -81,9 +84,9 @@ type Server struct {
 	stateManager      *StateManager
 	logger            logging.Logger
 	httpClient        *http.Client
-	tokenStores       map[string]*auth.MultiTokenStore // providerID -> MultiTokenStore
-	tokenManagers     map[string]*auth.TokenManager    // providerID -> TokenManager
-	multiTokenManager *auth.MultiTokenManager          // Multi-token manager for all providers
+	tokenStores       map[string]*tokpkg.MultiTokenStore // providerID -> MultiTokenStore
+	tokenManagers     map[string]*tokpkg.TokenManager    // providerID -> TokenManager
+	multiTokenManager *tokpkg.MultiTokenManager          // Multi-token manager for all providers
 }
 
 // NewServer creates a new OAuth REST API server
@@ -97,7 +100,7 @@ func NewServer(config *Config, logger logging.Logger) *Server {
 	}
 
 	// Create multi-token manager
-	multiTokenManager := auth.NewMultiTokenManager(logger)
+	multiTokenManager := tokpkg.NewMultiTokenManager(logger)
 	if err := multiTokenManager.Initialize(); err != nil {
 		logger.ErrorLog("Failed to initialize multi-token manager: %v", err)
 	}
@@ -111,8 +114,8 @@ func NewServer(config *Config, logger logging.Logger) *Server {
 		stateManager:      NewStateManager(),
 		logger:            logger,
 		httpClient:        &http.Client{Timeout: 30 * time.Second},
-		tokenStores:       make(map[string]*auth.MultiTokenStore),
-		tokenManagers:     make(map[string]*auth.TokenManager),
+		tokenStores:       make(map[string]*tokpkg.MultiTokenStore),
+		tokenManagers:     make(map[string]*tokpkg.TokenManager),
 		multiTokenManager: multiTokenManager,
 	}
 }
@@ -266,7 +269,7 @@ func (s *Server) createStaticFileHandler(dir, contentType string, maxAge int) ht
 }
 
 // getTokenStore gets or creates a token store for a provider
-func (s *Server) getTokenStore(providerID string) (*auth.MultiTokenStore, error) {
+func (s *Server) getTokenStore(providerID string) (*tokpkg.MultiTokenStore, error) {
 	if store, ok := s.tokenStores[providerID]; ok {
 		return store, nil
 	}
@@ -276,7 +279,7 @@ func (s *Server) getTokenStore(providerID string) (*auth.MultiTokenStore, error)
 		return nil, err
 	}
 
-	store := auth.NewMultiTokenStore(providerID, credsPath, s.logger)
+	store := tokpkg.NewMultiTokenStore(providerID, credsPath, s.logger)
 	if err := store.Load(); err != nil {
 		s.logger.WarnLog("Failed to load token store for %s: %v", providerID, err)
 	}
@@ -286,7 +289,7 @@ func (s *Server) getTokenStore(providerID string) (*auth.MultiTokenStore, error)
 }
 
 // getTokenManager gets or creates a token manager for a provider
-func (s *Server) getTokenManager(providerID string) (*auth.TokenManager, error) {
+func (s *Server) getTokenManager(providerID string) (*tokpkg.TokenManager, error) {
 	if manager, ok := s.tokenManagers[providerID]; ok {
 		return manager, nil
 	}
@@ -297,8 +300,8 @@ func (s *Server) getTokenManager(providerID string) (*auth.TokenManager, error) 
 	}
 
 	// Create strategy factory and get default strategy
-	factory := auth.NewStrategyFactory()
-	strategy, err := factory.CreateStrategy(auth.DefaultSelectionStrategy)
+	factory := tokpkg.NewStrategyFactory()
+	strategy, err := factory.CreateStrategy(tokpkg.DefaultSelectionStrategy)
 	if err != nil {
 		return nil, err
 	}
@@ -306,13 +309,13 @@ func (s *Server) getTokenManager(providerID string) (*auth.TokenManager, error) 
 	// Get proxy health tracker for this provider
 	proxyHealthTracker, _ := s.multiTokenManager.GetProxyHealthTracker(providerID)
 
-	manager := auth.NewTokenManager(store, strategy, s.logger, nil, proxyHealthTracker)
+	manager := tokpkg.NewTokenManager(store, strategy, s.logger, nil, proxyHealthTracker)
 	s.tokenManagers[providerID] = manager
 	return manager, nil
 }
 
 // providerTokenToInfo converts ProviderToken to ProviderTokenInfo
-func (s *Server) providerTokenToInfo(token auth.ProviderToken) ProviderTokenInfo {
+func (s *Server) providerTokenToInfo(token tokpkg.ProviderToken) ProviderTokenInfo {
 	expiresIn := (token.ExpiryDate - time.Now().UnixMilli()) / 1000
 	if expiresIn < 0 {
 		expiresIn = 0
@@ -596,7 +599,7 @@ func (s *Server) pollForToken(ctx context.Context, pollID, providerID string, co
 				tokenResponse["resource_url"] = resourceURL
 			}
 
-			creds := auth.OAuthCreds{
+			creds := tokpkg.OAuthCreds{
 				AccessToken:  token.AccessToken,
 				TokenType:    token.TokenType,
 				RefreshToken: token.RefreshToken,
@@ -898,7 +901,7 @@ func (s *Server) writeCallbackHTML(w http.ResponseWriter, success bool, errorCod
 }
 
 // exchangeCodeForTokensWithResponse exchanges an authorization code for tokens and returns both creds and response map
-func (s *Server) exchangeCodeForTokensWithResponse(config *ProviderConfig, code, redirectURI, codeVerifier string) (auth.OAuthCreds, map[string]interface{}, error) {
+func (s *Server) exchangeCodeForTokensWithResponse(config *ProviderConfig, code, redirectURI, codeVerifier string) (tokpkg.OAuthCreds, map[string]interface{}, error) {
 	s.logger.InfoLog("[exchangeCodeForTokensWithResponse] Exchanging code for tokens - TokenURL: %s", config.TokenURL)
 
 	data := url.Values{}
@@ -917,7 +920,7 @@ func (s *Server) exchangeCodeForTokensWithResponse(config *ProviderConfig, code,
 	req, err := http.NewRequest("POST", config.TokenURL, strings.NewReader(data.Encode()))
 	if err != nil {
 		s.logger.ErrorLog("[exchangeCodeForTokensWithResponse] Failed to create token request: %v", err)
-		return auth.OAuthCreds{}, nil, fmt.Errorf("failed to create token request: %w", err)
+		return tokpkg.OAuthCreds{}, nil, fmt.Errorf("failed to create token request: %w", err)
 	}
 	req.Header.Set("Content-Type", "application/x-www-form-urlencoded")
 
@@ -926,7 +929,7 @@ func (s *Server) exchangeCodeForTokensWithResponse(config *ProviderConfig, code,
 	resp, err := s.httpClient.Do(req)
 	if err != nil {
 		s.logger.ErrorLog("[exchangeCodeForTokensWithResponse] Failed to send token request: %v", err)
-		return auth.OAuthCreds{}, nil, fmt.Errorf("failed to send token request: %w", err)
+		return tokpkg.OAuthCreds{}, nil, fmt.Errorf("failed to send token request: %w", err)
 	}
 	defer resp.Body.Close()
 
@@ -935,7 +938,7 @@ func (s *Server) exchangeCodeForTokensWithResponse(config *ProviderConfig, code,
 	if resp.StatusCode != http.StatusOK {
 		body, _ := io.ReadAll(resp.Body)
 		s.logger.ErrorLog("[exchangeCodeForTokensWithResponse] Token exchange failed - Status: %d, Body: %s", resp.StatusCode, string(body))
-		return auth.OAuthCreds{}, nil, fmt.Errorf("token exchange failed (status %d): %s", resp.StatusCode, string(body))
+		return tokpkg.OAuthCreds{}, nil, fmt.Errorf("token exchange failed (status %d): %s", resp.StatusCode, string(body))
 	}
 
 	var tokenResp struct {
@@ -949,7 +952,7 @@ func (s *Server) exchangeCodeForTokensWithResponse(config *ProviderConfig, code,
 
 	if err := json.NewDecoder(resp.Body).Decode(&tokenResp); err != nil {
 		s.logger.ErrorLog("[exchangeCodeForTokensWithResponse] Failed to decode token response: %v", err)
-		return auth.OAuthCreds{}, nil, fmt.Errorf("failed to decode token response: %w", err)
+		return tokpkg.OAuthCreds{}, nil, fmt.Errorf("failed to decode token response: %w", err)
 	}
 
 	s.logger.InfoLog("[exchangeCodeForTokensWithResponse] Token response decoded - has_access_token: %v, has_refresh_token: %v, expires_in: %d",
@@ -965,7 +968,7 @@ func (s *Server) exchangeCodeForTokensWithResponse(config *ProviderConfig, code,
 		tokenResponse["scope"] = tokenResp.Scope
 	}
 
-	creds := auth.OAuthCreds{
+	creds := tokpkg.OAuthCreds{
 		AccessToken:  tokenResp.AccessToken,
 		TokenType:    tokenResp.TokenType,
 		RefreshToken: tokenResp.RefreshToken,
@@ -1028,8 +1031,8 @@ func (s *Server) handleGetToken(w http.ResponseWriter, r *http.Request, provider
 	if err != nil {
 		s.logger.WarnLog("Failed to get token store: %v", err)
 	} else {
-		if err := store.UpdateToken(token.ID, func(t *auth.ProviderToken) {
-			t.LastUsed = auth.GetCurrentTimestamp()
+		if err := store.UpdateToken(token.ID, func(t *tokpkg.ProviderToken) {
+			t.LastUsed = tokpkg.GetCurrentTimestamp()
 		}); err != nil {
 			s.logger.WarnLog("Failed to update LastUsed timestamp: %v", err)
 		}
@@ -1163,27 +1166,27 @@ func (s *Server) handleClearCredentials(w http.ResponseWriter, r *http.Request) 
 }
 
 // loadCredentials loads credentials for a provider
-func (s *Server) loadCredentials(providerID string) (auth.OAuthCreds, error) {
+func (s *Server) loadCredentials(providerID string) (tokpkg.OAuthCreds, error) {
 	credsPath, err := s.registry.GetCredentialsPath(providerID)
 	if err != nil {
-		return auth.OAuthCreds{}, err
+		return tokpkg.OAuthCreds{}, err
 	}
 
 	data, err := os.ReadFile(credsPath)
 	if err != nil {
-		return auth.OAuthCreds{}, err
+		return tokpkg.OAuthCreds{}, err
 	}
 
-	var creds auth.OAuthCreds
+	var creds tokpkg.OAuthCreds
 	if err := json.Unmarshal(data, &creds); err != nil {
-		return auth.OAuthCreds{}, err
+		return tokpkg.OAuthCreds{}, err
 	}
 
 	return creds, nil
 }
 
 // saveCredentials saves credentials for a provider using multi-token store
-func (s *Server) saveCredentials(providerID string, creds auth.OAuthCreds, tokenResponse map[string]interface{}) error {
+func (s *Server) saveCredentials(providerID string, creds tokpkg.OAuthCreds, tokenResponse map[string]interface{}) error {
 	// Extract email from token response
 	email := ""
 	if tokenResponse != nil {
@@ -1196,8 +1199,8 @@ func (s *Server) saveCredentials(providerID string, creds auth.OAuthCreds, token
 	}
 
 	// Create provider token with email
-	providerToken := auth.ProviderToken{
-		ID:           auth.GenerateTokenID(),
+	providerToken := tokpkg.ProviderToken{
+		ID:           tokpkg.GenerateTokenID(),
 		AccessToken:  creds.AccessToken,
 		RefreshToken: creds.RefreshToken,
 		TokenType:    creds.TokenType,
@@ -1207,8 +1210,8 @@ func (s *Server) saveCredentials(providerID string, creds auth.OAuthCreds, token
 		Scope:        "", // Will be populated from token response if available
 		Healthy:      true,
 		HealthScore:  1.0,
-		LastUsed:     auth.GetCurrentTimestamp(),
-		CreatedAt:    auth.GetCurrentTimestamp(),
+		LastUsed:     tokpkg.GetCurrentTimestamp(),
+		CreatedAt:    tokpkg.GetCurrentTimestamp(),
 		ErrorCount:   0,
 	}
 
@@ -1222,9 +1225,9 @@ func (s *Server) saveCredentials(providerID string, creds auth.OAuthCreds, token
 }
 
 // refreshToken refreshes an access token using the refresh token
-func (s *Server) refreshToken(config *ProviderConfig, creds auth.OAuthCreds) (auth.OAuthCreds, error) {
+func (s *Server) refreshToken(config *ProviderConfig, creds tokpkg.OAuthCreds) (tokpkg.OAuthCreds, error) {
 	if creds.RefreshToken == "" {
-		return auth.OAuthCreds{}, fmt.Errorf("no refresh token available")
+		return tokpkg.OAuthCreds{}, fmt.Errorf("no refresh token available")
 	}
 
 	oauthConfig := &oauth2.Config{
@@ -1245,10 +1248,10 @@ func (s *Server) refreshToken(config *ProviderConfig, creds auth.OAuthCreds) (au
 	tokenSource := oauthConfig.TokenSource(ctx, token)
 	newToken, err := tokenSource.Token()
 	if err != nil {
-		return auth.OAuthCreds{}, fmt.Errorf("failed to refresh token: %w", err)
+		return tokpkg.OAuthCreds{}, fmt.Errorf("failed to refresh token: %w", err)
 	}
 
-	updated := auth.OAuthCreds{
+	updated := tokpkg.OAuthCreds{
 		AccessToken:  newToken.AccessToken,
 		TokenType:    newToken.TokenType,
 		RefreshToken: newToken.RefreshToken,
@@ -1262,7 +1265,7 @@ func (s *Server) refreshToken(config *ProviderConfig, creds auth.OAuthCreds) (au
 	// Save updated credentials with empty token response map
 	tokenResponse := make(map[string]interface{})
 	if err := s.saveCredentials(config.ID, updated, tokenResponse); err != nil {
-		return auth.OAuthCreds{}, fmt.Errorf("failed to save refreshed credentials: %w", err)
+		return tokpkg.OAuthCreds{}, fmt.Errorf("failed to save refreshed credentials: %w", err)
 	}
 
 	return updated, nil
@@ -1412,7 +1415,7 @@ func (s *Server) handleAddToken(w http.ResponseWriter, r *http.Request, provider
 	email := req.Email
 	if email == "" {
 		// Try to extract email from token
-		extractor := auth.NewEmailExtractionManager(s.logger)
+		extractor := tokpkg.NewEmailExtractionManager(s.logger)
 		emailExtractor, err := extractor.GetExtractor(providerID)
 		if err != nil {
 			s.logger.WarnLog("Failed to get email extractor for %s: %v", providerID, err)
@@ -1433,8 +1436,8 @@ func (s *Server) handleAddToken(w http.ResponseWriter, r *http.Request, provider
 		expiryDate = time.Now().UnixMilli() + (req.ExpiresIn * 1000)
 	}
 
-	token := auth.ProviderToken{
-		ID:           auth.GenerateTokenID(),
+	token := tokpkg.ProviderToken{
+		ID:           tokpkg.GenerateTokenID(),
 		AccessToken:  req.AccessToken,
 		RefreshToken: req.RefreshToken,
 		TokenType:    req.TokenType,
@@ -1443,8 +1446,8 @@ func (s *Server) handleAddToken(w http.ResponseWriter, r *http.Request, provider
 		Email:        email,
 		Healthy:      true,
 		HealthScore:  1.0,
-		LastUsed:     auth.GetCurrentTimestamp(),
-		CreatedAt:    auth.GetCurrentTimestamp(),
+		LastUsed:     tokpkg.GetCurrentTimestamp(),
+		CreatedAt:    tokpkg.GetCurrentTimestamp(),
 		ErrorCount:   0,
 	}
 
@@ -1511,7 +1514,7 @@ func (s *Server) handleRefreshTokenByID(w http.ResponseWriter, r *http.Request, 
 	refreshed.ID = tokenID
 	refreshed.Email = token.Email
 	refreshed.CreatedAt = token.CreatedAt
-	refreshed.LastUsed = auth.GetCurrentTimestamp()
+	refreshed.LastUsed = tokpkg.GetCurrentTimestamp()
 	refreshed.Healthy = true
 	refreshed.HealthScore = 1.0
 	refreshed.ErrorCount = 0
@@ -1550,7 +1553,7 @@ func (s *Server) handleUpdateProviderSettings(w http.ResponseWriter, r *http.Req
 	settings := store.Settings
 	if req.SelectionStrategy != "" {
 		// Validate strategy
-		factory := auth.NewStrategyFactory()
+		factory := tokpkg.NewStrategyFactory()
 		if _, err := factory.CreateStrategy(req.SelectionStrategy); err != nil {
 			WriteError(w, http.StatusBadRequest, "invalid_strategy", err.Error())
 			return
@@ -1572,7 +1575,7 @@ func (s *Server) handleUpdateProviderSettings(w http.ResponseWriter, r *http.Req
 
 	// Update token manager strategy if it exists
 	if manager, ok := s.tokenManagers[providerID]; ok {
-		factory := auth.NewStrategyFactory()
+		factory := tokpkg.NewStrategyFactory()
 		if strategy, err := factory.CreateStrategy(settings.SelectionStrategy); err == nil {
 			manager.SetStrategy(strategy)
 		}
@@ -1586,9 +1589,9 @@ func (s *Server) handleUpdateProviderSettings(w http.ResponseWriter, r *http.Req
 
 // ProxyConfigResponse represents the response for proxy configuration
 type ProxyConfigResponse struct {
-	TokenID      string            `json:"token_id"`
-	Proxy        *auth.ProxyConfig `json:"proxy"`
-	HealthStatus *auth.ProxyHealth `json:"health_status,omitempty"`
+	TokenID      string              `json:"token_id"`
+	Proxy        *tokpkg.ProxyConfig `json:"proxy"`
+	HealthStatus *tokpkg.ProxyHealth `json:"health_status,omitempty"`
 }
 
 // TestProxyRequest represents a request to test a proxy connection
@@ -1643,7 +1646,7 @@ func (s *Server) getProxyConfigHandler(w http.ResponseWriter, r *http.Request, p
 	}
 
 	// Get health status
-	var healthStatus *auth.ProxyHealth
+	var healthStatus *tokpkg.ProxyHealth
 	if proxyHealthTracker != nil {
 		healthStatus = proxyHealthTracker.GetHealthStatus(tokenID)
 	}
@@ -1678,16 +1681,16 @@ func (s *Server) updateProxyConfigHandler(w http.ResponseWriter, r *http.Request
 	}
 
 	// Parse request body
-	var proxyConfig auth.ProxyConfig
+	var proxyConfig tokpkg.ProxyConfig
 	if err := ParseJSON(r, &proxyConfig); err != nil {
 		s.logger.ErrorLog("[updateProxyConfig] Failed to parse request: %v", err)
 		WriteError(w, http.StatusBadRequest, "invalid_request", err.Error())
 		return
 	}
 
-	// Set default enabled value if not specified
-	if !proxyConfig.Enabled && proxyConfig.Type == "" {
-		proxyConfig.Enabled = true
+	// Set default proxy type if not specified
+	if proxyConfig.Type == "" {
+		proxyConfig.Type = tokpkg.ProxyTypeNone
 	}
 
 	// Validate proxy configuration
@@ -1717,10 +1720,10 @@ func (s *Server) updateProxyConfigHandler(w http.ResponseWriter, r *http.Request
 
 	// Log the change for audit trail
 	s.logger.InfoLog("[updateProxyConfig] Updating proxy config for token %s - Type: %s, Host: %s, Port: %d, Enabled: %t",
-		tokenID, proxyConfig.Type, proxyConfig.Host, proxyConfig.Port, proxyConfig.Enabled)
+		tokenID, proxyConfig.Type, proxyConfig.Host, proxyConfig.Port)
 
 	// Update token with new proxy config
-	if err := store.UpdateToken(tokenID, func(t *auth.ProviderToken) {
+	if err := store.UpdateToken(tokenID, func(t *tokpkg.ProviderToken) {
 		t.Proxy = &proxyConfig
 		t.ProxyHealthScore = 1.0 // Reset proxy health score on config change
 	}); err != nil {
@@ -1773,7 +1776,7 @@ func (s *Server) deleteProxyConfigHandler(w http.ResponseWriter, r *http.Request
 	s.logger.InfoLog("[deleteProxyConfig] Removing proxy config for token %s (had proxy: %v)", tokenID, hadProxy)
 
 	// Update token to remove proxy config
-	if err := store.UpdateToken(tokenID, func(t *auth.ProviderToken) {
+	if err := store.UpdateToken(tokenID, func(t *tokpkg.ProviderToken) {
 		t.Proxy = nil
 		t.ProxyHealthScore = 1.0 // Reset proxy health score
 	}); err != nil {
@@ -1799,9 +1802,9 @@ func (s *Server) validateProvider(providerID string) error {
 }
 
 // refreshProviderToken refreshes a token using provider-specific logic
-func (s *Server) refreshProviderToken(config *ProviderConfig, token *auth.ProviderToken) (auth.ProviderToken, error) {
+func (s *Server) refreshProviderToken(config *ProviderConfig, token *tokpkg.ProviderToken) (tokpkg.ProviderToken, error) {
 	if token.RefreshToken == "" {
-		return auth.ProviderToken{}, fmt.Errorf("no refresh token available")
+		return tokpkg.ProviderToken{}, fmt.Errorf("no refresh token available")
 	}
 
 	oauthConfig := &oauth2.Config{
@@ -1822,10 +1825,10 @@ func (s *Server) refreshProviderToken(config *ProviderConfig, token *auth.Provid
 	tokenSource := oauthConfig.TokenSource(ctx, oauthToken)
 	newToken, err := tokenSource.Token()
 	if err != nil {
-		return auth.ProviderToken{}, fmt.Errorf("failed to refresh token: %w", err)
+		return tokpkg.ProviderToken{}, fmt.Errorf("failed to refresh token: %w", err)
 	}
 
-	refreshed := auth.ProviderToken{
+	refreshed := tokpkg.ProviderToken{
 		AccessToken:  newToken.AccessToken,
 		TokenType:    newToken.TokenType,
 		RefreshToken: newToken.RefreshToken,
@@ -1876,7 +1879,7 @@ func (s *Server) handleProxyTest(w http.ResponseWriter, r *http.Request) {
 	}
 
 	// Validate proxy type
-	proxyType := auth.ProxyType(req.Type)
+	proxyType := tokpkg.ProxyType(req.Type)
 	if err := proxyType.Validate(); err != nil {
 		s.logger.ErrorLog("[ProxyTest] Invalid proxy type: %s", req.Type)
 		WriteError(w, http.StatusBadRequest, "invalid_request", fmt.Sprintf("Invalid proxy type: %s", req.Type))
@@ -1884,17 +1887,16 @@ func (s *Server) handleProxyTest(w http.ResponseWriter, r *http.Request) {
 	}
 
 	// Create proxy configuration
-	proxyConfig := &auth.ProxyConfig{
+	proxyConfig := &tokpkg.ProxyConfig{
 		Type:     proxyType,
 		Host:     req.Host,
 		Port:     req.Port,
 		Username: req.Username,
 		Password: req.Password,
-		Enabled:  true,
 	}
 
 	// Create proxy tester and test connection
-	proxyTester := auth.NewProxyTester(s.logger)
+	proxyTester := tokpkg.NewProxyTester(s.logger)
 	result, err := proxyTester.TestConnection(r.Context(), proxyConfig)
 	if err != nil {
 		s.logger.ErrorLog("[ProxyTest] Test failed: %v", err)
@@ -1926,13 +1928,53 @@ func (s *Server) GetStateManager() *StateManager {
 }
 
 // SetMultiTokenManager sets an external multi-token manager (for integration with main application)
-func (s *Server) SetMultiTokenManager(multiTokenMgr *auth.MultiTokenManager) {
+func (s *Server) SetMultiTokenManager(multiTokenMgr *tokpkg.MultiTokenManager) {
 	s.multiTokenManager = multiTokenMgr
 }
 
 // GetMultiTokenManager returns the multi-token manager (for use by other packages)
-func (s *Server) GetMultiTokenManager() *auth.MultiTokenManager {
+func (s *Server) GetMultiTokenManager() *tokpkg.MultiTokenManager {
 	return s.multiTokenManager
+}
+
+// RegisterProxyRoutes registers OpenAI-compatible proxy routes with token manager integration
+// This method retrieves token managers from the MultiTokenManager and registers routes
+// with appropriate token managers for proxy-aware token selection
+func (s *Server) RegisterProxyRoutes(mux *http.ServeMux, factory *provider.Factory, convFactory *converter.Factory) {
+	// Build a map of provider types to their token managers
+	tokenManagers := make(map[provider.ProviderType]*tokpkg.TokenManager)
+
+	// Provider type to provider ID mapping for token manager lookup
+	providerToID := map[provider.ProviderType]string{
+		provider.ProviderQwen:        "qwen",
+		provider.ProviderGeminiCLI:   "gemini",
+		provider.ProviderKiro:        "kiro",
+		provider.ProviderAntigravity: "antigravity",
+		provider.ProviderIFlow:       "iflow",
+	}
+
+	// Retrieve token managers for each provider
+	for providerType, providerID := range providerToID {
+		if s.multiTokenManager != nil {
+			if tm, err := s.multiTokenManager.GetTokenManager(providerID); err == nil && tm != nil {
+				tokenManagers[providerType] = tm
+				s.logger.InfoLog("[RegisterProxyRoutes] Token manager found for provider %s", providerID)
+			} else {
+				s.logger.WarnLog("[RegisterProxyRoutes] No token manager available for provider %s: %v", providerID, err)
+			}
+		} else {
+			s.logger.WarnLog("[RegisterProxyRoutes] MultiTokenManager not initialized, provider %s will not have token manager", providerID)
+		}
+	}
+
+	// Register general /v1/ route with nil token manager
+	// Providers have their own token managers, so the general route doesn't need one
+	proxy.RegisterOpenAIRoutesWithTokenManager(mux, factory, convFactory, nil)
+
+	// Register provider-specific routes with their respective token managers
+	proxy.RegisterProviderSpecificRoutesWithTokenManager(mux, factory, convFactory, tokenManagers)
+
+	s.logger.InfoLog("[RegisterProxyRoutes] Proxy routes registered with token manager integration")
 }
 
 // resolveDashboardDir resolves the dashboard directory path relative to the executable location

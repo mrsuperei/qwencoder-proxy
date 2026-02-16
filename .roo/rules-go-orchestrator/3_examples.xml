@@ -1,0 +1,352 @@
+<examples>
+  <overview>
+    Complete workflow examples demonstrating how go-orchestrator mode
+    coordinates between Go-specialized modes for various scenarios.
+  </overview>
+
+  <example name="creating_a_new_service">
+    <description>
+      Creating a new service from scratch requires design, implementation,
+      and potentially debugging.
+    </description>
+    <user_request>
+      "Create a new authentication service that supports OAuth2 flows,
+      token management, and concurrent request handling."
+    </user_request>
+    <orchestrator_workflow>
+      <step number="1">
+        <action>Analyze request</action>
+        <analysis>
+          <task_type>Multi-phase: design + implementation</task_type>
+          <go_specifics>
+            <item>OAuth2 flows need careful design</item>
+            <item>Token management suggests caching</item>
+            <item>Concurrent handling needs goroutines/channels</item>
+          </go_specifics>
+        </analysis>
+      </step>
+
+      <step number="2">
+        <action>Delegate to go-architect</action>
+        <mode>go-architect</mode>
+        <context>
+          - Task: Design authentication service
+          - Requirements: OAuth2 flows, token management, concurrency
+          - Context: Existing auth package structure
+        </context>
+        <expected_deliverables>
+          <deliverable>Package structure and organization</deliverable>
+          <deliverable>Interface definitions (Authenticator, TokenStore)</deliverable>
+          <deliverable>Concurrency strategy (worker pool for token refresh)</deliverable>
+          <deliverable>Error handling strategy</deliverable>
+          <deliverable>Implementation task breakdown</deliverable>
+        </expected_deliverables>
+      </step>
+
+      <step number="3">
+        <action>Receive design from go-architect</action>
+        <handoff>
+          <from>go-architect</from>
+          <deliverables>
+            <deliverable>Technical specification document</deliverable>
+            <deliverable>Package: auth/ with subpackages</deliverable>
+            <deliverable>Interfaces: Authenticator, TokenStore, TokenManager</deliverable>
+            <deliverable>Worker pool design for concurrent token refresh</deliverable>
+          </deliverables>
+        </handoff>
+      </step>
+
+      <step number="4">
+        <action>Delegate to go-code</action>
+        <mode>go-code</mode>
+        <context>
+          - Task: Implement authentication service
+          - Design: Technical specification from go-architect
+          - Files to create: types.go, interfaces.go, oauth.go, token_manager.go
+        </context>
+        <expected_deliverables>
+          <deliverable>Complete implementation</deliverable>
+          <deliverable>Unit tests for each component</deliverable>
+          <deliverable>Integration tests for OAuth flows</deliverable>
+        </expected_deliverables>
+      </step>
+
+      <step number="5">
+        <action>Receive implementation from go-code</action>
+        <handoff>
+          <from>go-code</from>
+          <deliverables>
+            <deliverable>auth/types.go - Type definitions</deliverable>
+            <deliverable>auth/interfaces.go - Interface definitions</deliverable>
+            <deliverable>auth/oauth.go - OAuth implementation</deliverable>
+            <deliverable>auth/token_manager.go - Token management</deliverable>
+            <deliverable>auth/*_test.go - Tests</deliverable>
+          </deliverables>
+        </handoff>
+      </step>
+
+      <step number="6">
+        <action>Verify completion</action>
+        <verification>
+          <check>Code compiles (go build)</check>
+          <check>Tests pass (go test)</check>
+          <check>No race conditions (go test -race)</check>
+        </verification>
+      </step>
+    </orchestrator_workflow>
+  </example>
+
+  <example name="fixing_a_race_condition">
+    <description>
+      Debugging and fixing a race condition requires research, debugging,
+      and code fixes.
+    </description>
+    <user_request>
+      "I'm getting a race condition error when running tests with -race flag.
+      The error is in the token manager."
+    </user_request>
+    <orchestrator_workflow>
+      <step number="1">
+        <action>Analyze request</action>
+        <analysis>
+          <task_type>Debugging</task_type>
+          <go_specifics>
+            <item>Race condition in Go code</item>
+            <item>Token manager suggests concurrent access</item>
+          </go_specifics>
+        </analysis>
+      </step>
+
+      <step number="2">
+        <action>Delegate to project-research</action>
+        <mode>project-research</mode>
+        <context>
+          - Task: Understand token manager code
+          - Focus: Identify concurrent access patterns
+        </context>
+        <expected_deliverables>
+          <deliverable>Location of token manager code</deliverable>
+          <deliverable>Analysis of concurrent access points</deliverable>
+          <deliverable>Identification of potential race conditions</deliverable>
+        </expected_deliverables>
+      </step>
+
+      <step number="3">
+        <action>Delegate to go-debug</action>
+        <mode>go-debug</mode>
+        <context>
+          - Task: Investigate race condition
+          - Context: Code analysis from project-research
+          - Error: Race condition in token manager
+        </context>
+        <expected_deliverables>
+          <deliverable>Root cause analysis</deliverable>
+          <deliverable>Specific location of race</deliverable>
+          <deliverable>Recommended fix (e.g., add mutex)</deliverable>
+        </expected_deliverables>
+      </step>
+
+      <step number="4">
+        <action>Delegate to go-code</action>
+        <mode>go-code</mode>
+        <context>
+          - Task: Fix the race condition
+          - Fix: Add mutex or other synchronization
+          - Location: token_manager.go
+        </context>
+        <expected_deliverables>
+          <deliverable>Fixed code with proper synchronization</deliverable>
+          <deliverable>Updated tests</deliverable>
+        </expected_deliverables>
+      </step>
+
+      <step number="5">
+        <action>Verify fix</action>
+        <verification>
+          <check>go test -race passes</check>
+          <check>No performance regression</check>
+        </verification>
+      </step>
+    </orchestrator_workflow>
+  </example>
+
+  <example name="understanding_existing_code">
+    <description>
+      Understanding and explaining existing Go code.
+    </description>
+    <user_request>
+      "Explain how the proxy handler works and what patterns it uses."
+    </user_request>
+    <orchestrator_workflow>
+      <step number="1">
+        <action>Analyze request</action>
+        <analysis>
+          <task_type>Research/Explanation</task_type>
+          <go_specifics>
+            <item>Proxy handler in Go</item>
+            <item>Need to identify patterns used</item>
+          </go_specifics>
+        </analysis>
+      </step>
+
+      <step number="2">
+        <action>Delegate to project-research</action>
+        <mode>project-research</mode>
+        <context>
+          - Task: Analyze proxy handler
+          - Focus: Identify patterns, explain functionality
+        </context>
+        <expected_deliverables>
+          <deliverable>Location of proxy handler code</deliverable>
+          <deliverable>Explanation of how it works</deliverable>
+          <deliverable>Go patterns used (interfaces, error handling, etc.)</deliverable>
+          <deliverable>Architecture overview</deliverable>
+        </expected_deliverables>
+      </step>
+
+      <step number="3">
+        <action>Present results</action>
+        <output>
+          - Complete explanation of proxy handler
+          - Identified patterns: interface-based design, error wrapping, context propagation
+          - Code structure overview
+        </output>
+      </step>
+    </orchestrator_workflow>
+  </example>
+
+  <example name="refactoring_for_testability">
+    <description>
+      Refactoring existing code to improve testability.
+    </description>
+    <user_request>
+      "The user service has hardcoded database connections. Refactor it
+      to use interfaces so it can be tested with mocks."
+    </user_request>
+    <orchestrator_workflow>
+      <step number="1">
+        <action>Analyze request</action>
+        <analysis>
+          <task_type>Refactoring (design + implementation)</task_type>
+          <go_specifics>
+            <item>Need to introduce interfaces</item>
+            <item>Dependency injection pattern</item>
+          </go_specifics>
+        </analysis>
+      </step>
+
+      <step number="2">
+        <action>Delegate to project-research</action>
+        <mode>project-research</mode>
+        <context>
+          - Task: Analyze current user service
+          - Focus: Identify database coupling points
+        </context>
+      </step>
+
+      <step number="3">
+        <action>Delegate to go-architect</action>
+        <mode>go-architect</mode>
+        <context>
+          - Task: Design refactoring approach
+          - Goal: Introduce interfaces for testability
+          - Current state: Direct DB coupling
+        </context>
+        <expected_deliverables>
+          <deliverable>Repository interface design</deliverable>
+          <deliverable>Dependency injection approach</deliverable>
+          <deliverable>Refactoring plan</deliverable>
+        </expected_deliverables>
+      </step>
+
+      <step number="4">
+        <action>Delegate to go-code</action>
+        <mode>go-code</mode>
+        <context>
+          - Task: Implement refactoring
+          - Design: Repository interface, dependency injection
+        </context>
+        <expected_deliverables>
+          <deliverable>Repository interface</deliverable>
+          <deliverable>SQL implementation</deliverable>
+          <deliverable>Mock implementation for tests</deliverable>
+          <deliverable>Refactored user service</deliverable>
+          <deliverable>Tests using mocks</deliverable>
+        </expected_deliverables>
+      </step>
+
+      <step number="5">
+        <action>Verify refactoring</action>
+        <verification>
+          <check>All tests pass</check>
+          <check>Tests use mocks (no real DB)</check>
+          <check>Functionality preserved</check>
+        </verification>
+      </step>
+    </orchestrator_workflow>
+  </example>
+
+  <example name="adding_concurrent_processing">
+    <description>
+      Adding concurrent processing to existing code.
+    </description>
+    <user_request>
+      "The data processor is slow. Make it process items concurrently
+      using a worker pool."
+    </user_request>
+    <orchestrator_workflow>
+      <step number="1">
+        <action>Analyze request</action>
+        <analysis>
+          <task_type>Refactoring with concurrency (design + implementation)</task_type>
+          <go_specifics>
+            <item>Worker pool pattern</item>
+            <item>Goroutines and channels</item>
+            <item>Context for cancellation</item>
+          </go_specifics>
+        </analysis>
+      </step>
+
+      <step number="2">
+        <action>Delegate to go-architect</action>
+        <mode>go-architect</mode>
+        <context>
+          - Task: Design concurrent processing
+          - Pattern: Worker pool
+          - Current: Sequential processing
+        </context>
+        <expected_deliverables>
+          <deliverable>Worker pool design</deliverable>
+          <deliverable>Channel design (jobs, results)</deliverable>
+          <deliverable>Concurrency strategy (number of workers)</deliverable>
+          <deliverable>Cancellation strategy</deliverable>
+        </expected_deliverables>
+      </step>
+
+      <step number="3">
+        <action>Delegate to go-code</action>
+        <mode>go-code</mode>
+        <context>
+          - Task: Implement worker pool
+          - Design: From go-architect
+        </context>
+        <expected_deliverables>
+          <deliverable>Worker pool implementation</deliverable>
+          <deliverable>Job and result types</deliverable>
+          <deliverable>Worker function</deliverable>
+          <deliverable>Tests for concurrent behavior</deliverable>
+          <deliverable>Benchmarks</deliverable>
+        </expected_deliverables>
+      </step>
+
+      <step number="4">
+        <action>Verify implementation</action>
+        <verification>
+          <check>go test -race passes</check>
+          <check>Benchmarks show improvement</check>
+          <check>Correctness maintained</check>
+        </verification>
+      </step>
+    </orchestrator_workflow>
+  </example>
+</examples>

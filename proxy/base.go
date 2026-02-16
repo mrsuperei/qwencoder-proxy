@@ -9,7 +9,7 @@ import (
 	"net/http"
 	"strings"
 
-	"github.com/sunbankio/qwencoder-proxy/auth"
+	"github.com/sunbankio/qwencoder-proxy/internal/token"
 	"github.com/sunbankio/qwencoder-proxy/logging"
 )
 
@@ -17,11 +17,11 @@ import (
 // Fields are immutable after construction, no mutex needed.
 type BaseHandler struct {
 	logger       logging.Logger
-	tokenManager *auth.TokenManager
+	tokenManager *token.TokenManager
 }
 
 // NewBaseHandler creates a new base handler with provided dependencies.
-func NewBaseHandler(logger logging.Logger, tokenManager *auth.TokenManager) *BaseHandler {
+func NewBaseHandler(logger logging.Logger, tokenManager *token.TokenManager) *BaseHandler {
 	return &BaseHandler{
 		logger:       logger,
 		tokenManager: tokenManager,
@@ -46,7 +46,7 @@ func (b *BaseHandler) GetLogger() logging.Logger {
 }
 
 // GetTokenManager returns the token manager. Set once during init, no mutex needed.
-func (b *BaseHandler) GetTokenManager() *auth.TokenManager {
+func (b *BaseHandler) GetTokenManager() *token.TokenManager {
 	return b.tokenManager
 }
 

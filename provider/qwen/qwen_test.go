@@ -11,18 +11,18 @@ import (
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
 
-	"github.com/sunbankio/qwencoder-proxy/auth"
+	tokpkg "github.com/sunbankio/qwencoder-proxy/internal/token"
 	"github.com/sunbankio/qwencoder-proxy/logging"
 	providerpkg "github.com/sunbankio/qwencoder-proxy/provider"
 )
 
-// mockProxyClientFactory is a mock implementation of auth.ProxyClientFactory for testing
+// mockProxyClientFactory is a mock implementation of tokpkg.ProxyClientFactory for testing
 type mockProxyClientFactory struct {
 	mockClient *http.Client
-	calls      []*auth.ProxyConfig
+	calls      []*tokpkg.ProxyConfig
 }
 
-func (m *mockProxyClientFactory) GetClient(proxyConfig *auth.ProxyConfig) *http.Client {
+func (m *mockProxyClientFactory) GetClient(proxyConfig *tokpkg.ProxyConfig) *http.Client {
 	m.calls = append(m.calls, proxyConfig)
 	if m.mockClient != nil {
 		return m.mockClient
@@ -30,9 +30,9 @@ func (m *mockProxyClientFactory) GetClient(proxyConfig *auth.ProxyConfig) *http.
 	return &http.Client{}
 }
 
-func createTestToken(id string) *auth.ProviderToken {
+func createTestToken(id string) *tokpkg.ProviderToken {
 	now := time.Now()
-	return &auth.ProviderToken{
+	return &tokpkg.ProviderToken{
 		ID:           id,
 		AccessToken:  "test-access-token-" + id,
 		RefreshToken: "test-refresh-token-" + id,
@@ -46,7 +46,7 @@ func createTestToken(id string) *auth.ProviderToken {
 	}
 }
 
-func createTestTokenWithProxy(id string, proxyConfig *auth.ProxyConfig) *auth.ProviderToken {
+func createTestTokenWithProxy(id string, proxyConfig *tokpkg.ProxyConfig) *tokpkg.ProviderToken {
 	token := createTestToken(id)
 	token.Proxy = proxyConfig
 	return token
@@ -59,12 +59,11 @@ func TestQwenAuthenticator_GetTokenWithClient(t *testing.T) {
 		filePath := tempDir + "/store.json"
 
 		// Create token store with a token that has proxy config
-		store := auth.NewMultiTokenStore("qwen", filePath, logger)
-		proxyConfig := &auth.ProxyConfig{
-			Type:    auth.ProxyTypeHTTP,
-			Host:    "proxy.example.com",
-			Port:    8080,
-			Enabled: true,
+		store := tokpkg.NewMultiTokenStore("qwen", filePath, logger)
+		proxyConfig := &tokpkg.ProxyConfig{
+			Type: tokpkg.ProxyTypeHTTP,
+			Host: "proxy.example.com",
+			Port: 8080,
 		}
 		token := createTestTokenWithProxy("test-token-1", proxyConfig)
 		require.NoError(t, store.AddToken(*token))
@@ -72,8 +71,8 @@ func TestQwenAuthenticator_GetTokenWithClient(t *testing.T) {
 		// Create token manager with mock proxy client factory
 		mockClient := &http.Client{Timeout: 30 * time.Second}
 		mockFactory := &mockProxyClientFactory{mockClient: mockClient}
-		proxyTracker := auth.NewProxyHealthTracker(logger, 5, 5*time.Minute)
-		tokenManager := auth.NewTokenManager(store, auth.NewRandomSelectionStrategy(), logger, mockFactory, proxyTracker)
+		proxyTracker := tokpkg.NewProxyHealthTracker(logger, 5, 5*time.Minute)
+		tokenManager := tokpkg.NewTokenManager(store, tokpkg.NewRandomSelectionStrategy(), logger, mockFactory, proxyTracker)
 
 		// Create authenticator with token manager
 		authenticator := NewQwenAuthenticator(tokenManager, logger)
@@ -110,14 +109,14 @@ func TestQwenAuthenticator_GetTokenWithClient(t *testing.T) {
 		filePath := tempDir + "/store.json"
 
 		// Create token store with a token that has no proxy config
-		store := auth.NewMultiTokenStore("qwen", filePath, logger)
+		store := tokpkg.NewMultiTokenStore("qwen", filePath, logger)
 		token := createTestToken("test-token-2")
 		require.NoError(t, store.AddToken(*token))
 
 		// Create token manager with mock proxy client factory
 		mockFactory := &mockProxyClientFactory{}
-		proxyTracker := auth.NewProxyHealthTracker(logger, 5, 5*time.Minute)
-		tokenManager := auth.NewTokenManager(store, auth.NewRandomSelectionStrategy(), logger, mockFactory, proxyTracker)
+		proxyTracker := tokpkg.NewProxyHealthTracker(logger, 5, 5*time.Minute)
+		tokenManager := tokpkg.NewTokenManager(store, tokpkg.NewRandomSelectionStrategy(), logger, mockFactory, proxyTracker)
 
 		// Create authenticator with token manager
 		authenticator := NewQwenAuthenticator(tokenManager, logger)
@@ -139,10 +138,10 @@ func TestQwenAuthenticator_GetTokenWithClient(t *testing.T) {
 		filePath := tempDir + "/store.json"
 
 		// Create empty token store
-		store := auth.NewMultiTokenStore("qwen", filePath, logger)
+		store := tokpkg.NewMultiTokenStore("qwen", filePath, logger)
 		mockFactory := &mockProxyClientFactory{}
-		proxyTracker := auth.NewProxyHealthTracker(logger, 5, 5*time.Minute)
-		tokenManager := auth.NewTokenManager(store, auth.NewRandomSelectionStrategy(), logger, mockFactory, proxyTracker)
+		proxyTracker := tokpkg.NewProxyHealthTracker(logger, 5, 5*time.Minute)
+		tokenManager := tokpkg.NewTokenManager(store, tokpkg.NewRandomSelectionStrategy(), logger, mockFactory, proxyTracker)
 
 		// Create authenticator with token manager
 		authenticator := NewQwenAuthenticator(tokenManager, logger)
@@ -164,12 +163,11 @@ func TestQwenAuthenticator_GetHTTPClient(t *testing.T) {
 		filePath := tempDir + "/store.json"
 
 		// Create token store with a token that has proxy config
-		store := auth.NewMultiTokenStore("qwen", filePath, logger)
-		proxyConfig := &auth.ProxyConfig{
-			Type:    auth.ProxyTypeSOCKS5,
-			Host:    "socks.example.com",
-			Port:    1080,
-			Enabled: true,
+		store := tokpkg.NewMultiTokenStore("qwen", filePath, logger)
+		proxyConfig := &tokpkg.ProxyConfig{
+			Type: tokpkg.ProxyTypeSOCKS5,
+			Host: "socks.example.com",
+			Port: 1080,
 		}
 		token := createTestTokenWithProxy("test-token-3", proxyConfig)
 		require.NoError(t, store.AddToken(*token))
@@ -177,8 +175,8 @@ func TestQwenAuthenticator_GetHTTPClient(t *testing.T) {
 		// Create token manager with mock proxy client factory
 		mockClient := &http.Client{Timeout: 30 * time.Second}
 		mockFactory := &mockProxyClientFactory{mockClient: mockClient}
-		proxyTracker := auth.NewProxyHealthTracker(logger, 5, 5*time.Minute)
-		tokenManager := auth.NewTokenManager(store, auth.NewRandomSelectionStrategy(), logger, mockFactory, proxyTracker)
+		proxyTracker := tokpkg.NewProxyHealthTracker(logger, 5, 5*time.Minute)
+		tokenManager := tokpkg.NewTokenManager(store, tokpkg.NewRandomSelectionStrategy(), logger, mockFactory, proxyTracker)
 
 		// Create authenticator with token manager
 		authenticator := NewQwenAuthenticator(tokenManager, logger)
@@ -211,10 +209,10 @@ func TestQwenAuthenticator_GetHTTPClient(t *testing.T) {
 		filePath := tempDir + "/store.json"
 
 		// Create empty token store
-		store := auth.NewMultiTokenStore("qwen", filePath, logger)
+		store := tokpkg.NewMultiTokenStore("qwen", filePath, logger)
 		mockFactory := &mockProxyClientFactory{}
-		proxyTracker := auth.NewProxyHealthTracker(logger, 5, 5*time.Minute)
-		tokenManager := auth.NewTokenManager(store, auth.NewRandomSelectionStrategy(), logger, mockFactory, proxyTracker)
+		proxyTracker := tokpkg.NewProxyHealthTracker(logger, 5, 5*time.Minute)
+		tokenManager := tokpkg.NewTokenManager(store, tokpkg.NewRandomSelectionStrategy(), logger, mockFactory, proxyTracker)
 
 		// Create authenticator with token manager
 		authenticator := NewQwenAuthenticator(tokenManager, logger)
@@ -249,12 +247,12 @@ func TestQwenAuthenticator_BackwardCompatibility(t *testing.T) {
 		filePath := tempDir + "/store.json"
 
 		// Create token store with a token
-		store := auth.NewMultiTokenStore("qwen", filePath, logger)
+		store := tokpkg.NewMultiTokenStore("qwen", filePath, logger)
 		token := createTestToken("test-token-5")
 		require.NoError(t, store.AddToken(*token))
 
 		// Create token manager
-		tokenManager := auth.NewTokenManager(store, auth.NewRandomSelectionStrategy(), logger, nil, nil)
+		tokenManager := tokpkg.NewTokenManager(store, tokpkg.NewRandomSelectionStrategy(), logger, nil, nil)
 
 		// Create authenticator with token manager
 		authenticator := NewQwenAuthenticator(tokenManager, logger)
@@ -390,14 +388,14 @@ func TestProvider_doRequestWithProxy(t *testing.T) {
 		filePath := tempDir + "/store.json"
 
 		// Create token store with a token
-		store := auth.NewMultiTokenStore("qwen", filePath, logger)
+		store := tokpkg.NewMultiTokenStore("qwen", filePath, logger)
 		token := createTestToken("test-token-success")
 		require.NoError(t, store.AddToken(*token))
 
 		// Create token manager with proxy health tracker
 		mockFactory := &mockProxyClientFactory{}
-		proxyTracker := auth.NewProxyHealthTracker(logger, 5, 5*time.Minute)
-		tokenManager := auth.NewTokenManager(store, auth.NewRandomSelectionStrategy(), logger, mockFactory, proxyTracker)
+		proxyTracker := tokpkg.NewProxyHealthTracker(logger, 5, 5*time.Minute)
+		tokenManager := tokpkg.NewTokenManager(store, tokpkg.NewRandomSelectionStrategy(), logger, mockFactory, proxyTracker)
 
 		// Create provider with token manager
 		provider := NewProviderWithTokenManager(tokenManager, logger)
@@ -426,14 +424,14 @@ func TestProvider_doRequestWithProxy(t *testing.T) {
 		filePath := tempDir + "/store.json"
 
 		// Create token store with a token
-		store := auth.NewMultiTokenStore("qwen", filePath, logger)
+		store := tokpkg.NewMultiTokenStore("qwen", filePath, logger)
 		token := createTestToken("test-token-error")
 		require.NoError(t, store.AddToken(*token))
 
 		// Create token manager with proxy health tracker
 		mockFactory := &mockProxyClientFactory{}
-		proxyTracker := auth.NewProxyHealthTracker(logger, 5, 5*time.Minute)
-		tokenManager := auth.NewTokenManager(store, auth.NewRandomSelectionStrategy(), logger, mockFactory, proxyTracker)
+		proxyTracker := tokpkg.NewProxyHealthTracker(logger, 5, 5*time.Minute)
+		tokenManager := tokpkg.NewTokenManager(store, tokpkg.NewRandomSelectionStrategy(), logger, mockFactory, proxyTracker)
 
 		// Create provider with token manager
 		provider := NewProviderWithTokenManager(tokenManager, logger)
@@ -485,12 +483,11 @@ func TestProvider_GenerateContent_ProxyAware(t *testing.T) {
 		filePath := tempDir + "/store.json"
 
 		// Create token store with a token that has proxy config
-		store := auth.NewMultiTokenStore("qwen", filePath, logger)
-		proxyConfig := &auth.ProxyConfig{
-			Type:    auth.ProxyTypeHTTP,
-			Host:    "proxy.example.com",
-			Port:    8080,
-			Enabled: true,
+		store := tokpkg.NewMultiTokenStore("qwen", filePath, logger)
+		proxyConfig := &tokpkg.ProxyConfig{
+			Type: tokpkg.ProxyTypeHTTP,
+			Host: "proxy.example.com",
+			Port: 8080,
 		}
 		token := createTestTokenWithProxy("test-token-proxy", proxyConfig)
 		require.NoError(t, store.AddToken(*token))
@@ -498,8 +495,8 @@ func TestProvider_GenerateContent_ProxyAware(t *testing.T) {
 		// Create token manager with mock proxy client factory
 		mockClient := &http.Client{Timeout: 30 * time.Second}
 		mockFactory := &mockProxyClientFactory{mockClient: mockClient}
-		proxyTracker := auth.NewProxyHealthTracker(logger, 5, 5*time.Minute)
-		tokenManager := auth.NewTokenManager(store, auth.NewRandomSelectionStrategy(), logger, mockFactory, proxyTracker)
+		proxyTracker := tokpkg.NewProxyHealthTracker(logger, 5, 5*time.Minute)
+		tokenManager := tokpkg.NewTokenManager(store, tokpkg.NewRandomSelectionStrategy(), logger, mockFactory, proxyTracker)
 
 		// Create provider with token manager
 		provider := NewProviderWithTokenManager(tokenManager, logger)
@@ -546,12 +543,11 @@ func TestProvider_GenerateContentStream_ProxyAware(t *testing.T) {
 		filePath := tempDir + "/store.json"
 
 		// Create token store with a token that has proxy config
-		store := auth.NewMultiTokenStore("qwen", filePath, logger)
-		proxyConfig := &auth.ProxyConfig{
-			Type:    auth.ProxyTypeSOCKS5,
-			Host:    "socks.example.com",
-			Port:    1080,
-			Enabled: true,
+		store := tokpkg.NewMultiTokenStore("qwen", filePath, logger)
+		proxyConfig := &tokpkg.ProxyConfig{
+			Type: tokpkg.ProxyTypeSOCKS5,
+			Host: "socks.example.com",
+			Port: 1080,
 		}
 		token := createTestTokenWithProxy("test-token-socks", proxyConfig)
 		require.NoError(t, store.AddToken(*token))
@@ -559,8 +555,8 @@ func TestProvider_GenerateContentStream_ProxyAware(t *testing.T) {
 		// Create token manager with mock proxy client factory
 		mockClient := &http.Client{Timeout: 30 * time.Second}
 		mockFactory := &mockProxyClientFactory{mockClient: mockClient}
-		proxyTracker := auth.NewProxyHealthTracker(logger, 5, 5*time.Minute)
-		tokenManager := auth.NewTokenManager(store, auth.NewRandomSelectionStrategy(), logger, mockFactory, proxyTracker)
+		proxyTracker := tokpkg.NewProxyHealthTracker(logger, 5, 5*time.Minute)
+		tokenManager := tokpkg.NewTokenManager(store, tokpkg.NewRandomSelectionStrategy(), logger, mockFactory, proxyTracker)
 
 		// Create provider with token manager
 		provider := NewProviderWithTokenManager(tokenManager, logger)

@@ -1,0 +1,245 @@
+<workflow_instructions>
+  <mode_overview>
+    Go Code mode specializes in implementing, modifying, and refactoring Go (Golang) code.
+    This mode focuses on writing clean, idiomatic Go code that follows best practices,
+    implements designed specifications, and integrates well with existing codebases.
+  </mode_overview>
+
+  <initialization_steps>
+    <step number="1">
+      <action>Understand the implementation task</action>
+      <details>
+        Parse the user's input to identify:
+        - What code needs to be written or modified
+        - Design specifications to follow (if provided)
+        - Files to create or update
+        - Go patterns and idioms to use
+      </details>
+    </step>
+
+    <step number="2">
+      <action>Review existing code context</action>
+      <tools>
+        <tool>read_file - Examine existing implementations</tool>
+        <tool>search_files - Find related code patterns</tool>
+        <tool>list_files - Understand package structure</tool>
+      </tools>
+    </step>
+
+    <step number="3">
+      <action>Check dependencies and imports</action>
+      <details>
+        - Review go.mod for available dependencies
+        - Identify standard library packages to use
+        - Check for third-party packages already in use
+        - Ensure no circular dependencies will be created
+      </details>
+    </step>
+  </initialization_steps>
+
+  <main_workflow>
+    <phase name="preparation">
+      <description>Prepare before writing code</description>
+      <steps>
+        <step>Read related files to understand existing patterns</step>
+        <step>Identify package to place new code in</step>
+        <step>Plan file organization (types.go, methods.go, etc.)</step>
+        <step>Check for existing interfaces to implement</step>
+      </steps>
+    </phase>
+
+    <phase name="implementation">
+      <description>Write the Go code</description>
+      <steps>
+        <step>Create or modify type definitions</step>
+        <step>Implement interfaces and methods</step>
+        <step>Add proper error handling</step>
+        <step>Implement concurrency patterns if needed</step>
+        <step>Add context propagation</step>
+      </steps>
+    </phase>
+
+    <phase name="validation">
+      <description>Verify the implementation</description>
+      <steps>
+        <step>Check for Go syntax errors</step>
+        <step>Ensure proper error handling</step>
+        <step>Verify no circular imports</step>
+        <step>Check for potential race conditions</step>
+        <step>Ensure code follows Go idioms</step>
+      </steps>
+    </phase>
+
+    <phase name="testing">
+      <description>Create tests for the implementation</description>
+      <steps>
+        <step>Write unit tests for functions/methods</step>
+        <step>Add table-driven tests for multiple scenarios</step>
+        <step>Create integration tests if needed</step>
+        <step>Add benchmarks for performance-critical code</step>
+      </steps>
+    </phase>
+  </main_workflow>
+
+  <go_coding_standards>
+    <standard category="file_organization">
+      <rule>Organize files by purpose</rule>
+      <patterns>
+        <pattern>types.go - Type definitions and structs</pattern>
+        <pattern>interfaces.go - Interface definitions</pattern>
+        <pattern>methods.go - Methods for types</pattern>
+        <pattern>helpers.go - Helper functions</pattern>
+        <pattern>errors.go - Custom error types</pattern>
+        <pattern>doc.go - Package documentation</pattern>
+        <pattern>{type}_test.go - Tests for specific type</pattern>
+      </patterns>
+    </standard>
+
+    <standard category="naming">
+      <rule>Follow Go naming conventions</rule>
+      <patterns>
+        <pattern>Package names: lowercase, single word, descriptive</pattern>
+        <pattern>Exported: PascalCase (e.g., HttpClient, NewService)</pattern>
+        <pattern>Unexported: camelCase (e.g., httpClient, parseData)</pattern>
+        <pattern>Interfaces: -er suffix (e.g., Reader, Writer)</pattern>
+        <pattern>Constants: PascalCase or UPPER_CASE</pattern>
+        <pattern>Acronyms: capitalize all letters (e.g., HTTP, URL, ID)</pattern>
+      </patterns>
+    </standard>
+
+    <standard category="error_handling">
+      <rule>Handle errors explicitly</rule>
+      <patterns>
+        <pattern>Always check errors immediately</pattern>
+        <pattern>Wrap errors with context using fmt.Errorf with %w</pattern>
+        <pattern>Use sentinel errors for expected conditions</pattern>
+        <pattern>Never ignore errors without explicit comment</pattern>
+      </patterns>
+    </standard>
+
+    <standard category="comments">
+      <rule>Add appropriate documentation</rule>
+      <patterns>
+        <pattern>Exported functions need godoc comments</pattern>
+        <pattern>Exported types need godoc comments</pattern>
+        <pattern>Complex logic needs inline comments</pattern>
+        <pattern>TODO comments for future work</pattern>
+      </patterns>
+    </standard>
+  </go_coding_standards>
+
+  <implementation_patterns>
+    <pattern name="constructor_pattern">
+      <description>
+        Use NewX() functions for constructors. Accept interfaces, return structs.
+      </description>
+      <template>
+        <code><![CDATA[
+// NewService creates a new Service instance.
+func NewService(repo Repository, logger Logger) *Service {
+    return &Service{
+        repo:   repo,
+        logger: logger,
+        config: DefaultConfig(),
+    }
+}
+        ]]></code>
+    </template>
+    </pattern>
+
+    <pattern name="interface_implementation">
+      <description>
+        Implement interfaces with explicit receiver types.
+      </description>
+      <template>
+        <code><![CDATA[
+// Ensure MyType implements MyInterface at compile time.
+var _ MyInterface = (*MyType)(nil)
+
+func (m *MyType) Method1() error {
+    // implementation
+}
+
+func (m *MyType) Method2(ctx context.Context) (Result, error) {
+    // implementation
+}
+        ]]></code>
+    </template>
+    </pattern>
+
+    <pattern name="error_wrapping">
+      <description>
+        Wrap errors with context for better debugging.
+      </description>
+      <template>
+        <code><![CDATA[
+result, err := someFunction()
+if err != nil {
+    return nil, fmt.Errorf("failed to do something: %w", err)
+}
+        ]]></code>
+    </template>
+    </pattern>
+
+    <pattern name="context_usage">
+      <description>
+        Pass context through call chains for cancellation and timeouts.
+      </description>
+      <template>
+        <code><![CDATA[
+func (s *Service) Process(ctx context.Context, input Input) (Output, error) {
+    // Add timeout if needed
+    ctx, cancel := context.WithTimeout(ctx, 30*time.Second)
+    defer cancel()
+
+    // Check for cancellation
+    select {
+    case <-ctx.Done():
+        return Output{}, ctx.Err()
+    default:
+    }
+
+    // Pass context to dependencies
+    data, err := s.repo.Fetch(ctx, input.ID)
+    if err != nil {
+        return Output{}, fmt.Errorf("fetch failed: %w", err)
+    }
+
+    return s.process(ctx, data), nil
+}
+        ]]></code>
+    </template>
+    </pattern>
+  </implementation_patterns>
+
+  <completion_criteria>
+    <criterion>Code compiles without errors</c>
+criterion>Code follows Go idioms and best practices</criterion>
+    <criterion>Proper error handling throughout</criterion>
+    <criterion>Tests are written and passing</criterion>
+    <criterion>No circular dependencies</criterion>
+    <criterion>Code is properly documented</criterion>
+  </completion_criteria>
+
+  <handoff_guidance>
+    <scenario>Switch to go-debug mode</scenario>
+    <trigger>When implementation has issues or unexpected behavior</trigger>
+    <instructions>
+      Provide the go-debug mode with:
+      - Error messages or unexpected behavior
+      - Relevant code sections
+      - Test results showing failures
+    </instructions>
+    </scenario>
+
+    <scenario>Switch to go-architect mode</scenario>
+    <trigger>When design needs to be revised or extended</trigger>
+    <instructions>
+      Provide the go-architect mode with:
+      - Current implementation status
+      - Issues found during implementation
+      - Design questions or needed changes
+    </instructions>
+    </scenario>
+  </handoff_guidance>
+</workflow_instructions>

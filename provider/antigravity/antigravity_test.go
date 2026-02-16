@@ -12,7 +12,7 @@ import (
 	"testing"
 	"time"
 
-	"github.com/sunbankio/qwencoder-proxy/auth"
+	tokpkg "github.com/sunbankio/qwencoder-proxy/internal/token"
 )
 
 // mockProxyClientFactory is a mock implementation of ProxyClientFactory
@@ -26,8 +26,8 @@ func newMockClientFactory() *mockProxyClientFactory {
 	}
 }
 
-func (m *mockProxyClientFactory) GetClient(proxyConfig *auth.ProxyConfig) *http.Client {
-	if proxyConfig == nil || !proxyConfig.Enabled {
+func (m *mockProxyClientFactory) GetClient(proxyConfig *tokpkg.ProxyConfig) *http.Client {
+	if proxyConfig == nil {
 		return http.DefaultClient
 	}
 	key := fmt.Sprintf("%s:%d", proxyConfig.Host, proxyConfig.Port)
@@ -207,7 +207,7 @@ func TestClassifyProxyError(t *testing.T) {
 func TestDoRequestWithProxy(t *testing.T) {
 	tests := []struct {
 		name           string
-		tokenManager   *auth.TokenManager
+		tokenManager   *tokpkg.TokenManager
 		expectProxyErr bool
 	}{
 		{
@@ -347,19 +347,18 @@ func TestGenerateContentWithTokenManager(t *testing.T) {
 	// Test with token manager
 	t.Run("with token manager", func(t *testing.T) {
 		// Create a mock token store
-		store := auth.NewMultiTokenStore("test", "", provider.GetLogger())
+		store := tokpkg.NewMultiTokenStore("test", "", provider.GetLogger())
 
 		// Add a test token
-		token := auth.ProviderToken{
+		token := tokpkg.ProviderToken{
 			ID:           "test-token-1",
 			AccessToken:  "test-access-token",
 			RefreshToken: "test-refresh-token",
 			ExpiryDate:   time.Now().Add(1 * time.Hour).UnixMilli(),
 			Healthy:      true,
 			HealthScore:  1.0,
-			Proxy: &auth.ProxyConfig{
-				Type:    auth.ProxyTypeNone,
-				Enabled: false,
+			Proxy: &tokpkg.ProxyConfig{
+				Type: tokpkg.ProxyTypeNone,
 			},
 		}
 		if err := store.AddToken(token); err != nil {
@@ -368,8 +367,8 @@ func TestGenerateContentWithTokenManager(t *testing.T) {
 
 		// Create token manager
 		factory := newMockClientFactory()
-		proxyHealthTracker := auth.NewProxyHealthTracker(provider.GetLogger(), 5, 5*time.Minute)
-		tokenManager := auth.NewTokenManager(store, auth.NewRandomSelectionStrategy(), provider.GetLogger(), factory, proxyHealthTracker)
+		proxyHealthTracker := tokpkg.NewProxyHealthTracker(provider.GetLogger(), 5, 5*time.Minute)
+		tokenManager := tokpkg.NewTokenManager(store, tokpkg.NewRandomSelectionStrategy(), provider.GetLogger(), factory, proxyHealthTracker)
 
 		provider.SetTokenManager(tokenManager)
 
@@ -441,19 +440,18 @@ func TestGenerateContentStreamWithTokenManager(t *testing.T) {
 	// Test with token manager
 	t.Run("with token manager", func(t *testing.T) {
 		// Create a mock token store
-		store := auth.NewMultiTokenStore("test", "", provider.GetLogger())
+		store := tokpkg.NewMultiTokenStore("test", "", provider.GetLogger())
 
 		// Add a test token
-		token := auth.ProviderToken{
+		token := tokpkg.ProviderToken{
 			ID:           "test-token-1",
 			AccessToken:  "test-access-token",
 			RefreshToken: "test-refresh-token",
 			ExpiryDate:   time.Now().Add(1 * time.Hour).UnixMilli(),
 			Healthy:      true,
 			HealthScore:  1.0,
-			Proxy: &auth.ProxyConfig{
-				Type:    auth.ProxyTypeNone,
-				Enabled: false,
+			Proxy: &tokpkg.ProxyConfig{
+				Type: tokpkg.ProxyTypeNone,
 			},
 		}
 		if err := store.AddToken(token); err != nil {
@@ -462,8 +460,8 @@ func TestGenerateContentStreamWithTokenManager(t *testing.T) {
 
 		// Create token manager
 		factory := newMockClientFactory()
-		proxyHealthTracker := auth.NewProxyHealthTracker(provider.GetLogger(), 5, 5*time.Minute)
-		tokenManager := auth.NewTokenManager(store, auth.NewRandomSelectionStrategy(), provider.GetLogger(), factory, proxyHealthTracker)
+		proxyHealthTracker := tokpkg.NewProxyHealthTracker(provider.GetLogger(), 5, 5*time.Minute)
+		tokenManager := tokpkg.NewTokenManager(store, tokpkg.NewRandomSelectionStrategy(), provider.GetLogger(), factory, proxyHealthTracker)
 
 		provider.SetTokenManager(tokenManager)
 
@@ -509,21 +507,20 @@ func TestProxyHealthTracking(t *testing.T) {
 	provider.projectID = "test-project"
 
 	// Create a mock token store
-	store := auth.NewMultiTokenStore("test", "", provider.GetLogger())
+	store := tokpkg.NewMultiTokenStore("test", "", provider.GetLogger())
 
 	// Add a test token with proxy configuration
-	token := auth.ProviderToken{
+	token := tokpkg.ProviderToken{
 		ID:           "test-token-1",
 		AccessToken:  "test-access-token",
 		RefreshToken: "test-refresh-token",
 		ExpiryDate:   time.Now().Add(1 * time.Hour).UnixMilli(),
 		Healthy:      true,
 		HealthScore:  1.0,
-		Proxy: &auth.ProxyConfig{
-			Type:    auth.ProxyTypeHTTP,
-			Enabled: true,
-			Host:    "proxy.example.com",
-			Port:    8080,
+		Proxy: &tokpkg.ProxyConfig{
+			Type: tokpkg.ProxyTypeHTTP,
+			Host: "proxy.example.com",
+			Port: 8080,
 		},
 	}
 	if err := store.AddToken(token); err != nil {
@@ -532,8 +529,8 @@ func TestProxyHealthTracking(t *testing.T) {
 
 	// Create token manager with proxy health tracker
 	factory := newMockClientFactory()
-	proxyHealthTracker := auth.NewProxyHealthTracker(provider.GetLogger(), 5, 5*time.Minute)
-	tokenManager := auth.NewTokenManager(store, auth.NewRandomSelectionStrategy(), provider.GetLogger(), factory, proxyHealthTracker)
+	proxyHealthTracker := tokpkg.NewProxyHealthTracker(provider.GetLogger(), 5, 5*time.Minute)
+	tokenManager := tokpkg.NewTokenManager(store, tokpkg.NewRandomSelectionStrategy(), provider.GetLogger(), factory, proxyHealthTracker)
 
 	provider.SetTokenManager(tokenManager)
 
@@ -577,19 +574,18 @@ func TestProxyErrorClassification(t *testing.T) {
 	provider.projectID = "test-project"
 
 	// Create a mock token store
-	store := auth.NewMultiTokenStore("test", "", provider.GetLogger())
+	store := tokpkg.NewMultiTokenStore("test", "", provider.GetLogger())
 
 	// Add a test token
-	token := auth.ProviderToken{
+	token := tokpkg.ProviderToken{
 		ID:           "test-token-1",
 		AccessToken:  "test-access-token",
 		RefreshToken: "test-refresh-token",
 		ExpiryDate:   time.Now().Add(1 * time.Hour).UnixMilli(),
 		Healthy:      true,
 		HealthScore:  1.0,
-		Proxy: &auth.ProxyConfig{
-			Type:    auth.ProxyTypeNone,
-			Enabled: false,
+		Proxy: &tokpkg.ProxyConfig{
+			Type: tokpkg.ProxyTypeNone,
 		},
 	}
 	if err := store.AddToken(token); err != nil {
@@ -598,8 +594,8 @@ func TestProxyErrorClassification(t *testing.T) {
 
 	// Create token manager with proxy health tracker
 	factory := newMockClientFactory()
-	proxyHealthTracker := auth.NewProxyHealthTracker(provider.GetLogger(), 5, 5*time.Minute)
-	tokenManager := auth.NewTokenManager(store, auth.NewRandomSelectionStrategy(), provider.GetLogger(), factory, proxyHealthTracker)
+	proxyHealthTracker := tokpkg.NewProxyHealthTracker(provider.GetLogger(), 5, 5*time.Minute)
+	tokenManager := tokpkg.NewTokenManager(store, tokpkg.NewRandomSelectionStrategy(), provider.GetLogger(), factory, proxyHealthTracker)
 
 	provider.SetTokenManager(tokenManager)
 
@@ -637,10 +633,10 @@ func TestSetTokenManager(t *testing.T) {
 	}
 
 	// Create a token manager
-	store := auth.NewMultiTokenStore("test", "", provider.GetLogger())
+	store := tokpkg.NewMultiTokenStore("test", "", provider.GetLogger())
 	factory := newMockClientFactory()
-	proxyHealthTracker := auth.NewProxyHealthTracker(provider.GetLogger(), 5, 5*time.Minute)
-	tokenManager := auth.NewTokenManager(store, auth.NewRandomSelectionStrategy(), provider.GetLogger(), factory, proxyHealthTracker)
+	proxyHealthTracker := tokpkg.NewProxyHealthTracker(provider.GetLogger(), 5, 5*time.Minute)
+	tokenManager := tokpkg.NewTokenManager(store, tokpkg.NewRandomSelectionStrategy(), provider.GetLogger(), factory, proxyHealthTracker)
 
 	// Set the token manager
 	provider.SetTokenManager(tokenManager)

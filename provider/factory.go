@@ -9,7 +9,7 @@ import (
 	"sync"
 	"time"
 
-	"github.com/sunbankio/qwencoder-proxy/auth"
+	auth "github.com/sunbankio/qwencoder-proxy/internal/token"
 )
 
 // ModelProviderMap maps models to the providers that support them

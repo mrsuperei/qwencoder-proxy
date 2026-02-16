@@ -1,0 +1,307 @@
+<tool_usage_guide>
+  <tool_priorities>
+    <priority level="1">
+      <tool>read_file</tool>
+      <when>Always read existing files before making changes</when>
+      <why>Understanding existing code patterns prevents inconsistencies</why>
+    </priority>
+    <priority level="2">
+      <tool>search_files</tool>
+      <when>Find related code patterns and implementations</when>
+      <why>Helps maintain consistency across the codebase</why>
+    </priority>
+    <priority level="3">
+      <tool>apply_diff</tool>
+      <when>Making targeted changes to existing files</when>
+      <why>Surgical edits preserve existing code structure</why>
+    </priority>
+    <priority level="4">
+      <tool>write_to_file</tool>
+      <when>Creating new files or complete rewrites</when>
+      <why>Best for new file creation</why>
+    </priority>
+    <priority level="5">
+      <tool>execute_command</tool>
+      <when>Running Go tools (go test, go build, go fmt)</when>
+      <why>Validates code and ensures quality</why>
+    </priority>
+  </tool_priorities>
+
+  <go_specific_tool_usage>
+    <tool name="read_file">
+      <go_specific_guidance>
+        <guidance>Read go.mod first to understand dependencies</guidance>
+        <guidance>Read main.go or entry points to understand structure</guidance>
+        <guidance>Read interface definitions before implementations</guidance>
+        <guidance>Read test files to understand usage patterns</guidance>
+      </go_specific_guidance>
+      <example>
+        <scenario>Understanding a new package</scenario>
+        <files_to_read>
+          <file>go.mod - Dependencies</file>
+          <file>types.go - Type definitions</file>
+          <file>interfaces.go - Interface definitions</file>
+          <file>*_test.go - Usage examples</file>
+        </files_to_read>
+      </example>
+    </tool>
+
+    <tool name="search_files">
+      <go_specific_patterns>
+        <pattern name="find_interfaces">
+          <regex>type\s+\w+\s+interface\s*\{</regex>
+          <purpose>Find all interface definitions</purpose>
+        </pattern>
+        <pattern name="find_structs">
+          <regex>type\s+\w+\s+struct\s*\{</regex>
+          <purpose>Find all struct definitions</purpose>
+        </pattern>
+        <pattern name="find_goroutines">
+          <regex>go\s+\w+\(</regex>
+          <purpose>Find goroutine usage</purpose>
+        </pattern>
+        <pattern name="find_channels">
+          <regex>chan\s+\w+|make\(chan</regex>
+          <purpose>Find channel usage</purpose>
+        </pattern>
+        <pattern name="find_context">
+          <regex>context\.Context|context\.With</regex>
+          <purpose>Find context usage</purpose>
+        </pattern>
+        <pattern name="find_errors">
+          <regex>fmt\.Errorf|errors\.(Is|As|New)|\berr\s*!=\s*nil</regex>
+          <purpose>Find error handling patterns</purpose>
+        </pattern>
+      </go_specific_patterns>
+    </tool>
+
+    <tool name="apply_diff">
+      <go_specific_guidance>
+        <guidance>Always read the file first for exact content matching</guidance>
+        <guideline>Make multiple related changes in a single diff</guideline>
+        <guideline>Include proper line numbers for accuracy</guideline>
+        <guideline>Preserve existing formatting and style</guideline>
+      </go_specific_guidance>
+      <example>
+        <scenario>Adding a new method to a struct</scenario>
+        <code><![CDATA[
+<apply_diff>
+<path>service/service.go</path>
+<diff>
+<<<<<<< SEARCH
+:start_line:50
+-------
+func (s *Service) Process(ctx context.Context, input Input) (Output, error) {
+    return s.processor.Process(ctx, input)
+}
+=======
+func (s *Service) Process(ctx context.Context, input Input) (Output, error) {
+    return s.processor.Process(ctx, input)
+}
+
+// Validate checks if the input is valid.
+func (s *Service) Validate(ctx context.Context, input Input) error {
+    if input.ID == "" {
+        return ErrInvalidInput
+    }
+    return nil
+}
+>>>>>>> REPLACE
+</diff>
+</apply_diff>
+        ]]></code>
+      </example>
+    </tool>
+
+    <tool name="write_to_file">
+      <go_specific_guidance>
+        <guideline>Always include package declaration at top</guideline>
+        <guideline>Organize imports: stdlib, third-party, local</guideline>
+        <guideline>Add godoc comments for exported items</guideline>
+        <guideline>Use proper file organization (types.go, methods.go, etc.)</guideline>
+      </go_specific_guidance>
+      <example>
+        <scenario>Creating a new service file</scenario>
+        <code><![CDATA[
+package service
+
+import (
+    "context"
+    "fmt"
+    "time"
+
+    "myproject/internal/repository"
+)
+
+// Service handles business logic for users.
+type Service struct {
+    repo   repository.UserRepository
+    logger Logger
+}
+
+// NewService creates a new Service.
+func NewService(repo repository.UserRepository, logger Logger) *Service {
+    return &Service{
+        repo:   repo,
+        logger: logger,
+    }
+}
+
+// GetUser retrieves a user by ID.
+func (s *Service) GetUser(ctx context.Context, id string) (*User, error) {
+    user, err := s.repo.FindByID(ctx, id)
+    if err != nil {
+        return nil, fmt.Errorf("failed to find user: %w", err)
+    }
+    return user, nil
+}
+        ]]></code>
+      </example>
+    </tool>
+
+    <tool name="execute_command">
+      <go_specific_commands>
+        <command name="build">
+          <cmd>go build ./...</cmd>
+          <purpose>Check for compilation errors</purpose>
+        </command>
+        <command name="test">
+          <cmd>go test ./...</cmd>
+          <purpose>Run all tests</purpose>
+        </command>
+        <command name="test_with_coverage">
+          <cmd>go test -cover ./...</cmd>
+          <purpose>Run tests with coverage</purpose>
+        </command>
+        <command name="test_with_race">
+          <cmd>go test -race ./...</cmd>
+          <purpose>Run tests with race detector</purpose>
+        </command>
+        <command name="format">
+          <cmd>go fmt ./...</cmd>
+          <purpose>Format all Go files</purpose>
+        </command>
+        <command name="vet">
+          <cmd>go vet ./...</cmd>
+          <purpose>Run static analysis</purpose>
+        </command>
+        <command name="tidy">
+          <cmd>go mod tidy</cmd>
+          <purpose>Clean up module dependencies</purpose>
+        </command>
+        <command name="specific_test">
+          <cmd>go test -run TestSpecificFunction ./package</cmd>
+          <purpose>Run specific test</purpose>
+        </command>
+        <command name="benchmark">
+          <cmd>go test -bench=. ./package</cmd>
+          <purpose>Run benchmarks</purpose>
+        </command>
+      </go_specific_commands>
+    </tool>
+
+    <tool name="switch_mode">
+      <go_specific_handoffs>
+        <handoff>
+          <to_mode>go-architect</to_mode>
+          <trigger>When design needs revision or extension</trigger>
+          <context>
+            - Current implementation status
+            - Issues encountered
+            - Design questions
+          </context>
+        </handoff>
+        <handoff>
+          <to_mode>go-debug</to_mode>
+          <trigger>When encountering bugs or unexpected behavior</trigger>
+          <context>
+            - Error messages
+            - Test failures
+            - Unexpected behavior description
+          </context>
+        </handoff>
+        <handoff>
+          <to_mode>project-research</to_mode>
+          <trigger>When needing to explore the codebase</trigger>
+          <context>
+            - What to look for
+            - Specific patterns or implementations needed
+          </context>
+        </handoff>
+      </go_specific_handoffs>
+    </tool>
+  </go_specific_tool_usage>
+
+  <implementation_checklist>
+    <checklist name="before_writing_code">
+      <item>Read related files to understand patterns</item>
+      <item>Check go.mod for available dependencies</item>
+      <item>Identify the package for new code</item>
+      <item>Plan file organization</item>
+      <item>Review interface definitions to implement</item>
+    </checklist>
+
+    <checklist name="while_writing_code">
+      <item>Follow Go naming conventions</item>
+      <item>Add godoc comments for exports</item>
+      <item>Handle all errors explicitly</item>
+      <item>Use context.Context appropriately</item>
+      <item>Follow existing code style</item>
+    </checklist>
+
+    <checklist name="after_writing_code">
+      <item>Run go fmt to format code</item>
+      <item>Run go vet for static analysis</item>
+      <item>Run go build to check compilation</item>
+      <item>Write tests for new code</item>
+      <item>Run go test -race for race detection</item>
+      <item>Update go.mod if new dependencies added</item>
+    </checklist>
+  </implementation_checklist>
+
+  <common_edit_scenarios>
+    <scenario name="adding_new_method">
+      <steps>
+        <step>Read the file to find insertion point</step>
+        <step>Identify related methods for consistency</step>
+        <step>Use apply_diff to add the new method</step>
+        <step>Add corresponding test in *_test.go file</step>
+      </steps>
+    </scenario>
+
+    <scenario name="implementing_interface">
+      <steps>
+        <step>Read the interface definition</step>
+        <step>Read existing implementations for patterns</step>
+        <step>Create or update the implementing type</step>
+        <step>Implement all required methods</step>
+        <step>Add compile-time interface check</step>
+        <step>Write tests for the implementation</step>
+      </steps>
+    </scenario>
+
+    <scenario name="refactoring_package">
+      <steps>
+        <step>Read all files in the package</step>
+        <step>Identify code to refactor</step>
+        <step>Plan new structure</step>
+        <step>Create new files as needed</step>
+        <step>Move code using apply_diff</step>
+        <step>Update imports across codebase</step>
+        <step>Run tests to verify</step>
+      </steps>
+    </scenario>
+
+    <scenario name="adding_concurrency">
+      <steps>
+        <step>Read existing code</step>
+        <step>Identify concurrent operations needed</step>
+        <step>Add context.Context parameters</step>
+        <step>Implement goroutines with proper cleanup</step>
+        <step>Add channels for communication</step>
+        <item>Use sync primitives as needed</item>
+        <step>Add tests with -race flag</step>
+      </steps>
+    </scenario>
+  </common_edit_scenarios>
+</tool_usage_guide>

@@ -1,0 +1,196 @@
+<tool_usage_guide>
+  <tool_priorities>
+    <priority level="1">
+      <tool>list_files</tool>
+      <when>Always use first to understand project structure</when>
+      <why>Provides overview of package organization and file locations</why>
+    </priority>
+    <priority level="2">
+      <tool>search_files</tool>
+      <when>To find specific Go patterns, types, or implementations</when>
+      <why>Helps locate relevant code across the codebase</why>
+    </priority>
+    <priority level="3">
+      <tool>read_file</tool>
+      <when>After identifying files to examine in detail</when>
+      <why>Provides full context for understanding implementations</why>
+    </priority>
+  </tool_priorities>
+
+  <go_specific_search_patterns>
+    <pattern name="interface_definitions">
+      <description>Find interface definitions in Go code</description>
+      <regex>type\s+\w+\s+interface\s*\{</regex>
+      <purpose>Understand existing abstractions and contracts</purpose>
+    </pattern>
+
+    <pattern name="struct_definitions">
+      <description>Find struct definitions</description>
+      <regex>type\s+\w+\s+struct\s*\{</regex>
+      <purpose>Understand data structures and their fields</purpose>
+    </pattern>
+
+    <pattern name="goroutine_usage">
+      <description>Find goroutine usage patterns</description>
+      <regex>go\s+\w+\(</regex>
+      <purpose>Identify concurrency patterns in the codebase</purpose>
+    </pattern>
+
+    <pattern name="channel_usage">
+      <description>Find channel usage</description>
+      <regex>chan\s+\w+|make\(chan</regex>
+      <purpose>Understand communication patterns between goroutines</purpose>
+    </pattern>
+
+    <pattern name="error_handling">
+      <description>Find error handling patterns</description>
+      <regex>if\s+err\s+!=\s+nil|fmt\.Errorf|errors\.(Is|As|New)</regex>
+      <purpose>Understand error handling conventions used</purpose>
+    </pattern>
+
+    <pattern name="context_usage">
+      <description>Find context.Context usage</description>
+      <regex>context\.Context|context\.With(Timeout|Cancel|Deadline|Value)</regex>
+      <purpose>Understand cancellation and timeout patterns</purpose>
+    </pattern>
+
+    <pattern name="test_files">
+      <description>Find test files</description>
+      <regex>_test\.go$</regex>
+      <purpose>Understand testing patterns and coverage</purpose>
+    </pattern>
+  </go_specific_search_patterns>
+
+  <tool_specific_guidance>
+    <tool name="list_files">
+      <best_practices>
+        <practice>Use recursive listing to understand full package structure</practice>
+        <practice>Focus on .go files and go.mod for dependencies</practice>
+        <practice>Identify test files separately from implementation files</practice>
+      </best_practices>
+      <example>
+        <scenario>Analyzing a new Go project</scenario>
+        <command>list_files with recursive=true to see all packages</command>
+        <outcome>Complete view of package organization</outcome>
+      </example>
+    </tool>
+
+    <tool name="search_files">
+      <best_practices>
+        <practice>Use file_pattern="*.go" to search only Go files</practice>
+        <practice>Search for specific Go patterns (interfaces, structs, goroutines)</practice>
+        <practice>Use regex to find idiomatic Go patterns</practice>
+      </best_practices>
+      <example>
+        <scenario>Finding all interfaces in the codebase</scenario>
+        <regex>type\s+\w+\s+interface\s*\{</regex>
+        <file_pattern>*.go</file_pattern>
+        <outcome>List of all interface definitions with context</outcome>
+      </example>
+    </tool>
+
+    <tool name="read_file">
+      <best_practices>
+        <practice>Read go.mod first to understand dependencies</practice>
+        <practice>Read main.go or similar entry points first</practice>
+        <practice>Use indentation mode when you have a specific line number</practice>
+        <practice>Read interface definitions before implementations</practice>
+      </best_practices>
+      <example>
+        <scenario>Understanding a package structure</scenario>
+        <files_to_read>
+          <file>go.mod - Dependencies and module info</file>
+          <file>types.go - Type definitions</file>
+          <file>interface.go - Interface definitions</file>
+          <file>main.go - Entry point</file>
+        </files_to_read>
+      </example>
+    </tool>
+
+    <tool name="ask_followup_question">
+      <best_practices>
+        <practice>Use when requirements are ambiguous</practice>
+        <practice>Provide Go-specific suggestions</practice>
+        <practice>Ask about concurrency needs when relevant</practice>
+        <practice>Inquire about performance requirements</practice>
+      </best_practices>
+      <example>
+        <scenario>Clarifying concurrency requirements</scenario>
+        <question>Does this feature require concurrent processing?</question>
+        <follow_up>
+          <suggest>Yes, use goroutines and channels for parallel processing</suggest>
+          <suggest>Yes, but use a worker pool to limit concurrency</suggest>
+          <suggest>No, sequential processing is sufficient</suggest>
+          <suggest>Not sure, let's analyze the requirements first</suggest>
+        </follow_up>
+      </example>
+    </tool>
+
+    <tool name="switch_mode">
+      <best_practices>
+        <practice>Switch to go-code mode when design is complete</practice>
+        <practice>Switch to go-debug mode when troubleshooting issues</practice>
+        <practice>Switch to project-research mode when exploring codebase</practice>
+      </best_practices>
+      <example>
+        <scenario>Handing off to implementation</scenario>
+        <mode>go-code</mode>
+        <reason>Design phase complete, ready for implementation</reason>
+        <context>Provide technical specifications and implementation plan</context>
+      </example>
+    </tool>
+  </tool_specific_guidance>
+
+  <go_file_analysis_checklist>
+    <checklist name="when_examining_go_files">
+      <item>Check package declaration and understand its purpose</item>
+      <item>Review imports and external dependencies</item>
+      <item>Identify exported vs unexported types and functions</item>
+      <item>Understand interface definitions and their implementations</item>
+      <item>Look for goroutine and channel usage patterns</item>
+      <item>Review error handling approach</item>
+      <item>Check for context.Context usage</item>
+      <item>Examine test files for usage examples</item>
+    </checklist>
+  </go_file_analysis_checklist>
+
+  <architect_mode_specific_guidance>
+    <guidance name="design_phase_tools">
+      <description>Tools to use during the design phase</description>
+      <tools>
+        <tool>list_files - Understand existing structure</tool>
+        <tool>search_files - Find relevant patterns and implementations</tool>
+        <tool>read_file - Examine specific implementations in detail</tool>
+        <tool>ask_followup_question - Clarify requirements</tool>
+      </tools>
+    </guidance>
+
+    <guidance name="what_to_look_for">
+      <description>Key aspects to analyze when reviewing Go code</description>
+      <aspects>
+        <aspect>Package organization and boundaries</aspect>
+        <aspect>Interface design and usage</aspect>
+        <aspect>Error handling patterns</aspect>
+        <aspect>Concurrency patterns (goroutines, channels, sync)</aspect>
+        <aspect>Context propagation</aspect>
+        <aspect>Testing coverage and patterns</aspect>
+        <aspect>Dependencies in go.mod</aspect>
+        <aspect>Code organization within files</aspect>
+      </aspects>
+    </guidance>
+
+    <guidance name="design_documentation">
+      <description>What to include in design specifications</description>
+      <elements>
+        <element>Package structure and organization</element>
+        <element>Interface definitions with method signatures</element>
+        <element>Struct definitions with field types</element>
+        <element>Concurrency strategy and patterns</element>
+        <element>Error handling strategy</element>
+        <element>Testing approach and coverage goals</element>
+        <element>Performance considerations</element>
+        <element>Dependencies and external packages</element>
+      </elements>
+    </guidance>
+  </architect_mode_specific_guidance>
+</tool_usage_guide>

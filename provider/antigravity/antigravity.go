@@ -16,7 +16,6 @@ import (
 	"sync"
 	"time"
 
-	"github.com/sunbankio/qwencoder-proxy/auth"
 	"github.com/sunbankio/qwencoder-proxy/logging"
 	"github.com/sunbankio/qwencoder-proxy/provider"
 	"github.com/sunbankio/qwencoder-proxy/provider/gemini"
@@ -65,7 +64,7 @@ type Provider struct {
 	*provider.BaseProvider // Embedded base provider provides common fields and methods
 	dailyBaseURL           string
 	autopushBaseURL        string
-	authenticator          *auth.GeminiAuthenticator // Antigravity uses similar auth to Gemini CLI
+	authenticator          *Authenticator // Antigravity uses similar auth to Gemini CLI
 	projectID              string
 	isInitialized          bool
 	cachedModels           map[string]bool
@@ -74,17 +73,10 @@ type Provider struct {
 
 // NewProvider creates a new Antigravity provider
 // Uses BaseProvider for common functionality
-func NewProvider(authenticator *auth.GeminiAuthenticator) *Provider {
+func NewProvider(authenticator *Authenticator) *Provider {
 	if authenticator == nil {
 		// Use direct instantiation for now - will be updated to use factory in later phase
-		authenticator = auth.NewGeminiAuthenticator(&auth.GeminiOAuthConfig{
-			ClientID:     "1071006060591-tmhssin2h21lcre235vtolojh4g403ep.apps.googleusercontent.com",
-			ClientSecret: "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",
-			Scope:        "https://www.googleapis.com/auth/cloud-platform",
-			RedirectPort: 8086,
-			CredsDir:     ".antigravity",
-			CredsFile:    "oauth_creds.json",
-		})
+		authenticator = NewAuthenticator(nil)
 	}
 	return &Provider{
 		BaseProvider:    provider.NewBaseProvider(logging.NewLogger(), 5*time.Minute),
@@ -370,7 +362,7 @@ func (p *Provider) ListModels(ctx context.Context) (interface{}, error) {
 			tokenID = selectedToken.ID
 
 			// Log proxy usage
-			if selectedToken.Proxy != nil && selectedToken.Proxy.Enabled {
+			if selectedToken.Proxy != nil {
 				p.GetLogger().DebugLog("[Antigravity] Using token %s with proxy: %s:%d", tokenID, selectedToken.Proxy.Host, selectedToken.Proxy.Port)
 			} else {
 				p.GetLogger().DebugLog("[Antigravity] Using token %s with direct connection", tokenID)
@@ -662,7 +654,7 @@ func (p *Provider) callAPI(ctx context.Context, method string, body map[string]i
 			tokenID = selectedToken.ID
 
 			// Log proxy usage
-			if selectedToken.Proxy != nil && selectedToken.Proxy.Enabled {
+			if selectedToken.Proxy != nil {
 				p.GetLogger().DebugLog("[Antigravity] Using token %s with proxy: %s:%d", tokenID, selectedToken.Proxy.Host, selectedToken.Proxy.Port)
 			} else {
 				p.GetLogger().DebugLog("[Antigravity] Using token %s with direct connection", tokenID)
@@ -965,7 +957,7 @@ func (p *Provider) GenerateContent(ctx context.Context, model string, request in
 		tokenID = selectedToken.ID
 
 		// Log proxy usage
-		if selectedToken.Proxy != nil && selectedToken.Proxy.Enabled {
+		if selectedToken.Proxy != nil {
 			p.GetLogger().DebugLog("[Antigravity] GenerateContent using token %s with proxy: %s:%d", tokenID, selectedToken.Proxy.Host, selectedToken.Proxy.Port)
 		} else {
 			p.GetLogger().DebugLog("[Antigravity] GenerateContent using token %s with direct connection", tokenID)
@@ -1095,7 +1087,7 @@ func (p *Provider) GenerateContentStream(ctx context.Context, model string, requ
 		tokenID = selectedToken.ID
 
 		// Log proxy usage
-		if selectedToken.Proxy != nil && selectedToken.Proxy.Enabled {
+		if selectedToken.Proxy != nil {
 			p.GetLogger().DebugLog("[Antigravity] GenerateContentStream using token %s with proxy: %s:%d", tokenID, selectedToken.Proxy.Host, selectedToken.Proxy.Port)
 		} else {
 			p.GetLogger().DebugLog("[Antigravity] GenerateContentStream using token %s with direct connection", tokenID)

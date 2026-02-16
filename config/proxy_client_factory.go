@@ -13,7 +13,7 @@ import (
 
 	"golang.org/x/net/proxy"
 
-	"github.com/sunbankio/qwencoder-proxy/auth"
+	"github.com/sunbankio/qwencoder-proxy/internal/token"
 	"github.com/sunbankio/qwencoder-proxy/logging"
 )
 
@@ -25,11 +25,11 @@ import (
 // Credentials are excluded from the cache key for security reasons.
 type ProxyAwareHTTPClientFactory struct {
 	baseConfig  HTTPClientConfig
-	proxyCache  map[auth.ProxyConfigKey]*http.Client
+	proxyCache  map[token.ProxyConfigKey]*http.Client
 	cacheLock   sync.RWMutex
 	logger      logging.Logger
 	maxSize     int
-	accessOrder []auth.ProxyConfigKey // Track access order for LRU eviction
+	accessOrder []token.ProxyConfigKey // Track access order for LRU eviction
 }
 
 // NewProxyAwareHTTPClientFactory creates a new ProxyAwareHTTPClientFactory.
@@ -45,10 +45,10 @@ func NewProxyAwareHTTPClientFactory(baseConfig HTTPClientConfig, logger logging.
 
 	return &ProxyAwareHTTPClientFactory{
 		baseConfig:  baseConfig,
-		proxyCache:  make(map[auth.ProxyConfigKey]*http.Client),
+		proxyCache:  make(map[token.ProxyConfigKey]*http.Client),
 		logger:      logger,
 		maxSize:     maxSize,
-		accessOrder: make([]auth.ProxyConfigKey, 0),
+		accessOrder: make([]token.ProxyConfigKey, 0),
 	}
 }
 
@@ -58,12 +58,12 @@ func NewProxyAwareHTTPClientFactory(baseConfig HTTPClientConfig, logger logging.
 //
 // The cache key excludes credentials for security - clients with the same
 // proxy server but different credentials will share the same client.
-func (f *ProxyAwareHTTPClientFactory) GetClient(proxyConfig *auth.ProxyConfig) *http.Client {
-	if proxyConfig == nil || proxyConfig.Type == auth.ProxyTypeNone {
+func (f *ProxyAwareHTTPClientFactory) GetClient(proxyConfig *token.ProxyConfig) *http.Client {
+	if proxyConfig == nil || proxyConfig.Type == token.ProxyTypeNone {
 		return f.createDirectClient()
 	}
 
-	key := auth.NewProxyConfigKey(proxyConfig)
+	key := token.NewProxyConfigKey(proxyConfig)
 	if key == nil {
 		return f.createDirectClient()
 	}
@@ -120,8 +120,8 @@ func (f *ProxyAwareHTTPClientFactory) GetClientWithTimeout(timeout time.Duration
 
 // CreateClientWithProxy creates a new HTTP client configured with the given proxy settings.
 // This method does not use the cache - it always creates a new client.
-func (f *ProxyAwareHTTPClientFactory) CreateClientWithProxy(proxyConfig *auth.ProxyConfig) *http.Client {
-	if proxyConfig == nil || proxyConfig.Type == auth.ProxyTypeNone {
+func (f *ProxyAwareHTTPClientFactory) CreateClientWithProxy(proxyConfig *token.ProxyConfig) *http.Client {
+	if proxyConfig == nil || proxyConfig.Type == token.ProxyTypeNone {
 		return f.createDirectClient()
 	}
 
@@ -129,9 +129,9 @@ func (f *ProxyAwareHTTPClientFactory) CreateClientWithProxy(proxyConfig *auth.Pr
 	var err error
 
 	switch proxyConfig.Type {
-	case auth.ProxyTypeHTTP, auth.ProxyTypeHTTPS:
+	case token.ProxyTypeHTTP, token.ProxyTypeHTTPS:
 		transport, err = f.createHTTPProxyTransport(proxyConfig)
-	case auth.ProxyTypeSOCKS5:
+	case token.ProxyTypeSOCKS5:
 		transport, err = f.createSOCKS5Transport(proxyConfig)
 	default:
 		f.logger.WarnLog("Unknown proxy type: %s, using direct connection", proxyConfig.Type)
@@ -188,7 +188,7 @@ func (f *ProxyAwareHTTPClientFactory) createDirectClient() *http.Client {
 }
 
 // createHTTPProxyTransport creates an HTTP transport configured for HTTP/HTTPS proxy.
-func (f *ProxyAwareHTTPClientFactory) createHTTPProxyTransport(proxyConfig *auth.ProxyConfig) (*http.Transport, error) {
+func (f *ProxyAwareHTTPClientFactory) createHTTPProxyTransport(proxyConfig *token.ProxyConfig) (*http.Transport, error) {
 	proxyURL, err := url.Parse(fmt.Sprintf("%s://%s:%d",
 		proxyConfig.Type, proxyConfig.Host, proxyConfig.Port))
 	if err != nil {
@@ -214,7 +214,7 @@ func (f *ProxyAwareHTTPClientFactory) createHTTPProxyTransport(proxyConfig *auth
 }
 
 // createSOCKS5Transport creates an HTTP transport configured for SOCKS5 proxy.
-func (f *ProxyAwareHTTPClientFactory) createSOCKS5Transport(proxyConfig *auth.ProxyConfig) (*http.Transport, error) {
+func (f *ProxyAwareHTTPClientFactory) createSOCKS5Transport(proxyConfig *token.ProxyConfig) (*http.Transport, error) {
 	var auth *proxy.Auth
 	if proxyConfig.Username != "" && proxyConfig.Password != "" {
 		auth = &proxy.Auth{
@@ -248,7 +248,7 @@ func (f *ProxyAwareHTTPClientFactory) createSOCKS5Transport(proxyConfig *auth.Pr
 
 // updateAccessOrder updates the access order for LRU tracking.
 // The key is moved to the end of the access order slice (most recently used).
-func (f *ProxyAwareHTTPClientFactory) updateAccessOrder(key auth.ProxyConfigKey) {
+func (f *ProxyAwareHTTPClientFactory) updateAccessOrder(key token.ProxyConfigKey) {
 	f.cacheLock.Lock()
 	defer f.cacheLock.Unlock()
 

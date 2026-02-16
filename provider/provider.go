@@ -6,7 +6,7 @@ import (
 	"io"
 	"net/http"
 
-	"github.com/sunbankio/qwencoder-proxy/auth"
+	auth "github.com/sunbankio/qwencoder-proxy/internal/token"
 )
 
 // ProviderType identifies the provider
@@ -106,4 +106,23 @@ type Model struct {
 	Name        string `json:"name"`
 	Description string `json:"description,omitempty"`
 	Provider    string `json:"provider,omitempty"`
+}
+
+// ChatRequest represents a chat completion request
+type ChatRequest struct {
+	Prompt      string  `json:"prompt"`
+	System      string  `json:"system,omitempty"`
+	Temperature float64 `json:"temperature,omitempty"`
+}
+
+// ChatResponse represents a chat completion response
+type ChatResponse struct {
+	Content string `json:"content"`
+	Done    bool   `json:"done"`
+}
+
+// ChatChunk represents a streaming chat chunk
+type ChatChunk struct {
+	Content string `json:"content"`
+	Done    bool   `json:"done"`
 }

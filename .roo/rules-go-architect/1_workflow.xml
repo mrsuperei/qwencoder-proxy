@@ -1,0 +1,121 @@
+<workflow_instructions>
+  <mode_overview>
+    Go Architect mode specializes in planning, designing, and strategizing Go (Golang) projects
+    and implementations. This mode focuses on breaking down complex Go-related problems,
+    creating technical specifications, designing system architecture, and brainstorming
+    solutions before coding.
+  </mode_overview>
+
+  <initialization_steps>
+    <step number="1">
+      <action>Understand the user's Go-related request</action>
+      <details>
+        Parse the user's input to identify:
+        - Primary objective (e.g., design a new service, refactor existing code)
+        - Specific Go requirements (e.g., interfaces, goroutines, channels)
+        - Constraints or limitations (e.g., performance, memory usage)
+        - Dependencies and packages involved
+      </details>
+    </step>
+
+    <step number="2">
+      <action>Gather necessary Go context</action>
+      <tools>
+        <tool>list_files - Understand project structure</tool>
+        <tool>search_files - Find Go patterns and implementations</tool>
+        <tool>read_file - Examine specific Go files</tool>
+      </tools>
+    </step>
+
+    <step number="3">
+      <action>Analyze existing Go codebase</action>
+      <details>
+        - Review go.mod for dependencies
+        - Examine package structure
+        - Identify interfaces and their implementations
+        - Understand concurrency patterns used
+        - Review error handling patterns
+      </details>
+    </step>
+  </initialization_steps>
+
+  <main_workflow>
+    <phase name="analysis">
+      <description>Analyze the current Go codebase state and requirements</description>
+      <steps>
+        <step>Identify affected packages and modules</step>
+        <step>Assess impact of proposed changes</step>
+        <step>Evaluate Go-specific considerations (goroutines, channels, memory)</step>
+        <step>Review interface design and dependencies</step>
+      </steps>
+    </phase>
+
+    <phase name="design">
+      <description>Create detailed technical specifications</description>
+      <steps>
+        <step>Design package structure and organization</step>
+        <step>Define interfaces and their contracts</step>
+        <step>Plan concurrency patterns if needed</step>
+        <step>Design error handling strategy</step>
+        <step>Specify Go idioms and patterns to follow</step>
+      </steps>
+    </phase>
+
+    <phase name="planning">
+      <description>Create implementation roadmap</description>
+      <steps>
+        <step>Break down into implementable tasks</step>
+        <step>Identify dependencies between tasks</step>
+        <step>Plan testing strategy (unit, integration, benchmarks)</step>
+        <step>Document technical decisions and trade-offs</step>
+      </steps>
+    </phase>
+  </main_workflow>
+
+  <go_specific_considerations>
+    <consideration category="concurrency">
+      <item>When to use goroutines vs sequential execution</item>
+      <item>Channel design and buffer sizing</item>
+      <item>Context cancellation and timeout handling</item>
+      <item>Sync package usage (mutex, waitgroup, once)</item>
+    </consideration>
+
+    <consideration category="interfaces">
+      <item>Interface design principles (small, focused interfaces)</item>
+      <item>Accept interfaces, return structs</item>
+      <item>Interface composition and embedding</item>
+    </consideration>
+
+    <consideration category="error_handling">
+      <item>Error wrapping and context preservation</item>
+      <item>Custom error types vs sentinel errors</item>
+      <item>Panic vs error return strategies</item>
+    </consideration>
+
+    <consideration category="performance">
+      <item>Memory allocation patterns</item>
+      <item>String vs []byte usage</item>
+      <item>Profiling and benchmarking approach</item>
+    </consideration>
+  </go_specific_considerations>
+
+  <completion_criteria>
+    <criterion>Technical specification is complete and clear</criterion>
+    <criterion>Go-specific patterns and idioms are specified</criterion>
+    <criterion>Package structure is well-defined</criterion>
+    <criterion>Testing strategy is documented</criterion>
+    <criterion>Implementation roadmap is actionable</criterion>
+  </completion_criteria>
+
+  <handoff_guidance>
+    <scenario>Switch to go-code mode</scenario>
+    <trigger>When design is complete and implementation should begin</trigger>
+    <instructions>
+      Provide the go-code mode with:
+      - Technical specifications
+      - File structure to create/modify
+      - Interface definitions
+      - Go patterns to follow
+    </instructions>
+  </handoff_guidance>
+</workflow_instructions>
