@@ -7,6 +7,7 @@ import (
 	"encoding/base64"
 	"encoding/json"
 	"fmt"
+	"io"
 	"net/http"
 	"net/url"
 	"os"
@@ -15,7 +16,7 @@ import (
 	"time"
 
 	"github.com/google/uuid"
-	"github.com/sunbankio/qwencoder-proxy/internal/token"
+	tokenpkg "github.com/sunbankio/qwencoder-proxy/internal/token"
 	"github.com/sunbankio/qwencoder-proxy/logging"
 )
 
@@ -52,8 +53,8 @@ type Credentials struct {
 
 // Authenticator implements authentication for Gemini
 type Authenticator struct {
-	tokenManager  *token.TokenManager
-	multiTokenMgr *token.MultiTokenManager
+	tokenManager  *tokenpkg.TokenManager
+	multiTokenMgr *tokenpkg.MultiTokenManager
 	config        *OAuthConfig
 	logger        logging.Logger
 	httpClient    *http.Client
@@ -72,22 +73,22 @@ func NewAuthenticator(config *OAuthConfig) *Authenticator {
 }
 
 // SetTokenManager sets the token manager
-func (a *Authenticator) SetTokenManager(tokenManager *token.TokenManager) {
+func (a *Authenticator) SetTokenManager(tokenManager *tokenpkg.TokenManager) {
 	a.tokenManager = tokenManager
 }
 
 // SetMultiTokenManager sets the multi-token manager
-func (a *Authenticator) SetMultiTokenManager(multiTokenMgr *token.MultiTokenManager) {
+func (a *Authenticator) SetMultiTokenManager(multiTokenMgr *tokenpkg.MultiTokenManager) {
 	a.multiTokenMgr = multiTokenMgr
 }
 
 // GetTokenManager returns the token manager
-func (a *Authenticator) GetTokenManager() *token.TokenManager {
+func (a *Authenticator) GetTokenManager() *tokenpkg.TokenManager {
 	return a.tokenManager
 }
 
 // GetMultiTokenManager returns the multi-token manager
-func (a *Authenticator) GetMultiTokenManager() *token.MultiTokenManager {
+func (a *Authenticator) GetMultiTokenManager() *tokenpkg.MultiTokenManager {
 	return a.multiTokenMgr
 }
 
@@ -377,7 +378,7 @@ func (a *Authenticator) exchangeCodeForTokens(ctx context.Context, code, redirec
 	now := time.Now()
 	expiry := now.Add(time.Duration(tokenResp.ExpiresIn) * time.Second)
 
-	providerToken := token.ProviderToken{
+	providerToken := tokenpkg.ProviderToken{
 		ID:           uuid.New().String(),
 		AccessToken:  tokenResp.AccessToken,
 		RefreshToken: tokenResp.RefreshToken,
@@ -398,4 +399,97 @@ func (a *Authenticator) exchangeCodeForTokens(ctx context.Context, code, redirec
 
 	a.GetLogger().DebugLog("[Gemini Auth] Authentication successful, credentials saved to multi-token store")
 	return nil
+}
+
+// geminiTokenRefresher implements ProviderRefresh for Gemini
+type geminiTokenRefresher struct {
+	clientID     string
+	clientSecret string
+	tokenURL     string
+	logger       logging.Logger
+}
+
+// NewGeminiTokenRefresher creates a new Gemini token refresher
+func NewGeminiTokenRefresher(clientID, clientSecret, tokenURL string, logger logging.Logger) *geminiTokenRefresher {
+	return &geminiTokenRefresher{
+		clientID:     clientID,
+		clientSecret: clientSecret,
+		tokenURL:     tokenURL,
+		logger:       logger,
+	}
+}
+
+// ProviderID returns the provider identifier
+func (g *geminiTokenRefresher) ProviderID() string {
+	return "gemini-cli"
+}
+
+// RefreshToken refreshes a Gemini OAuth token
+func (g *geminiTokenRefresher) RefreshToken(ctx context.Context, token tokenpkg.ProviderToken) (tokenpkg.ProviderToken, error) {
+	g.logger.InfoLog("[GeminiRefresh] Starting token refresh for token ID %s", token.ID)
+
+	if token.RefreshToken == "" {
+		g.logger.ErrorLog("[GeminiRefresh] No refresh token available for token ID %s", token.ID)
+		return tokenpkg.ProviderToken{}, fmt.Errorf("no refresh token available")
+	}
+
+	// Prepare refresh request
+	data := url.Values{}
+	data.Set("client_id", g.clientID)
+	data.Set("client_secret", g.clientSecret)
+	data.Set("refresh_token", token.RefreshToken)
+	data.Set("grant_type", "refresh_token")
+
+	// Make HTTP request
+	req, err := http.NewRequestWithContext(ctx, "POST", g.tokenURL, strings.NewReader(data.Encode()))
+	if err != nil {
+		g.logger.ErrorLog("[GeminiRefresh] Failed to create refresh request for token ID %s: %v", token.ID, err)
+		return tokenpkg.ProviderToken{}, fmt.Errorf("failed to create refresh request: %w", err)
+	}
+	req.Header.Set("Content-Type", "application/x-www-form-urlencoded")
+
+	client := &http.Client{Timeout: 30 * time.Second}
+	resp, err := client.Do(req)
+	if err != nil {
+		g.logger.ErrorLog("[GeminiRefresh] Failed to send refresh request for token ID %s: %v", token.ID, err)
+		return tokenpkg.ProviderToken{}, fmt.Errorf("failed to send refresh request: %w", err)
+	}
+	defer resp.Body.Close()
+
+	if resp.StatusCode != http.StatusOK {
+		body, _ := io.ReadAll(resp.Body)
+		g.logger.ErrorLog("[GeminiRefresh] Refresh failed with status %d for token ID %s: %s", resp.StatusCode, token.ID, string(body))
+		return tokenpkg.ProviderToken{}, fmt.Errorf("refresh failed with status %d: %s", resp.StatusCode, string(body))
+	}
+
+	// Parse response
+	var tokenResp struct {
+		AccessToken  string `json:"access_token"`
+		RefreshToken string `json:"refresh_token"`
+		TokenType    string `json:"token_type"`
+		ExpiresIn    int64  `json:"expires_in"`
+	}
+	if err := json.NewDecoder(resp.Body).Decode(&tokenResp); err != nil {
+		g.logger.ErrorLog("[GeminiRefresh] Failed to decode refresh response for token ID %s: %v", token.ID, err)
+		return tokenpkg.ProviderToken{}, fmt.Errorf("failed to decode refresh response: %w", err)
+	}
+
+	// Calculate expiry
+	expiryDate := time.Now().Add(time.Duration(tokenResp.ExpiresIn) * time.Second)
+	g.logger.InfoLog("[GeminiRefresh] Token refresh successful for token ID %s, new expiry %s", token.ID, expiryDate.Format(time.RFC3339))
+
+	// Return refreshed token
+	return tokenpkg.ProviderToken{
+		ID:           token.ID,
+		AccessToken:  tokenResp.AccessToken,
+		RefreshToken: tokenResp.RefreshToken,
+		TokenType:    tokenResp.TokenType,
+		ExpiryDate:   expiryDate.UnixMilli(),
+		Email:        token.Email,
+		Scope:        token.Scope,
+		Healthy:      true,
+		HealthScore:  1.0,
+		LastUsed:     token.LastUsed,
+		CreatedAt:    token.CreatedAt,
+	}, nil
 }

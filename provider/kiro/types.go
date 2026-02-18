@@ -3,23 +3,23 @@ package kiro
 
 // ClaudeRequest represents an Anthropic/Claude messages API request
 type ClaudeRequest struct {
-	Model         string         `json:"model"`
-	Messages      []Message      `json:"messages"`
-	MaxTokens     int            `json:"max_tokens"`
-	System        string         `json:"system,omitempty"`
-	Temperature   *float64       `json:"temperature,omitempty"`
-	TopP          *float64       `json:"top_p,omitempty"`
-	TopK          *int           `json:"top_k,omitempty"`
-	StopSequences []string       `json:"stop_sequences,omitempty"`
-	Stream        bool           `json:"stream,omitempty"`
-	Metadata      *Metadata      `json:"metadata,omitempty"`
-	Tools         []Tool         `json:"tools,omitempty"`
-	ToolChoice    *ToolChoice    `json:"tool_choice,omitempty"`
+	Model         string      `json:"model"`
+	Messages      []Message   `json:"messages"`
+	MaxTokens     int         `json:"max_tokens"`
+	System        string      `json:"system,omitempty"`
+	Temperature   *float64    `json:"temperature,omitempty"`
+	TopP          *float64    `json:"top_p,omitempty"`
+	TopK          *int        `json:"top_k,omitempty"`
+	StopSequences []string    `json:"stop_sequences,omitempty"`
+	Stream        bool        `json:"stream,omitempty"`
+	Metadata      *Metadata   `json:"metadata,omitempty"`
+	Tools         []Tool      `json:"tools,omitempty"`
+	ToolChoice    *ToolChoice `json:"tool_choice,omitempty"`
 }
 
 // Message represents a message in the conversation
 type Message struct {
-	Role    string        `json:"role"`
+	Role    string         `json:"role"`
 	Content MessageContent `json:"content"`
 }
 
@@ -28,14 +28,14 @@ type MessageContent interface{}
 
 // ContentBlock represents a content block in a message
 type ContentBlock struct {
-	Type      string     `json:"type"`
-	Text      string     `json:"text,omitempty"`
-	Source    *Source    `json:"source,omitempty"`
-	ID        string     `json:"id,omitempty"`
-	Name      string     `json:"name,omitempty"`
+	Type      string      `json:"type"`
+	Text      string      `json:"text,omitempty"`
+	Source    *Source     `json:"source,omitempty"`
+	ID        string      `json:"id,omitempty"`
+	Name      string      `json:"name,omitempty"`
 	Input     interface{} `json:"input,omitempty"`
-	ToolUseID string     `json:"tool_use_id,omitempty"`
-	Content   string     `json:"content,omitempty"`
+	ToolUseID string      `json:"tool_use_id,omitempty"`
+	Content   string      `json:"content,omitempty"`
 }
 
 // Source represents an image source
@@ -114,13 +114,13 @@ type ClaudeModelsResponse struct {
 
 // KiroCredentials represents the Kiro AWS SSO credentials
 type KiroCredentials struct {
-	AccessToken  string `json:"accessToken"`
-	ExpiresAt    string `json:"expiresAt"`
-	RefreshToken string `json:"refreshToken,omitempty"`
-	Region       string `json:"region,omitempty"`
-	StartURL     string `json:"startUrl,omitempty"`
-	ClientID     string `json:"clientId,omitempty"`
-	ClientSecret string `json:"clientSecret,omitempty"`
+	AccessToken           string `json:"accessToken"`
+	ExpiresAt             string `json:"expiresAt"`
+	RefreshToken          string `json:"refreshToken,omitempty"`
+	Region                string `json:"region,omitempty"`
+	StartURL              string `json:"startUrl,omitempty"`
+	ClientID              string `json:"clientId,omitempty"`
+	ClientSecret          string `json:"clientSecret,omitempty"`
 	RegistrationExpiresAt string `json:"registrationExpiresAt,omitempty"`
 }
 

@@ -14,7 +14,7 @@ import (
 	"time"
 
 	"github.com/google/uuid"
-	"github.com/sunbankio/qwencoder-proxy/internal/token"
+	tokenpkg "github.com/sunbankio/qwencoder-proxy/internal/token"
 	"github.com/sunbankio/qwencoder-proxy/logging"
 	"golang.org/x/oauth2"
 )
@@ -59,8 +59,8 @@ type Credentials struct {
 
 // Authenticator implements the authentication for Kiro
 type Authenticator struct {
-	tokenManager  *token.TokenManager
-	multiTokenMgr *token.MultiTokenManager
+	tokenManager  *tokenpkg.TokenManager
+	multiTokenMgr *tokenpkg.MultiTokenManager
 	config        *OAuthConfig
 	credentials   *Credentials
 	mu            sync.RWMutex
@@ -81,22 +81,22 @@ func NewAuthenticator(config *OAuthConfig) *Authenticator {
 }
 
 // SetTokenManager sets the token manager
-func (a *Authenticator) SetTokenManager(tokenManager *token.TokenManager) {
+func (a *Authenticator) SetTokenManager(tokenManager *tokenpkg.TokenManager) {
 	a.tokenManager = tokenManager
 }
 
 // SetMultiTokenManager sets the multi-token manager
-func (a *Authenticator) SetMultiTokenManager(multiTokenMgr *token.MultiTokenManager) {
+func (a *Authenticator) SetMultiTokenManager(multiTokenMgr *tokenpkg.MultiTokenManager) {
 	a.multiTokenMgr = multiTokenMgr
 }
 
 // GetTokenManager returns the token manager
-func (a *Authenticator) GetTokenManager() *token.TokenManager {
+func (a *Authenticator) GetTokenManager() *tokenpkg.TokenManager {
 	return a.tokenManager
 }
 
 // GetMultiTokenManager returns the multi-token manager
-func (a *Authenticator) GetMultiTokenManager() *token.MultiTokenManager {
+func (a *Authenticator) GetMultiTokenManager() *tokenpkg.MultiTokenManager {
 	return a.multiTokenMgr
 }
 
@@ -550,7 +550,7 @@ func (a *Authenticator) Authenticate(ctx context.Context) error {
 			expiry = now.Add(1 * time.Hour) // Default to 1 hour if no expiry
 		}
 
-		providerToken := token.ProviderToken{
+		providerToken := tokenpkg.ProviderToken{
 			ID:           uuid.New().String(),
 			AccessToken:  a.credentials.AccessToken,
 			RefreshToken: a.credentials.RefreshToken,
@@ -604,4 +604,51 @@ func (a *Authenticator) GetProfileArn() string {
 		return a.credentials.ProfileArn
 	}
 	return ""
+}
+
+// kiroTokenRefresherAdapter adapts existing kiroTokenRefresher to ProviderRefresh interface
+type kiroTokenRefresherAdapter struct {
+	auth *Authenticator
+}
+
+// NewKiroTokenRefresherAdapter creates a new adapter
+func NewKiroTokenRefresherAdapter(auth *Authenticator) *kiroTokenRefresherAdapter {
+	return &kiroTokenRefresherAdapter{auth: auth}
+}
+
+// ProviderID returns the provider identifier
+func (k *kiroTokenRefresherAdapter) ProviderID() string {
+	return "kiro"
+}
+
+// RefreshToken refreshes a Kiro token using the existing authenticator
+func (k *kiroTokenRefresherAdapter) RefreshToken(ctx context.Context, token tokenpkg.ProviderToken) (tokenpkg.ProviderToken, error) {
+	k.auth.logger.InfoLog("[KiroRefresh] Starting token refresh for token ID %s", token.ID)
+
+	if token.RefreshToken == "" {
+		k.auth.logger.ErrorLog("[KiroRefresh] No refresh token available for token ID %s", token.ID)
+		return tokenpkg.ProviderToken{}, fmt.Errorf("no refresh token available")
+	}
+
+	// Use existing performRefresh method from Authenticator
+	oauthToken, err := k.auth.performRefresh(ctx)
+	if err != nil {
+		k.auth.logger.ErrorLog("[KiroRefresh] Failed to refresh Kiro token for token ID %s: %v", token.ID, err)
+		return tokenpkg.ProviderToken{}, fmt.Errorf("failed to refresh Kiro token: %w", err)
+	}
+
+	// Return refreshed token
+	k.auth.logger.InfoLog("[KiroRefresh] Token refresh successful for token ID %s, new expiry %s", token.ID, oauthToken.Expiry.Format(time.RFC3339))
+	return tokenpkg.ProviderToken{
+		ID:           token.ID,
+		AccessToken:  oauthToken.AccessToken,
+		RefreshToken: oauthToken.RefreshToken,
+		TokenType:    oauthToken.TokenType,
+		ExpiryDate:   oauthToken.Expiry.UnixMilli(),
+		Email:        token.Email,
+		Healthy:      true,
+		HealthScore:  1.0,
+		LastUsed:     token.LastUsed,
+		CreatedAt:    token.CreatedAt,
+	}, nil
 }

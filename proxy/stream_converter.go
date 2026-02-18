@@ -73,10 +73,10 @@ func (sc *StreamConverter) Close() error {
 // readNextSSEChunk reads and converts the next SSE chunk from the native stream
 func (sc *StreamConverter) readNextSSEChunk() ([]byte, error) {
 	var buffer []string
-	
+
 	for sc.scanner.Scan() {
 		line := sc.scanner.Text()
-		
+
 		if strings.HasPrefix(line, "data: ") {
 			// Extract the JSON data after "data: "
 			buffer = append(buffer, line[6:])
@@ -84,7 +84,7 @@ func (sc *StreamConverter) readNextSSEChunk() ([]byte, error) {
 			// Empty line indicates end of SSE event, process the buffered data
 			jsonData := strings.Join(buffer, "\n")
 			sc.logger.DebugLog("[StreamConverter] Processing SSE chunk: %s", jsonData)
-			
+
 			// Parse the JSON data
 			var nativeChunk interface{}
 			if err := json.Unmarshal([]byte(jsonData), &nativeChunk); err != nil {
@@ -130,7 +130,7 @@ func (sc *StreamConverter) readNextSSEChunk() ([]byte, error) {
 			// Format as SSE
 			sseChunk := fmt.Sprintf("data: %s\n\n", string(chunkBytes))
 			sc.logger.DebugLog("[StreamConverter] Generated SSE chunk: %s", sseChunk)
-			
+
 			buffer = []string{} // Clear buffer for next event
 			return []byte(sseChunk), nil
 		}

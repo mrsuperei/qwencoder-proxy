@@ -736,27 +736,10 @@ func (p *Provider) GenerateContentStream(ctx context.Context, model string, requ
 		}
 	}
 
-	// Check if this is already a Cloud Code Assist API formatted request
-	// by checking if it has the expected fields for the Cloud Code Assist API
-	_, hasModel := requestMap["model"]
-	_, hasProject := requestMap["project"]
-	_, hasRequest := requestMap["request"]
-
-	// Prepare the final request structure based on the format
-	var finalRequest map[string]interface{}
-	if hasModel && hasProject && hasRequest {
-		// This is already a Cloud Code Assist API formatted request
-		// Just update the project ID
-		requestMap["project"] = p.projectID
-		finalRequest = requestMap
-	} else {
-		// This is a standard Gemini API request, format it for Cloud Code Assist API
-		finalRequest = map[string]interface{}{
-			"model":   model,
-			"project": p.projectID,
-			"request": requestMap,
-		}
-	}
+	// FOR STREAMING: Send request directly without Cloud Code Assist wrapper
+	// The :streamGenerateContent?alt=sse endpoint does not support the wrapper format
+	// that is used for non-streaming requests with :generateContent endpoint
+	finalRequest := requestMap
 
 	// Marshal the request
 	reqBody, marshalErr := json.Marshal(finalRequest)
@@ -765,7 +748,8 @@ func (p *Provider) GenerateContentStream(ctx context.Context, model string, requ
 	}
 
 	// Add the crucial alt=sse query parameter for streaming
-	url := fmt.Sprintf("%s:streamGenerateContent?alt=sse", p.baseURL)
+	// Include the model name in the URL path
+	url := fmt.Sprintf("%s/models/%s:streamGenerateContent?alt=sse", p.baseURL, model)
 	req, err := http.NewRequestWithContext(ctx, "POST", url, bytes.NewReader(reqBody))
 	if err != nil {
 		return nil, fmt.Errorf("failed to create request: %w", err)

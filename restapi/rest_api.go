@@ -20,6 +20,10 @@ import (
 	tokpkg "github.com/sunbankio/qwencoder-proxy/internal/token"
 	"github.com/sunbankio/qwencoder-proxy/logging"
 	"github.com/sunbankio/qwencoder-proxy/provider"
+	"github.com/sunbankio/qwencoder-proxy/provider/antigravity"
+	"github.com/sunbankio/qwencoder-proxy/provider/gemini"
+	"github.com/sunbankio/qwencoder-proxy/provider/iflow"
+	"github.com/sunbankio/qwencoder-proxy/provider/qwen"
 	"github.com/sunbankio/qwencoder-proxy/proxy"
 	"golang.org/x/oauth2"
 )
@@ -108,7 +112,7 @@ func NewServer(config *Config, logger logging.Logger) *Server {
 		logger.ErrorLog("Failed to start multi-token manager: %v", err)
 	}
 
-	return &Server{
+	server := &Server{
 		config:            config,
 		registry:          NewProviderRegistry(),
 		stateManager:      NewStateManager(),
@@ -118,6 +122,12 @@ func NewServer(config *Config, logger logging.Logger) *Server {
 		tokenManagers:     make(map[string]*tokpkg.TokenManager),
 		multiTokenManager: multiTokenManager,
 	}
+
+	// Register provider refreshers
+	if err := server.registerProviderRefreshers(); err != nil {
+		logger.ErrorLog("Failed to register provider refreshers: %v", err)
+	}
+	return server
 }
 
 // Start starts the HTTP server
@@ -158,6 +168,65 @@ func (s *Server) Stop() {
 		s.multiTokenManager.Stop()
 		s.logger.InfoLog("Multi-token manager stopped")
 	}
+}
+
+// registerProviderRefreshers registers token refreshers for all providers
+func (s *Server) registerProviderRefreshers() error {
+	if s.multiTokenManager == nil {
+		return fmt.Errorf("multi-token manager not initialized")
+	}
+
+	s.logger.InfoLog("[Server] Registering provider refreshers...")
+
+	// Register Gemini refresher
+	geminiRefresher := gemini.NewGeminiTokenRefresher(
+		"681255809395-oo8ft2oprdrnp9e3aqf6av3hmdib135j.apps.googleusercontent.com",
+		"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",
+		"https://oauth2.googleapis.com/token",
+		s.logger,
+	)
+	if err := s.multiTokenManager.RegisterRefresher("gemini-cli", geminiRefresher); err != nil {
+		s.logger.ErrorLog("[Server] Failed to register Gemini refresher: %v", err)
+		return fmt.Errorf("failed to register Gemini refresher: %w", err)
+	}
+	s.logger.InfoLog("[Server] Registered Gemini refresher")
+
+	// Register Qwen refresher
+	qwenRefresher := qwen.NewQwenTokenRefresher(s.logger)
+	if err := s.multiTokenManager.RegisterRefresher("qwen", qwenRefresher); err != nil {
+		s.logger.ErrorLog("[Server] Failed to register Qwen refresher: %v", err)
+		return fmt.Errorf("failed to register Qwen refresher: %w", err)
+	}
+	s.logger.InfoLog("[Server] Registered Qwen refresher")
+
+	// Register iFlow refresher
+	iflowRefresher := iflow.NewIFlowTokenRefresher(
+		"10009311001",
+		"4Z3YjXycVsQvyGF1etiNlIBB4RsqSDtW",
+		"https://iflow.cn/oauth/token",
+		s.logger,
+	)
+	if err := s.multiTokenManager.RegisterRefresher("iflow", iflowRefresher); err != nil {
+		s.logger.ErrorLog("[Server] Failed to register iFlow refresher: %v", err)
+		return fmt.Errorf("failed to register iFlow refresher: %w", err)
+	}
+	s.logger.InfoLog("[Server] Registered iFlow refresher")
+
+	// Register Antigravity refresher
+	antigravityRefresher := antigravity.NewAntigravityTokenRefresher(
+		"1071006060591-tmhssin2h21lcre235vtolojh4g403ep.apps.googleusercontent.com",
+		"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",
+		"https://oauth2.googleapis.com/token",
+		s.logger,
+	)
+	if err := s.multiTokenManager.RegisterRefresher("antigravity", antigravityRefresher); err != nil {
+		s.logger.ErrorLog("[Server] Failed to register Antigravity refresher: %v", err)
+		return fmt.Errorf("failed to register Antigravity refresher: %w", err)
+	}
+	s.logger.InfoLog("[Server] Registered Antigravity refresher")
+
+	s.logger.InfoLog("[Server] All provider refreshers registered successfully")
+	return nil
 }
 
 // RegisterRoutes registers OAuth API routes with an external http.ServeMux
@@ -1947,7 +2016,7 @@ func (s *Server) RegisterProxyRoutes(mux *http.ServeMux, factory *provider.Facto
 	// Provider type to provider ID mapping for token manager lookup
 	providerToID := map[provider.ProviderType]string{
 		provider.ProviderQwen:        "qwen",
-		provider.ProviderGeminiCLI:   "gemini",
+		provider.ProviderGeminiCLI:   "gemini-cli",
 		provider.ProviderKiro:        "kiro",
 		provider.ProviderAntigravity: "antigravity",
 		provider.ProviderIFlow:       "iflow",

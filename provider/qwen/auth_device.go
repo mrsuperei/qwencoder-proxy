@@ -6,13 +6,18 @@ import (
 	"crypto/rand"
 	"crypto/sha256"
 	"encoding/base64"
+	"encoding/json"
 	"fmt"
+	"io"
+	"net/http"
+	"net/url"
 	"os/exec"
 	"runtime"
+	"strings"
 	"time"
 
 	"github.com/google/uuid"
-	"github.com/sunbankio/qwencoder-proxy/internal/token"
+	tokenpkg "github.com/sunbankio/qwencoder-proxy/internal/token"
 	"github.com/sunbankio/qwencoder-proxy/logging"
 	"golang.org/x/oauth2"
 )
@@ -30,7 +35,7 @@ const (
 
 // AuthenticateWithDeviceFlow handles the OAuth 2.0 device authorization flow using the golang.org/x/oauth2 package.
 // It requires a MultiTokenManager to save the token using the multi-token store.
-func AuthenticateWithDeviceFlow(ctx context.Context, logger logging.Logger, multiTokenMgr *token.MultiTokenManager) error {
+func AuthenticateWithDeviceFlow(ctx context.Context, logger logging.Logger, multiTokenMgr *tokenpkg.MultiTokenManager) error {
 	conf := &oauth2.Config{
 		ClientID: OAuthClientID,
 		Scopes:   []string{OAuthScope},
@@ -112,7 +117,7 @@ func AuthenticateWithDeviceFlow(ctx context.Context, logger logging.Logger, mult
 
 	// Create ProviderToken with email
 	now := time.Now()
-	providerToken := token.ProviderToken{
+	providerToken := tokenpkg.ProviderToken{
 		ID:           uuid.New().String(),
 		AccessToken:  oauth2Token.AccessToken,
 		RefreshToken: oauth2Token.RefreshToken,
@@ -169,4 +174,94 @@ func generateCodeChallenge(codeVerifier string) string {
 	h := sha256.New()
 	h.Write([]byte(codeVerifier))
 	return base64.RawURLEncoding.EncodeToString(h.Sum(nil))
+}
+
+// qwenTokenRefresher implements ProviderRefresh for Qwen
+type qwenTokenRefresher struct {
+	clientID string
+	tokenURL string
+	logger   logging.Logger
+}
+
+// NewQwenTokenRefresher creates a new Qwen token refresher
+func NewQwenTokenRefresher(logger logging.Logger) *qwenTokenRefresher {
+	return &qwenTokenRefresher{
+		clientID: OAuthClientID,
+		tokenURL: OAuthTokenURL,
+		logger:   logger,
+	}
+}
+
+// ProviderID returns the provider identifier
+func (q *qwenTokenRefresher) ProviderID() string {
+	return "qwen"
+}
+
+// RefreshToken refreshes a Qwen OAuth token
+func (q *qwenTokenRefresher) RefreshToken(ctx context.Context, token tokenpkg.ProviderToken) (tokenpkg.ProviderToken, error) {
+	q.logger.InfoLog("[QwenRefresh] Starting token refresh for token ID %s", token.ID)
+
+	if token.RefreshToken == "" {
+		q.logger.ErrorLog("[QwenRefresh] No refresh token available for token ID %s", token.ID)
+		return tokenpkg.ProviderToken{}, fmt.Errorf("no refresh token available")
+	}
+
+	// Prepare refresh request
+	data := url.Values{}
+	data.Set("client_id", q.clientID)
+	data.Set("refresh_token", token.RefreshToken)
+	data.Set("grant_type", "refresh_token")
+
+	// Make HTTP request
+	req, err := http.NewRequestWithContext(ctx, "POST", q.tokenURL, strings.NewReader(data.Encode()))
+	if err != nil {
+		q.logger.ErrorLog("[QwenRefresh] Failed to create refresh request for token ID %s: %v", token.ID, err)
+		return tokenpkg.ProviderToken{}, fmt.Errorf("failed to create refresh request: %w", err)
+	}
+	req.Header.Set("Content-Type", "application/x-www-form-urlencoded")
+
+	client := &http.Client{Timeout: 30 * time.Second}
+	resp, err := client.Do(req)
+	if err != nil {
+		q.logger.ErrorLog("[QwenRefresh] Failed to send refresh request for token ID %s: %v", token.ID, err)
+		return tokenpkg.ProviderToken{}, fmt.Errorf("failed to send refresh request: %w", err)
+	}
+	defer resp.Body.Close()
+
+	if resp.StatusCode != http.StatusOK {
+		body, _ := io.ReadAll(resp.Body)
+		q.logger.ErrorLog("[QwenRefresh] Refresh failed with status %d for token ID %s: %s", resp.StatusCode, token.ID, string(body))
+		return tokenpkg.ProviderToken{}, fmt.Errorf("refresh failed with status %d: %s", resp.StatusCode, string(body))
+	}
+
+	// Parse response
+	var tokenResp struct {
+		AccessToken  string `json:"access_token"`
+		RefreshToken string `json:"refresh_token"`
+		TokenType    string `json:"token_type"`
+		ExpiresIn    int64  `json:"expires_in"`
+	}
+	if err := json.NewDecoder(resp.Body).Decode(&tokenResp); err != nil {
+		q.logger.ErrorLog("[QwenRefresh] Failed to decode refresh response for token ID %s: %v", token.ID, err)
+		return tokenpkg.ProviderToken{}, fmt.Errorf("failed to decode refresh response: %w", err)
+	}
+
+	// Calculate expiry
+	expiryDate := time.Now().Add(time.Duration(tokenResp.ExpiresIn) * time.Second)
+	q.logger.InfoLog("[QwenRefresh] Token refresh successful for token ID %s, new expiry %s", token.ID, expiryDate.Format(time.RFC3339))
+
+	// Return refreshed token
+	return tokenpkg.ProviderToken{
+		ID:           token.ID,
+		AccessToken:  tokenResp.AccessToken,
+		RefreshToken: tokenResp.RefreshToken,
+		TokenType:    tokenResp.TokenType,
+		ExpiryDate:   expiryDate.UnixMilli(),
+		Email:        token.Email,
+		ResourceURL:  token.ResourceURL,
+		Healthy:      true,
+		HealthScore:  1.0,
+		LastUsed:     token.LastUsed,
+		CreatedAt:    token.CreatedAt,
+	}, nil
 }
