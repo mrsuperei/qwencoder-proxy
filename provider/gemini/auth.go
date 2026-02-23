@@ -478,6 +478,10 @@ func (g *geminiTokenRefresher) RefreshToken(ctx context.Context, token tokenpkg.
 	expiryDate := time.Now().Add(time.Duration(tokenResp.ExpiresIn) * time.Second)
 	g.logger.InfoLog("[GeminiRefresh] Token refresh successful for token ID %s, new expiry %s", token.ID, expiryDate.Format(time.RFC3339))
 
+	// Log token details for debugging
+	g.logger.DebugLog("[GeminiRefresh] Token details - ID: %s, Email: %s, Healthy: true, ExpiryDate: %d, RefreshToken: %s",
+		token.ID, token.Email, expiryDate.UnixMilli(), token.RefreshToken)
+
 	// Return refreshed token
 	return tokenpkg.ProviderToken{
 		ID:           token.ID,

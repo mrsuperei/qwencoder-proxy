@@ -103,15 +103,6 @@ func NewServer(config *Config, logger logging.Logger) *Server {
 		logger = logging.NewLogger()
 	}
 
-	// Create multi-token manager
-	multiTokenManager := tokpkg.NewMultiTokenManager(logger)
-	if err := multiTokenManager.Initialize(); err != nil {
-		logger.ErrorLog("Failed to initialize multi-token manager: %v", err)
-	}
-	if err := multiTokenManager.Start(); err != nil {
-		logger.ErrorLog("Failed to start multi-token manager: %v", err)
-	}
-
 	server := &Server{
 		config:            config,
 		registry:          NewProviderRegistry(),
@@ -120,13 +111,10 @@ func NewServer(config *Config, logger logging.Logger) *Server {
 		httpClient:        &http.Client{Timeout: 30 * time.Second},
 		tokenStores:       make(map[string]*tokpkg.MultiTokenStore),
 		tokenManagers:     make(map[string]*tokpkg.TokenManager),
-		multiTokenManager: multiTokenManager,
+		multiTokenManager: nil, // Will be set via SetMultiTokenManager() from main application
 	}
 
-	// Register provider refreshers
-	if err := server.registerProviderRefreshers(); err != nil {
-		logger.ErrorLog("Failed to register provider refreshers: %v", err)
-	}
+	// Note: Provider refreshers will be registered when SetMultiTokenManager() is called
 	return server
 }
 
@@ -1997,8 +1985,14 @@ func (s *Server) GetStateManager() *StateManager {
 }
 
 // SetMultiTokenManager sets an external multi-token manager (for integration with main application)
+// This ensures both the REST API server and providers use the same token manager instance
 func (s *Server) SetMultiTokenManager(multiTokenMgr *tokpkg.MultiTokenManager) {
 	s.multiTokenManager = multiTokenMgr
+
+	// Register provider refreshers with the shared multi-token manager
+	if err := s.registerProviderRefreshers(); err != nil {
+		s.logger.ErrorLog("Failed to register provider refreshers: %v", err)
+	}
 }
 
 // GetMultiTokenManager returns the multi-token manager (for use by other packages)

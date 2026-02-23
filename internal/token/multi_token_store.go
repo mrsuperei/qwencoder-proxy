@@ -526,14 +526,20 @@ func (mts *MultiTokenStore) MarkTokenUnhealthy(tokenID string, err error) error 
 // IsTokenValid checks if token is valid (not expired and healthy)
 func (mts *MultiTokenStore) IsTokenValid(token ProviderToken) bool {
 	if !token.Healthy {
+		mts.logger.DebugLog("[MultiTokenStore] Token %s is invalid: Healthy=%v", token.ID, token.Healthy)
 		return false
 	}
 	if token.ExpiryDate == 0 {
+		mts.logger.DebugLog("[MultiTokenStore] Token %s is invalid: ExpiryDate=0", token.ID)
 		return false
 	}
 	// Use the refresh buffer from settings
 	bufferMs := int64(mts.Settings.RefreshBufferSec) * 1000
-	return time.Now().UnixMilli() < token.ExpiryDate-bufferMs
+	nowMs := time.Now().UnixMilli()
+	isValid := nowMs < token.ExpiryDate-bufferMs
+	mts.logger.DebugLog("[MultiTokenStore] Token %s validation: now=%d, expiry=%d, buffer=%d, valid=%v",
+		token.ID, nowMs, token.ExpiryDate, bufferMs, isValid)
+	return isValid
 }
 
 // GetValidTokens gets all valid tokens

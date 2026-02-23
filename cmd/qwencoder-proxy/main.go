@@ -168,14 +168,11 @@ func initializeProviders(
 	}
 
 	// Create and register Gemini provider
-	geminiAuth := gemini.NewAuthenticator(nil)
-	geminiAuth.SetMultiTokenManager(multiTokenMgr)
-	geminiProvider := gemini.NewProvider(geminiAuth)
 	geminiTokenMgr, err := multiTokenMgr.GetTokenManager("gemini-cli")
 	if err != nil {
 		logger.WarnLog("Failed to get token manager for gemini-cli: %v", err)
 	} else {
-		geminiAuth.SetTokenManager(geminiTokenMgr)
+		geminiProvider := gemini.NewProviderWithTokenManager(nil, geminiTokenMgr, logger)
 		factory.RegisterWithTokenManager(geminiProvider, geminiTokenMgr)
 		logger.InfoLog("Registered gemini-cli provider with token manager")
 	}

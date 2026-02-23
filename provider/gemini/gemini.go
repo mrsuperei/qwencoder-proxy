@@ -13,6 +13,7 @@ import (
 	"strings"
 	"time"
 
+	tokenpkg "github.com/sunbankio/qwencoder-proxy/internal/token"
 	"github.com/sunbankio/qwencoder-proxy/logging"
 	"github.com/sunbankio/qwencoder-proxy/provider"
 )
@@ -52,6 +53,25 @@ func NewProvider(authenticator *Authenticator) *Provider {
 	}
 	return &Provider{
 		BaseProvider:  provider.NewBaseProvider(logging.NewLogger(), 5*time.Minute),
+		baseURL:       DefaultBaseURL,
+		authenticator: authenticator,
+	}
+}
+
+// NewProviderWithTokenManager creates a new Gemini provider with token manager pre-injected
+// This ensures token manager is available from the start, avoiding race conditions
+func NewProviderWithTokenManager(authenticator *Authenticator, tokenManager *tokenpkg.TokenManager, logger logging.Logger) *Provider {
+	if authenticator == nil {
+		authenticator = NewAuthenticator(nil)
+	}
+	if tokenManager != nil {
+		authenticator.SetTokenManager(tokenManager)
+	}
+	if logger == nil {
+		logger = logging.NewLogger()
+	}
+	return &Provider{
+		BaseProvider:  provider.NewBaseProvider(logger, 5*time.Minute),
 		baseURL:       DefaultBaseURL,
 		authenticator: authenticator,
 	}
@@ -486,12 +506,9 @@ func (p *Provider) initializeProject(ctx context.Context) error {
 
 // GenerateContent handles non-streaming requests with native format
 func (p *Provider) GenerateContent(ctx context.Context, model string, request interface{}) (interface{}, error) {
-	// Check if there was a previous initialization error to avoid repeated auth failures
-	if p.projectInitError != nil {
-		return nil, fmt.Errorf("project initialization failed due to authentication error, please re-authenticate: %w", p.projectInitError)
-	}
-
 	// Ensure project is initialized
+	// Note: We retry initialization even if there was a previous error,
+	// because tokens might have been added via the dashboard OAuth flow.
 	if p.projectID == "" {
 		if err := p.initializeProject(ctx); err != nil {
 			return nil, fmt.Errorf("failed to initialize project: %w", err)
