@@ -26,7 +26,7 @@ type ProviderConfig struct {
 
 // MultiTokenManager manages all multi-token components
 type MultiTokenManager struct {
-	stores              map[string]*MultiTokenStore
+	stores              map[string]*SQLiteStore
 	managers            map[string]*TokenManager
 	refreshers          map[string]ProviderRefresh
 	schedulers          map[string]*RefreshScheduler
@@ -40,6 +40,7 @@ type MultiTokenManager struct {
 	httpClient          *http.Client
 	clientFactory       ProxyClientFactory
 	credentialsDir      string
+	dbPath              string // SQLite database path
 	initialized         bool
 }
 
@@ -50,7 +51,7 @@ func NewMultiTokenManager(logger logging.Logger) *MultiTokenManager {
 	}
 
 	return &MultiTokenManager{
-		stores:              make(map[string]*MultiTokenStore),
+		stores:              make(map[string]*SQLiteStore),
 		managers:            make(map[string]*TokenManager),
 		refreshers:          make(map[string]ProviderRefresh),
 		schedulers:          make(map[string]*RefreshScheduler),
@@ -61,6 +62,7 @@ func NewMultiTokenManager(logger logging.Logger) *MultiTokenManager {
 		logger:              logger,
 		httpClient:          &http.Client{Timeout: 30 * time.Second},
 		credentialsDir:      ".credentials",
+		dbPath:              filepath.Join(".credentials", "tokens.db"),
 	}
 }
 
@@ -83,6 +85,14 @@ func (mtm *MultiTokenManager) SetClientFactory(clientFactory ProxyClientFactory)
 	mtm.mu.Lock()
 	defer mtm.mu.Unlock()
 	mtm.clientFactory = clientFactory
+}
+
+// SetStorageConfig sets the storage backend configuration
+func (mtm *MultiTokenManager) SetStorageConfig(dbPath string) {
+	mtm.mu.Lock()
+	defer mtm.mu.Unlock()
+	mtm.dbPath = dbPath
+	mtm.logger.InfoLog("[MultiTokenManager] Storage config updated: dbPath=%s", dbPath)
 }
 
 // Initialize initializes all components
@@ -147,7 +157,7 @@ func (mtm *MultiTokenManager) Stop() {
 }
 
 // GetTokenStore returns the token store for a provider
-func (mtm *MultiTokenManager) GetTokenStore(providerID string) (*MultiTokenStore, error) {
+func (mtm *MultiTokenManager) GetTokenStore(providerID string) (*SQLiteStore, error) {
 	mtm.mu.RLock()
 	store, ok := mtm.stores[providerID]
 	mtm.mu.RUnlock()
@@ -169,29 +179,28 @@ func (mtm *MultiTokenManager) GetTokenStore(providerID string) (*MultiTokenStore
 
 	mtm.logger.InfoLog("[MultiTokenManager] Creating new token store for provider: %s", providerID)
 
-	// Create credentials directory
-	credsPath := filepath.Join(mtm.credentialsDir, providerID+".json")
-
-	// Create directory if it doesn't exist
-	if err := os.MkdirAll(mtm.credentialsDir, CredentialsDirMode); err != nil {
-		return nil, fmt.Errorf("failed to create credentials directory: %w", err)
+	// Ensure database directory exists
+	dbDir := filepath.Dir(mtm.dbPath)
+	if err := os.MkdirAll(dbDir, 0755); err != nil {
+		return nil, fmt.Errorf("failed to create database directory %s: %w", dbDir, err)
 	}
 
-	store = NewMultiTokenStore(providerID, credsPath, mtm.logger)
-	if err := store.Load(); err != nil {
-		mtm.logger.WarnLog("[MultiTokenManager] Failed to load token store for %s: %v", providerID, err)
+	// Create SQLite store
+	sqliteStore, err := NewSQLiteStore(mtm.dbPath, providerID, mtm.logger)
+	if err != nil {
+		return nil, fmt.Errorf("failed to create SQLite store: %w", err)
 	}
 
-	mtm.stores[providerID] = store
+	mtm.stores[providerID] = sqliteStore
 
 	// Create health tracker for this provider
-	mtm.healthTrackers[providerID] = NewHealthTracker(store, mtm.logger)
+	mtm.healthTrackers[providerID] = NewHealthTracker(sqliteStore, mtm.logger)
 
 	// Create proxy health tracker for this provider
 	mtm.proxyHealthTrackers[providerID] = NewProxyHealthTracker(mtm.logger, 5, 5*time.Minute)
 
 	mtm.logger.InfoLog("[MultiTokenManager] Created token store for provider: %s", providerID)
-	return store, nil
+	return sqliteStore, nil
 }
 
 // GetTokenManager returns the token manager for a provider
@@ -216,7 +225,11 @@ func (mtm *MultiTokenManager) GetTokenManager(providerID string) (*TokenManager,
 	mtm.logger.DebugLog("[MultiTokenManager] Store for %s has %d tokens", providerID, store.GetTokenCount())
 
 	// Create strategy from store settings
-	strategy, err := mtm.strategyFactory.CreateStrategy(store.Settings.SelectionStrategy)
+	settings, err := store.GetSettings()
+	if err != nil {
+		return nil, fmt.Errorf("failed to get store settings: %w", err)
+	}
+	strategy, err := mtm.strategyFactory.CreateStrategy(settings.SelectionStrategy)
 	if err != nil {
 		return nil, fmt.Errorf("failed to create selection strategy: %w", err)
 	}
@@ -434,10 +447,8 @@ func (mtm *MultiTokenManager) ClearProviderTokens(providerID string) error {
 	}
 
 	// Clear all tokens
-	store.Tokens = []ProviderToken{}
-
-	if err := store.Save(); err != nil {
-		return fmt.Errorf("failed to save cleared store: %w", err)
+	if err := store.Clear(); err != nil {
+		return fmt.Errorf("failed to clear store: %w", err)
 	}
 
 	// Remove from managers

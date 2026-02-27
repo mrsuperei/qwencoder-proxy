@@ -58,12 +58,23 @@ type OAuthServerConfig struct {
 	AllowedOrigins  []string      // CORS allowed origins (default: ["*"])
 }
 
+// StorageConfig holds storage backend configuration
+type StorageConfig struct {
+	DBPath string // Path to SQLite database
+}
+
+// Default storage configuration constants
+const (
+	DefaultStoragePath = ".credentials/tokens.db"
+)
+
 // Config holds all configuration for application
 type Config struct {
 	Server      ServerConfig
 	HTTPClient  HTTPClientConfig
 	Logging     LoggingConfig
 	OAuthServer OAuthServerConfig
+	Storage     StorageConfig
 }
 
 // DefaultConfig returns the default configuration
@@ -90,6 +101,9 @@ func DefaultConfig() *Config {
 			DeviceCodeTTL:   15 * time.Minute,
 			EnableCORS:      false,
 			AllowedOrigins:  []string{"*"},
+		},
+		Storage: StorageConfig{
+			DBPath: DefaultStoragePath,
 		},
 	}
 }

@@ -347,7 +347,7 @@ func TestGenerateContentWithTokenManager(t *testing.T) {
 	// Test with token manager
 	t.Run("with token manager", func(t *testing.T) {
 		// Create a mock token store
-		store := tokpkg.NewMultiTokenStore("test", "", provider.GetLogger())
+		store := tokpkg.NewMockStore("test", provider.GetLogger())
 
 		// Add a test token
 		token := tokpkg.ProviderToken{
@@ -440,7 +440,7 @@ func TestGenerateContentStreamWithTokenManager(t *testing.T) {
 	// Test with token manager
 	t.Run("with token manager", func(t *testing.T) {
 		// Create a mock token store
-		store := tokpkg.NewMultiTokenStore("test", "", provider.GetLogger())
+		store := tokpkg.NewMockStore("test", provider.GetLogger())
 
 		// Add a test token
 		token := tokpkg.ProviderToken{
@@ -507,7 +507,7 @@ func TestProxyHealthTracking(t *testing.T) {
 	provider.projectID = "test-project"
 
 	// Create a mock token store
-	store := tokpkg.NewMultiTokenStore("test", "", provider.GetLogger())
+	store := tokpkg.NewMockStore("test", provider.GetLogger())
 
 	// Add a test token with proxy configuration
 	token := tokpkg.ProviderToken{
@@ -574,7 +574,7 @@ func TestProxyErrorClassification(t *testing.T) {
 	provider.projectID = "test-project"
 
 	// Create a mock token store
-	store := tokpkg.NewMultiTokenStore("test", "", provider.GetLogger())
+	store := tokpkg.NewMockStore("test", provider.GetLogger())
 
 	// Add a test token
 	token := tokpkg.ProviderToken{
@@ -633,7 +633,7 @@ func TestSetTokenManager(t *testing.T) {
 	}
 
 	// Create a token manager
-	store := tokpkg.NewMultiTokenStore("test", "", provider.GetLogger())
+	store := tokpkg.NewMockStore("test", provider.GetLogger())
 	factory := newMockClientFactory()
 	proxyHealthTracker := tokpkg.NewProxyHealthTracker(provider.GetLogger(), 5, 5*time.Minute)
 	tokenManager := tokpkg.NewTokenManager(store, tokpkg.NewRandomSelectionStrategy(), provider.GetLogger(), factory, proxyHealthTracker)

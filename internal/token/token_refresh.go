@@ -37,7 +37,7 @@ type ProviderRefresh interface {
 
 // RefreshCoordinator manages token refresh operations with a worker pool.
 type RefreshCoordinator struct {
-	store        *MultiTokenStore
+	store        *SQLiteStore
 	refreshers   map[string]ProviderRefresh
 	requestQueue chan RefreshRequest
 	resultQueue  chan RefreshResult
@@ -50,7 +50,7 @@ type RefreshCoordinator struct {
 }
 
 // NewRefreshCoordinator creates a new RefreshCoordinator.
-func NewRefreshCoordinator(store *MultiTokenStore, workers int, logger logging.Logger, _ ProxyClientFactory) *RefreshCoordinator {
+func NewRefreshCoordinator(store *SQLiteStore, workers int, logger logging.Logger, _ ProxyClientFactory) *RefreshCoordinator {
 	if workers <= 0 {
 		workers = 3
 	}
@@ -134,7 +134,7 @@ func (rc *RefreshCoordinator) processRequest(request RefreshRequest) {
 
 	_ = rc.store.UpdateToken(request.TokenID, func(token *ProviderToken) {
 		*token = newToken
-		token.LastUsed = GetCurrentTimestamp()
+		token.LastUsed = time.Now().UnixMilli()
 		token.Healthy = true
 		token.ErrorCount = 0
 		token.LastError = ""
@@ -162,7 +162,7 @@ func (rc *RefreshCoordinator) ScheduleRefresh(tokenID string, priority int) erro
 
 	request := RefreshRequest{
 		TokenID:     tokenID,
-		ProviderID:  rc.store.ProviderID,
+		ProviderID:  rc.store.providerID,
 		Priority:    priority,
 		ScheduledAt: time.Now(),
 		Token:       *token,
@@ -186,7 +186,7 @@ func (rc *RefreshCoordinator) RegisterRefresher(refresher ProviderRefresh) {
 // RefreshScheduler periodically checks for tokens that need refreshing.
 type RefreshScheduler struct {
 	coordinator   *RefreshCoordinator
-	store         *MultiTokenStore
+	store         *SQLiteStore
 	checkInterval time.Duration
 	ctx           context.Context
 	cancel        context.CancelFunc
@@ -195,7 +195,7 @@ type RefreshScheduler struct {
 }
 
 // NewRefreshScheduler creates a new RefreshScheduler.
-func NewRefreshScheduler(coordinator *RefreshCoordinator, store *MultiTokenStore, checkInterval time.Duration, logger logging.Logger) *RefreshScheduler {
+func NewRefreshScheduler(coordinator *RefreshCoordinator, store *SQLiteStore, checkInterval time.Duration, logger logging.Logger) *RefreshScheduler {
 	if checkInterval <= 0 {
 		checkInterval = 5 * time.Minute
 	}
@@ -248,7 +248,12 @@ func (rs *RefreshScheduler) run() {
 // CheckAndSchedule checks tokens and schedules refreshes for expiring ones.
 func (rs *RefreshScheduler) CheckAndSchedule() {
 	tokens := rs.store.ListTokens()
-	bufferSeconds := rs.store.Settings.RefreshBufferSec
+	settings, err := rs.store.GetSettings()
+	if err != nil {
+		rs.logger.ErrorLog("[RefreshScheduler] Failed to get settings: %v", err)
+		return
+	}
+	bufferSeconds := settings.RefreshBufferSec
 
 	for _, token := range tokens {
 		if !token.Healthy {

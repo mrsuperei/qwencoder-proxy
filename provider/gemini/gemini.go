@@ -297,6 +297,22 @@ func (p *Provider) doRequestWithProxy(req *http.Request, client *http.Client, to
 	return resp, nil
 }
 
+// applyGeminiHeaders sets required headers for Gemini API requests.
+// These headers are required by the Cloud Code Assist API for proper request handling.
+func (p *Provider) applyGeminiHeaders(req *http.Request) {
+	if req == nil {
+		return
+	}
+	// User-Agent identifies the client to the API
+	req.Header.Set("User-Agent", "google-api-nodejs-client/9.15.1")
+
+	// X-Goog-Api-Client provides API client information
+	req.Header.Set("X-Goog-Api-Client", "gl-node/22.17.0")
+
+	// Client-Metadata provides IDE and platform context
+	req.Header.Set("Client-Metadata", "ideType=IDE_UNSPECIFIED,platform=PLATFORM_UNSPECIFIED,pluginType=GEMINI")
+}
+
 // initializeProject discovers or creates a project for the Cloud Code Assist API
 func (p *Provider) initializeProject(ctx context.Context) error {
 	p.GetLogger().DebugLog("[Gemini] Starting project initialization...")
@@ -391,6 +407,7 @@ func (p *Provider) initializeProject(ctx context.Context) error {
 
 	req.Header.Set("Authorization", "Bearer "+token)
 	req.Header.Set("Content-Type", "application/json")
+	p.applyGeminiHeaders(req)
 
 	resp, err := p.doRequestWithProxy(req, client, tokenID)
 	if err != nil {
@@ -461,6 +478,8 @@ func (p *Provider) initializeProject(ctx context.Context) error {
 
 	onboardReq.Header.Set("Authorization", "Bearer "+token)
 	onboardReq.Header.Set("Content-Type", "application/json")
+	onboardReq.Header.Set("User-Agent", "qwencoder-proxy/1.0")
+	p.applyGeminiHeaders(onboardReq)
 
 	// For long-running operations, we might need to handle LRO (Long Running Operations)
 	onboardResp, err := p.doRequestWithProxy(onboardReq, client, tokenID)
@@ -536,6 +555,9 @@ func (p *Provider) GenerateContent(ctx context.Context, model string, request in
 		token = selectedToken.AccessToken
 		tokenID = selectedToken.ID
 
+		// DEBUG: Log token details
+		p.GetLogger().DebugLog("[Gemini] Selected token: ID=%s, Email=%s", tokenID, selectedToken.Email)
+
 		// Log proxy usage
 		if selectedToken.Proxy != nil && selectedToken.Proxy.Type != "none" {
 			p.GetLogger().DebugLog("[Gemini] GenerateContent using token %s with proxy: %s:%d", tokenID, selectedToken.Proxy.Host, selectedToken.Proxy.Port)
@@ -594,6 +616,10 @@ func (p *Provider) GenerateContent(ctx context.Context, model string, request in
 		return nil, fmt.Errorf("failed to marshal request: %w", marshalErr)
 	}
 
+	// DEBUG: Log the actual request being sent
+	p.GetLogger().DebugLog("[Gemini] Request payload: %s", string(reqBody))
+	p.GetLogger().DebugLog("[Gemini] Using projectID: %s", p.projectID)
+
 	url := fmt.Sprintf("%s:generateContent", p.baseURL)
 	req, err := http.NewRequestWithContext(ctx, "POST", url, bytes.NewReader(reqBody))
 	if err != nil {
@@ -602,6 +628,7 @@ func (p *Provider) GenerateContent(ctx context.Context, model string, request in
 
 	req.Header.Set("Authorization", "Bearer "+token)
 	req.Header.Set("Content-Type", "application/json")
+	p.applyGeminiHeaders(req)
 
 	p.GetLogger().DebugLog("[Gemini] Sending generateContent request to %s", url)
 
@@ -647,6 +674,7 @@ func (p *Provider) GenerateContent(ctx context.Context, model string, request in
 
 		retryReq.Header.Set("Authorization", "Bearer "+refreshedToken)
 		retryReq.Header.Set("Content-Type", "application/json")
+		p.applyGeminiHeaders(retryReq)
 
 		retryResp, err := p.doRequestWithProxy(retryReq, client, tokenID)
 		if err != nil {
@@ -753,10 +781,14 @@ func (p *Provider) GenerateContentStream(ctx context.Context, model string, requ
 		}
 	}
 
-	// FOR STREAMING: Send request directly without Cloud Code Assist wrapper
-	// The :streamGenerateContent?alt=sse endpoint does not support the wrapper format
-	// that is used for non-streaming requests with :generateContent endpoint
-	finalRequest := requestMap
+	// FOR STREAMING: Use the same wrapper format as non-streaming requests.
+	// The :streamGenerateContent?alt=sse endpoint requires the same structure
+	// with project and model at the top level, and the actual request in a "request" field.
+	finalRequest := map[string]interface{}{
+		"model":   model,
+		"project": p.projectID,
+		"request": requestMap,
+	}
 
 	// Marshal the request
 	reqBody, marshalErr := json.Marshal(finalRequest)
@@ -764,9 +796,11 @@ func (p *Provider) GenerateContentStream(ctx context.Context, model string, requ
 		return nil, fmt.Errorf("failed to marshal request: %w", marshalErr)
 	}
 
+	// DEBUG: Log the actual streaming request being sent
+	p.GetLogger().DebugLog("[Gemini] Streaming request payload: %s", string(reqBody))
+
 	// Add the crucial alt=sse query parameter for streaming
-	// Include the model name in the URL path
-	url := fmt.Sprintf("%s/models/%s:streamGenerateContent?alt=sse", p.baseURL, model)
+	url := fmt.Sprintf("%s:streamGenerateContent?alt=sse", p.baseURL)
 	req, err := http.NewRequestWithContext(ctx, "POST", url, bytes.NewReader(reqBody))
 	if err != nil {
 		return nil, fmt.Errorf("failed to create request: %w", err)
@@ -775,6 +809,7 @@ func (p *Provider) GenerateContentStream(ctx context.Context, model string, requ
 	req.Header.Set("Authorization", "Bearer "+token)
 	req.Header.Set("Content-Type", "application/json")
 	req.Header.Set("Accept", "text/event-stream")
+	p.applyGeminiHeaders(req)
 
 	p.GetLogger().DebugLog("[Gemini] Sending streamGenerateContent request to %s", url)
 
@@ -805,6 +840,9 @@ func (p *Provider) GenerateContentStream(ctx context.Context, model string, requ
 			return nil, fmt.Errorf("failed to marshal request for retry: %w", marshalErr)
 		}
 
+		// DEBUG: Log the retry streaming request
+		p.GetLogger().DebugLog("[Gemini] Retrying streaming request with refreshed token")
+
 		retryReq, err := http.NewRequestWithContext(ctx, "POST", url, bytes.NewReader(retryReqBody))
 		if err != nil {
 			return nil, fmt.Errorf("failed to create retry request: %w", err)
@@ -819,6 +857,7 @@ func (p *Provider) GenerateContentStream(ctx context.Context, model string, requ
 		retryReq.Header.Set("Authorization", "Bearer "+refreshedToken)
 		retryReq.Header.Set("Content-Type", "application/json")
 		retryReq.Header.Set("Accept", "text/event-stream")
+		p.applyGeminiHeaders(retryReq)
 
 		retryResp, err := p.doRequestWithProxy(retryReq, client, tokenID)
 		if err != nil {

@@ -52,5 +52,10 @@ func LoadConfig() *Config {
 		config.Logging.IsDebugMode = strings.ToLower(debugMode) == "true"
 	}
 
+	// Load storage configuration
+	if storageDBPath := os.Getenv("STORAGE_DB_PATH"); storageDBPath != "" {
+		config.Storage.DBPath = storageDBPath
+	}
+
 	return config
 }

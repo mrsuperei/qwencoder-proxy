@@ -69,6 +69,10 @@ func main() {
 		logger.InfoLog("Using credentials directory: %s", credsDir)
 	}
 
+	// Set storage configuration
+	multiTokenMgr.SetStorageConfig(cfg.Storage.DBPath)
+	logger.InfoLog("DB path: %s", cfg.Storage.DBPath)
+
 	// Create proxy client factory for proxy-aware HTTP clients
 	proxyClientFactory := config.NewProxyAwareHTTPClientFactory(
 		cfg.HTTPClient,
@@ -80,7 +84,7 @@ func main() {
 	multiTokenMgr.SetClientFactory(proxyClientFactory)
 
 	// Create provider factory
-	providerFactory := provider.NewFactory()
+	providerFactory := provider.NewFactory(logger)
 
 	// Create converter factory
 	converterFactory := converter.NewFactory()

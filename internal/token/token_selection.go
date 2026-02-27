@@ -134,7 +134,7 @@ func (s *LeastUsedSelectionStrategy) SelectToken(tokens []ProviderToken) (*Provi
 
 // TokenManager manages token selection for a provider
 type TokenManager struct {
-	store              *MultiTokenStore
+	store              TokenRepository
 	strategy           SelectionStrategy
 	mu                 sync.RWMutex
 	logger             logging.Logger
@@ -143,7 +143,7 @@ type TokenManager struct {
 }
 
 // NewTokenManager creates a new TokenManager
-func NewTokenManager(store *MultiTokenStore, strategy SelectionStrategy, logger logging.Logger,
+func NewTokenManager(store TokenRepository, strategy SelectionStrategy, logger logging.Logger,
 	clientFactory ProxyClientFactory, proxyHealthTracker *ProxyHealthTracker) *TokenManager {
 	return &TokenManager{
 		store:              store,
@@ -179,8 +179,8 @@ func (tm *TokenManager) SelectToken() (*ProviderToken, error) {
 	}
 
 	// Update LastUsed timestamp
-	if err := tm.store.UpdateToken(token.ID, func(t *ProviderToken) {
-		t.LastUsed = GetCurrentTimestamp()
+	if err := tm.store.UpdateToken(token.ID, func(t *TokenMetadata) {
+		t.LastUsed = time.Now().UnixMilli()
 	}); err != nil {
 		tm.logger.WarnLog("Failed to update LastUsed timestamp for token %s: %v", token.ID, err)
 	}
@@ -205,8 +205,8 @@ func (tm *TokenManager) SelectTokenByID(tokenID string) (*ProviderToken, error) 
 	}
 
 	// Update LastUsed timestamp
-	if err := tm.store.UpdateToken(tokenID, func(t *ProviderToken) {
-		t.LastUsed = GetCurrentTimestamp()
+	if err := tm.store.UpdateToken(tokenID, func(t *TokenMetadata) {
+		t.LastUsed = time.Now().UnixMilli()
 	}); err != nil {
 		tm.logger.WarnLog("Failed to update LastUsed timestamp for token %s: %v", tokenID, err)
 	}
@@ -299,8 +299,8 @@ func (tm *TokenManager) SelectTokenWithClient() (*ProviderToken, *http.Client, e
 	}
 
 	// Update LastUsed timestamp
-	if err := tm.store.UpdateToken(fullToken.ID, func(t *ProviderToken) {
-		t.LastUsed = GetCurrentTimestamp()
+	if err := tm.store.UpdateToken(fullToken.ID, func(t *TokenMetadata) {
+		t.LastUsed = time.Now().UnixMilli()
 	}); err != nil {
 		tm.logger.WarnLog("Failed to update LastUsed timestamp for token %s: %v", fullToken.ID, err)
 	}
@@ -396,13 +396,13 @@ func (tm *TokenManager) UpdateProxyHealth(tokenID string, healthy bool, err erro
 
 // HealthTracker tracks token health and provides recommendations
 type HealthTracker struct {
-	store  *MultiTokenStore
+	store  *SQLiteStore
 	mu     sync.RWMutex
 	logger logging.Logger
 }
 
 // NewHealthTracker creates a new HealthTracker
-func NewHealthTracker(store *MultiTokenStore, logger logging.Logger) *HealthTracker {
+func NewHealthTracker(store *SQLiteStore, logger logging.Logger) *HealthTracker {
 	return &HealthTracker{
 		store:  store,
 		logger: logger,
@@ -414,13 +414,13 @@ func (ht *HealthTracker) ReportSuccess(tokenID string) error {
 	ht.mu.Lock()
 	defer ht.mu.Unlock()
 
-	return ht.store.UpdateToken(tokenID, func(token *ProviderToken) {
+	return ht.store.UpdateToken(tokenID, func(token *TokenMetadata) {
 		token.Healthy = true
 		token.ErrorCount = 0
 		token.LastError = ""
 		// Gradually increase health score, max 1.0
 		token.HealthScore = min(1.0, token.HealthScore+0.1)
-		token.LastUsed = GetCurrentTimestamp()
+		token.LastUsed = time.Now().UnixMilli()
 	})
 }
 
@@ -429,14 +429,20 @@ func (ht *HealthTracker) ReportFailure(tokenID string, err error) error {
 	ht.mu.Lock()
 	defer ht.mu.Unlock()
 
-	return ht.store.UpdateToken(tokenID, func(token *ProviderToken) {
+	// Get settings to check max error count
+	settings, settingsErr := ht.store.GetSettings()
+	if settingsErr != nil {
+		return settingsErr
+	}
+
+	return ht.store.UpdateToken(tokenID, func(token *TokenMetadata) {
 		token.ErrorCount++
 		token.HealthScore = max(0.0, token.HealthScore-0.2)
 		if err != nil {
 			token.LastError = err.Error()
 		}
 		// Mark as unhealthy if error count exceeds max
-		if token.ErrorCount >= ht.store.Settings.MaxErrorCount {
+		if token.ErrorCount >= settings.MaxErrorCount {
 			token.Healthy = false
 		}
 	})

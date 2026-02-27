@@ -440,7 +440,7 @@ func TestGeminiServeHTTPWithMethodNotAllowed(t *testing.T) {
 // TestGeminiHandlerWithTokenManagerIntegration tests handler with token manager integration
 func TestGeminiHandlerWithTokenManagerIntegration(t *testing.T) {
 	// Create a mock token store with a token
-	store := token.NewMultiTokenStore("test", ".test-gemini-handler.json", logging.NewLogger())
+	store := token.NewMockStore("test", logging.NewLogger())
 	providerToken := token.ProviderToken{
 		ID:          "test-token",
 		AccessToken: "test-access-token",

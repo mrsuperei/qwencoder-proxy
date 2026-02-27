@@ -10,6 +10,7 @@ import (
 	"time"
 
 	auth "github.com/sunbankio/qwencoder-proxy/internal/token"
+	"github.com/sunbankio/qwencoder-proxy/logging"
 )
 
 // ModelProviderMap maps models to the providers that support them
@@ -30,15 +31,20 @@ type Factory struct {
 	modelProviders ModelProviderMap        // model -> list of providers
 	mu             sync.RWMutex
 	rng            *rand.Rand
+	logger         logging.Logger
 }
 
 // NewFactory creates a new provider factory
-func NewFactory() *Factory {
+func NewFactory(logger logging.Logger) *Factory {
+	if logger == nil {
+		logger = logging.NewLogger()
+	}
 	return &Factory{
 		providers:      make(map[ProviderType]Provider),
 		lastSuccess:    make(map[string]ProviderType),
 		modelProviders: make(ModelProviderMap),
 		rng:            rand.New(rand.NewSource(time.Now().UnixNano())),
+		logger:         logger,
 	}
 }
 
@@ -162,15 +168,18 @@ func (f *Factory) PopulateModelProviders(ctx context.Context) error {
 	f.mu.Lock()
 	defer f.mu.Unlock()
 
+	f.logger.InfoLog("[PopulateModelProviders] Starting to populate models from %d providers", len(f.providers))
+
 	// Clear existing mappings
 	f.modelProviders = make(ModelProviderMap)
 
 	// Fetch models from all providers
 	for providerType, provider := range f.providers {
+		f.logger.InfoLog("[PopulateModelProviders] Processing provider: %s", providerType)
 		// Check if provider needs initialization (like Antigravity)
 		if initProvider, ok := provider.(interface{ Initialize(context.Context) error }); ok {
 			if err := initProvider.Initialize(ctx); err != nil {
-				fmt.Printf("Warning: Failed to initialize provider %s: %v\n", providerType, err)
+				f.logger.WarnLog("Failed to initialize provider %s: %v", providerType, err)
 				continue
 			}
 		}
@@ -178,12 +187,20 @@ func (f *Factory) PopulateModelProviders(ctx context.Context) error {
 		modelsData, err := provider.ListModels(ctx)
 		if err != nil {
 			// Log the error but continue with other providers
-			fmt.Printf("Warning: Failed to fetch models from provider %s: %v\n", providerType, err)
+			f.logger.WarnLog("Failed to fetch models from provider %s: %v", providerType, err)
 			continue
 		}
 
 		// Extract models from the response generically
 		modelNames := f.extractModelNames(modelsData)
+
+		// Fallback to SupportedModels() if extractModelNames returns empty list
+		if len(modelNames) == 0 {
+			modelNames = provider.SupportedModels()
+			f.logger.InfoLog("[PopulateModelProviders] Provider %s: Using SupportedModels() fallback (%d models)", providerType, len(modelNames))
+		} else {
+			f.logger.InfoLog("[PopulateModelProviders] Provider %s returned %d models: %v", providerType, len(modelNames), modelNames)
+		}
 
 		// Add this provider to each model it supports
 		for _, modelName := range modelNames {
@@ -206,6 +223,7 @@ func (f *Factory) PopulateModelProviders(ctx context.Context) error {
 		}
 	}
 
+	f.logger.InfoLog("[PopulateModelProviders] Total models registered: %d", len(f.modelProviders))
 	return nil
 }
 
@@ -252,6 +270,13 @@ func (f *Factory) RefreshProviderModels(ctx context.Context, providerType Provid
 
 	// Extract models from the response and add this provider to each model
 	modelNames := f.extractModelNames(modelsData)
+
+	// Fallback to SupportedModels() if extractModelNames returns empty list
+	if len(modelNames) == 0 {
+		modelNames = provider.SupportedModels()
+		f.logger.InfoLog("[RefreshProviderModels] Provider %s: Using SupportedModels() fallback (%d models)", providerType, len(modelNames))
+	}
+
 	for _, modelName := range modelNames {
 		if _, exists := f.modelProviders[modelName]; !exists {
 			f.modelProviders[modelName] = []Provider{}
@@ -324,16 +349,26 @@ func (f *Factory) extractModelNames(data interface{}) []string {
 		// Handle models field (common in Gemini/Antigravity responses)
 		if modelsField, exists := dataMap["models"]; exists {
 			if modelsArray, ok := modelsField.([]interface{}); ok {
-				for _, item := range modelsArray {
+				fmt.Printf("[extractModelNames] Found 'models' field with %d items\n", len(modelsArray))
+				for i, item := range modelsArray {
 					if itemMap, ok := item.(map[string]interface{}); ok {
+						fmt.Printf("[extractModelNames] Item %d: %v\n", i, itemMap)
 						if id, exists := itemMap["id"].(string); exists {
 							modelNames = append(modelNames, id)
 						} else if name, exists := itemMap["name"].(string); exists {
 							modelNames = append(modelNames, name)
+						} else {
+							fmt.Printf("[extractModelNames] Item %d has no 'id' or 'name' field\n", i)
 						}
+					} else {
+						fmt.Printf("[extractModelNames] Item %d is not a map: %T\n", i, item)
 					}
 				}
+			} else {
+				fmt.Printf("[extractModelNames] 'models' field is not an array: %T\n", modelsField)
 			}
+		} else {
+			fmt.Printf("[extractModelNames] No 'models' field in dataMap: %v\n", dataMap)
 		}
 
 		// Handle data field (common in OpenAI-style responses or iFlow)
@@ -357,6 +392,8 @@ func (f *Factory) extractModelNames(data interface{}) []string {
 				}
 			}
 		}
+	} else {
+		fmt.Printf("[extractModelNames] Data is not a map or array: %T\n", data)
 	}
 
 	return modelNames

@@ -378,7 +378,7 @@ func TestAnthropicServeHTTPWithMethodNotAllowed(t *testing.T) {
 // TestAnthropicHandlerWithTokenManagerIntegration tests handler with token manager integration
 func TestAnthropicHandlerWithTokenManagerIntegration(t *testing.T) {
 	// Create a mock token store with a token
-	store := token.NewMultiTokenStore("test", ".test-anthropic-handler.json", logging.NewLogger())
+	store := token.NewMockStore("test", logging.NewLogger())
 	providerToken := token.ProviderToken{
 		ID:          "test-token",
 		AccessToken: "test-access-token",

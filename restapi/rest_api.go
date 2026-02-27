@@ -16,6 +16,7 @@ import (
 	"strings"
 	"time"
 
+	"github.com/google/uuid"
 	"github.com/sunbankio/qwencoder-proxy/converter"
 	tokpkg "github.com/sunbankio/qwencoder-proxy/internal/token"
 	"github.com/sunbankio/qwencoder-proxy/logging"
@@ -88,9 +89,9 @@ type Server struct {
 	stateManager      *StateManager
 	logger            logging.Logger
 	httpClient        *http.Client
-	tokenStores       map[string]*tokpkg.MultiTokenStore // providerID -> MultiTokenStore
-	tokenManagers     map[string]*tokpkg.TokenManager    // providerID -> TokenManager
-	multiTokenManager *tokpkg.MultiTokenManager          // Multi-token manager for all providers
+	tokenStores       map[string]tokpkg.TokenStore    // providerID -> TokenStore interface
+	tokenManagers     map[string]*tokpkg.TokenManager // providerID -> TokenManager
+	multiTokenManager *tokpkg.MultiTokenManager       // Multi-token manager for all providers
 }
 
 // NewServer creates a new OAuth REST API server
@@ -109,7 +110,7 @@ func NewServer(config *Config, logger logging.Logger) *Server {
 		stateManager:      NewStateManager(),
 		logger:            logger,
 		httpClient:        &http.Client{Timeout: 30 * time.Second},
-		tokenStores:       make(map[string]*tokpkg.MultiTokenStore),
+		tokenStores:       make(map[string]tokpkg.TokenStore),
 		tokenManagers:     make(map[string]*tokpkg.TokenManager),
 		multiTokenManager: nil, // Will be set via SetMultiTokenManager() from main application
 	}
@@ -326,19 +327,18 @@ func (s *Server) createStaticFileHandler(dir, contentType string, maxAge int) ht
 }
 
 // getTokenStore gets or creates a token store for a provider
-func (s *Server) getTokenStore(providerID string) (*tokpkg.MultiTokenStore, error) {
+func (s *Server) getTokenStore(providerID string) (tokpkg.TokenStore, error) {
 	if store, ok := s.tokenStores[providerID]; ok {
 		return store, nil
 	}
 
-	credsPath, err := s.registry.GetCredentialsPath(providerID)
-	if err != nil {
-		return nil, err
-	}
+	// Use default database path
+	dbPath := ".credentials/tokens.db"
 
-	store := tokpkg.NewMultiTokenStore(providerID, credsPath, s.logger)
-	if err := store.Load(); err != nil {
-		s.logger.WarnLog("Failed to load token store for %s: %v", providerID, err)
+	// Create SQLite store
+	store, err := tokpkg.NewSQLiteStore(dbPath, providerID, s.logger)
+	if err != nil {
+		return nil, fmt.Errorf("failed to create SQLite store: %w", err)
 	}
 
 	s.tokenStores[providerID] = store
@@ -356,6 +356,12 @@ func (s *Server) getTokenManager(providerID string) (*tokpkg.TokenManager, error
 		return nil, err
 	}
 
+	// Type assertion to get *SQLiteStore (TokenManager requires concrete type)
+	sqliteStore, ok := store.(*tokpkg.SQLiteStore)
+	if !ok {
+		return nil, fmt.Errorf("token store is not a SQLiteStore")
+	}
+
 	// Create strategy factory and get default strategy
 	factory := tokpkg.NewStrategyFactory()
 	strategy, err := factory.CreateStrategy(tokpkg.DefaultSelectionStrategy)
@@ -366,7 +372,7 @@ func (s *Server) getTokenManager(providerID string) (*tokpkg.TokenManager, error
 	// Get proxy health tracker for this provider
 	proxyHealthTracker, _ := s.multiTokenManager.GetProxyHealthTracker(providerID)
 
-	manager := tokpkg.NewTokenManager(store, strategy, s.logger, nil, proxyHealthTracker)
+	manager := tokpkg.NewTokenManager(sqliteStore, strategy, s.logger, nil, proxyHealthTracker)
 	s.tokenManagers[providerID] = manager
 	return manager, nil
 }
@@ -1088,10 +1094,16 @@ func (s *Server) handleGetToken(w http.ResponseWriter, r *http.Request, provider
 	if err != nil {
 		s.logger.WarnLog("Failed to get token store: %v", err)
 	} else {
-		if err := store.UpdateToken(token.ID, func(t *tokpkg.ProviderToken) {
-			t.LastUsed = tokpkg.GetCurrentTimestamp()
-		}); err != nil {
-			s.logger.WarnLog("Failed to update LastUsed timestamp: %v", err)
+		// Load tokens, update LastUsed, and save
+		tokensMap, loadErr := store.Load()
+		if loadErr != nil {
+			s.logger.WarnLog("Failed to load tokens: %v", loadErr)
+		} else if existingToken, exists := tokensMap[token.ID]; exists {
+			existingToken.LastUsed = time.Now().UnixMilli()
+			tokensMap[token.ID] = existingToken
+			if saveErr := store.Save(tokensMap); saveErr != nil {
+				s.logger.WarnLog("Failed to update LastUsed timestamp: %v", saveErr)
+			}
 		}
 	}
 
@@ -1177,7 +1189,34 @@ func (s *Server) handleListCredentials(w http.ResponseWriter, r *http.Request) {
 			continue // Skip providers without token store
 		}
 
-		tokens := store.ListTokens()
+		// Load tokens using interface method
+		tokensMap, loadErr := store.Load()
+		if loadErr != nil {
+			continue // Skip providers that fail to load
+		}
+
+		// Convert map to slice
+		tokens := make([]tokpkg.ProviderToken, 0, len(tokensMap))
+		for _, token := range tokensMap {
+			tokens = append(tokens, token)
+		}
+
+		// Get settings using interface method
+		settings, settingsErr := store.GetSettings()
+		if settingsErr != nil {
+			continue // Skip providers that fail to get settings
+		}
+
+		// Calculate valid token count
+		validTokenCount := 0
+		now := time.Now().UnixMilli()
+		for _, token := range tokens {
+			if token.Healthy && (token.ExpiryDate == 0 || token.ExpiryDate > now) {
+				validTokenCount++
+			}
+		}
+
+		// Convert tokens to token infos
 		tokenInfos := make([]ProviderTokenInfo, 0, len(tokens))
 		for _, token := range tokens {
 			tokenInfos = append(tokenInfos, s.providerTokenToInfo(token))
@@ -1186,8 +1225,8 @@ func (s *Server) handleListCredentials(w http.ResponseWriter, r *http.Request) {
 		info := map[string]interface{}{
 			"provider":     provider.ID,
 			"total_tokens": len(tokens),
-			"valid_tokens": store.GetValidTokenCount(),
-			"settings":     store.Settings,
+			"valid_tokens": validTokenCount,
+			"settings":     settings,
 			"tokens":       tokenInfos,
 		}
 
@@ -1257,7 +1296,7 @@ func (s *Server) saveCredentials(providerID string, creds tokpkg.OAuthCreds, tok
 
 	// Create provider token with email
 	providerToken := tokpkg.ProviderToken{
-		ID:           tokpkg.GenerateTokenID(),
+		ID:           uuid.New().String(),
 		AccessToken:  creds.AccessToken,
 		RefreshToken: creds.RefreshToken,
 		TokenType:    creds.TokenType,
@@ -1267,8 +1306,8 @@ func (s *Server) saveCredentials(providerID string, creds tokpkg.OAuthCreds, tok
 		Scope:        "", // Will be populated from token response if available
 		Healthy:      true,
 		HealthScore:  1.0,
-		LastUsed:     tokpkg.GetCurrentTimestamp(),
-		CreatedAt:    tokpkg.GetCurrentTimestamp(),
+		LastUsed:     time.Now().UnixMilli(),
+		CreatedAt:    time.Now().UnixMilli(),
 		ErrorCount:   0,
 	}
 
@@ -1428,16 +1467,36 @@ func (s *Server) handleGetProviderCredentials(w http.ResponseWriter, r *http.Req
 		return
 	}
 
-	tokens := store.ListTokens()
+	// Load tokens using interface method
+	var tokensMap map[string]tokpkg.TokenMetadata
+	tokensMap, err = store.Load()
+	if err != nil {
+		WriteError(w, http.StatusInternalServerError, "load_failed", err.Error())
+		return
+	}
+
+	// Convert map to slice
+	tokens := make([]tokpkg.ProviderToken, 0, len(tokensMap))
+	for _, token := range tokensMap {
+		tokens = append(tokens, token)
+	}
+
 	tokenInfos := make([]ProviderTokenInfo, 0, len(tokens))
 	for _, token := range tokens {
 		tokenInfos = append(tokenInfos, s.providerTokenToInfo(token))
 	}
 
+	// Get settings using interface method
+	settings, err := store.GetSettings()
+	if err != nil {
+		WriteError(w, http.StatusInternalServerError, "settings_failed", err.Error())
+		return
+	}
+
 	WriteJSON(w, http.StatusOK, ProviderCredentialsInfo{
 		ProviderID: providerID,
 		Tokens:     tokenInfos,
-		Settings:   store.Settings,
+		Settings:   settings,
 	})
 }
 
@@ -1494,7 +1553,7 @@ func (s *Server) handleAddToken(w http.ResponseWriter, r *http.Request, provider
 	}
 
 	token := tokpkg.ProviderToken{
-		ID:           tokpkg.GenerateTokenID(),
+		ID:           uuid.New().String(),
 		AccessToken:  req.AccessToken,
 		RefreshToken: req.RefreshToken,
 		TokenType:    req.TokenType,
@@ -1503,13 +1562,25 @@ func (s *Server) handleAddToken(w http.ResponseWriter, r *http.Request, provider
 		Email:        email,
 		Healthy:      true,
 		HealthScore:  1.0,
-		LastUsed:     tokpkg.GetCurrentTimestamp(),
-		CreatedAt:    tokpkg.GetCurrentTimestamp(),
+		LastUsed:     time.Now().UnixMilli(),
+		CreatedAt:    time.Now().UnixMilli(),
 		ErrorCount:   0,
 	}
 
-	if err := store.AddToken(token); err != nil {
-		WriteError(w, http.StatusInternalServerError, "add_failed", err.Error())
+	// Load existing tokens
+	var tokensMap map[string]tokpkg.TokenMetadata
+	tokensMap, err = store.Load()
+	if err != nil {
+		WriteError(w, http.StatusInternalServerError, "load_failed", err.Error())
+		return
+	}
+
+	// Add new token
+	tokensMap[token.ID] = token
+
+	// Save all tokens
+	if err := store.Save(tokensMap); err != nil {
+		WriteError(w, http.StatusInternalServerError, "save_failed", err.Error())
 		return
 	}
 
@@ -1528,8 +1599,26 @@ func (s *Server) handleDeleteTokenByID(w http.ResponseWriter, r *http.Request, p
 		return
 	}
 
-	if err := store.RemoveToken(tokenID); err != nil {
-		WriteError(w, http.StatusNotFound, "token_not_found", err.Error())
+	// Load existing tokens
+	var tokensMap map[string]tokpkg.TokenMetadata
+	tokensMap, err = store.Load()
+	if err != nil {
+		WriteError(w, http.StatusInternalServerError, "load_failed", err.Error())
+		return
+	}
+
+	// Check if token exists
+	if _, exists := tokensMap[tokenID]; !exists {
+		WriteError(w, http.StatusNotFound, "token_not_found", fmt.Sprintf("Token not found: %s", tokenID))
+		return
+	}
+
+	// Delete token
+	delete(tokensMap, tokenID)
+
+	// Save remaining tokens
+	if err := store.Save(tokensMap); err != nil {
+		WriteError(w, http.StatusInternalServerError, "save_failed", err.Error())
 		return
 	}
 
@@ -1547,9 +1636,18 @@ func (s *Server) handleRefreshTokenByID(w http.ResponseWriter, r *http.Request, 
 		return
 	}
 
-	token, err := store.GetToken(tokenID)
+	// Load existing tokens
+	var tokensMap map[string]tokpkg.TokenMetadata
+	tokensMap, err = store.Load()
 	if err != nil {
-		WriteError(w, http.StatusNotFound, "token_not_found", err.Error())
+		WriteError(w, http.StatusInternalServerError, "load_failed", err.Error())
+		return
+	}
+
+	// Get token from map
+	token, exists := tokensMap[tokenID]
+	if !exists {
+		WriteError(w, http.StatusNotFound, "token_not_found", fmt.Sprintf("Token not found: %s", tokenID))
 		return
 	}
 
@@ -1561,7 +1659,7 @@ func (s *Server) handleRefreshTokenByID(w http.ResponseWriter, r *http.Request, 
 	}
 
 	// Refresh token using provider-specific logic
-	refreshed, err := s.refreshProviderToken(config, token)
+	refreshed, err := s.refreshProviderToken(config, &token)
 	if err != nil {
 		WriteError(w, http.StatusInternalServerError, "refresh_failed", err.Error())
 		return
@@ -1571,12 +1669,14 @@ func (s *Server) handleRefreshTokenByID(w http.ResponseWriter, r *http.Request, 
 	refreshed.ID = tokenID
 	refreshed.Email = token.Email
 	refreshed.CreatedAt = token.CreatedAt
-	refreshed.LastUsed = tokpkg.GetCurrentTimestamp()
+	refreshed.LastUsed = time.Now().UnixMilli()
 	refreshed.Healthy = true
 	refreshed.HealthScore = 1.0
 	refreshed.ErrorCount = 0
 
-	if err := store.AddToken(refreshed); err != nil {
+	// Update in map and save
+	tokensMap[tokenID] = refreshed
+	if err := store.Save(tokensMap); err != nil {
 		WriteError(w, http.StatusInternalServerError, "save_failed", err.Error())
 		return
 	}
@@ -1607,7 +1707,12 @@ func (s *Server) handleUpdateProviderSettings(w http.ResponseWriter, r *http.Req
 	}
 
 	// Update settings with validation
-	settings := store.Settings
+	settings, err := store.GetSettings()
+	if err != nil {
+		WriteError(w, http.StatusInternalServerError, "get_settings_failed", err.Error())
+		return
+	}
+
 	if req.SelectionStrategy != "" {
 		// Validate strategy
 		factory := tokpkg.NewStrategyFactory()
@@ -1624,8 +1729,10 @@ func (s *Server) handleUpdateProviderSettings(w http.ResponseWriter, r *http.Req
 		settings.MaxErrorCount = req.MaxErrorCount
 	}
 
-	store.Settings = settings
-	if err := store.Save(); err != nil {
+	// Update the timestamp
+	settings.UpdatedAt = time.Now().UnixMilli()
+
+	if err := store.SaveSettings(settings); err != nil {
 		WriteError(w, http.StatusInternalServerError, "save_failed", err.Error())
 		return
 	}
@@ -1689,8 +1796,16 @@ func (s *Server) getProxyConfigHandler(w http.ResponseWriter, r *http.Request, p
 	}
 
 	// Get token
-	token, err := store.GetToken(tokenID)
+	var tokensMap map[string]tokpkg.TokenMetadata
+	tokensMap, err = store.Load()
 	if err != nil {
+		s.logger.ErrorLog("[getProxyConfig] Failed to load tokens - provider: %s: %v", providerID, err)
+		WriteError(w, http.StatusInternalServerError, "load_failed", err.Error())
+		return
+	}
+
+	token, exists := tokensMap[tokenID]
+	if !exists {
 		s.logger.ErrorLog("[getProxyConfig] Token not found - provider: %s, tokenID: %s", providerID, tokenID)
 		WriteError(w, http.StatusNotFound, "not_found", "Token not found")
 		return
@@ -1768,8 +1883,15 @@ func (s *Server) updateProxyConfigHandler(w http.ResponseWriter, r *http.Request
 	}
 
 	// Check if token exists
-	_, err = store.GetToken(tokenID)
-	if err != nil {
+	tokensMap, loadErr := store.Load()
+	if loadErr != nil {
+		s.logger.ErrorLog("[updateProxyConfig] Failed to load tokens: %v", loadErr)
+		WriteError(w, http.StatusInternalServerError, "load_failed", loadErr.Error())
+		return
+	}
+
+	token, exists := tokensMap[tokenID]
+	if !exists {
 		s.logger.ErrorLog("[updateProxyConfig] Token not found - provider: %s, tokenID: %s", providerID, tokenID)
 		WriteError(w, http.StatusNotFound, "not_found", "Token not found")
 		return
@@ -1780,10 +1902,26 @@ func (s *Server) updateProxyConfigHandler(w http.ResponseWriter, r *http.Request
 		tokenID, proxyConfig.Type, proxyConfig.Host, proxyConfig.Port)
 
 	// Update token with new proxy config
-	if err := store.UpdateToken(tokenID, func(t *tokpkg.ProviderToken) {
-		t.Proxy = &proxyConfig
-		t.ProxyHealthScore = 1.0 // Reset proxy health score on config change
-	}); err != nil {
+	tokensMap, loadErr = store.Load()
+	if loadErr != nil {
+		s.logger.ErrorLog("[updateProxyConfig] Failed to load tokens: %v", loadErr)
+		WriteError(w, http.StatusInternalServerError, "load_failed", loadErr.Error())
+		return
+	}
+
+	token, exists = tokensMap[tokenID]
+	if !exists {
+		s.logger.ErrorLog("[updateProxyConfig] Token not found - tokenID: %s", tokenID)
+		WriteError(w, http.StatusNotFound, "not_found", "Token not found")
+		return
+	}
+
+	// Update token with new proxy config
+	token.Proxy = &proxyConfig
+	token.ProxyHealthScore = 1.0 // Reset proxy health score on config change
+	tokensMap[tokenID] = token
+
+	if err := store.Save(tokensMap); err != nil {
 		s.logger.ErrorLog("[updateProxyConfig] Failed to update token: %v", err)
 		WriteError(w, http.StatusInternalServerError, "update_failed", err.Error())
 		return
@@ -1818,9 +1956,17 @@ func (s *Server) deleteProxyConfigHandler(w http.ResponseWriter, r *http.Request
 		return
 	}
 
+	// Load tokens
+	tokensMap, loadErr := store.Load()
+	if loadErr != nil {
+		s.logger.ErrorLog("[deleteProxyConfig] Failed to load tokens: %v", loadErr)
+		WriteError(w, http.StatusInternalServerError, "load_failed", loadErr.Error())
+		return
+	}
+
 	// Check if token exists
-	token, err := store.GetToken(tokenID)
-	if err != nil {
+	token, exists := tokensMap[tokenID]
+	if !exists {
 		s.logger.ErrorLog("[deleteProxyConfig] Token not found - provider: %s, tokenID: %s", providerID, tokenID)
 		WriteError(w, http.StatusNotFound, "not_found", "Token not found")
 		return
@@ -1833,10 +1979,11 @@ func (s *Server) deleteProxyConfigHandler(w http.ResponseWriter, r *http.Request
 	s.logger.InfoLog("[deleteProxyConfig] Removing proxy config for token %s (had proxy: %v)", tokenID, hadProxy)
 
 	// Update token to remove proxy config
-	if err := store.UpdateToken(tokenID, func(t *tokpkg.ProviderToken) {
-		t.Proxy = nil
-		t.ProxyHealthScore = 1.0 // Reset proxy health score
-	}); err != nil {
+	token.Proxy = nil
+	token.ProxyHealthScore = 1.0 // Reset proxy health score
+	tokensMap[tokenID] = token
+
+	if err := store.Save(tokensMap); err != nil {
 		s.logger.ErrorLog("[deleteProxyConfig] Failed to update token: %v", err)
 		WriteError(w, http.StatusInternalServerError, "update_failed", err.Error())
 		return
