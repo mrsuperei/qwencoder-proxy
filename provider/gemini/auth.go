@@ -2,6 +2,7 @@
 package gemini
 
 import (
+	"bytes"
 	"context"
 	"crypto/rand"
 	"encoding/base64"
@@ -378,6 +379,15 @@ func (a *Authenticator) exchangeCodeForTokens(ctx context.Context, code, redirec
 	now := time.Now()
 	expiry := now.Add(time.Duration(tokenResp.ExpiresIn) * time.Second)
 
+	// Discover project ID for this account
+	projectID, err := a.discoverProjectID(ctx, tokenResp.AccessToken)
+	if err != nil {
+		a.GetLogger().WarnLog("[Gemini Auth] Failed to discover project ID: %v", err)
+		projectID = "" // Empty string means project ID not yet discovered
+	} else {
+		a.GetLogger().InfoLog("[Gemini Auth] Discovered project ID: %s for email: %s", projectID, email)
+	}
+
 	providerToken := tokenpkg.ProviderToken{
 		ID:           uuid.New().String(),
 		AccessToken:  tokenResp.AccessToken,
@@ -386,6 +396,7 @@ func (a *Authenticator) exchangeCodeForTokens(ctx context.Context, code, redirec
 		ExpiryDate:   expiry.UnixMilli(),
 		Email:        email,
 		Scope:        tokenResp.Scope,
+		ProjectID:    projectID, // Store discovered project ID
 		Healthy:      true,
 		HealthScore:  1.0,
 		LastUsed:     now.UnixMilli(),
@@ -399,6 +410,155 @@ func (a *Authenticator) exchangeCodeForTokens(ctx context.Context, code, redirec
 
 	a.GetLogger().DebugLog("[Gemini Auth] Authentication successful, credentials saved to multi-token store")
 	return nil
+}
+
+// discoverProjectID discovers the Cloud Code Assist project ID for the given access token
+func (a *Authenticator) discoverProjectID(ctx context.Context, accessToken string) (string, error) {
+	const baseURL = "https://cloudcode-pa.googleapis.com/v1internal"
+
+	// Prepare client metadata
+	clientMetadata := map[string]interface{}{
+		"ideType":     "IDE_UNSPECIFIED",
+		"platform":    "PLATFORM_UNSPECIFIED",
+		"pluginType":  "GEMINI",
+		"duetProject": "",
+	}
+
+	// Prepare loadCodeAssist request
+	loadRequest := map[string]interface{}{
+		"cloudaicompanionProject": "",
+		"metadata":                clientMetadata,
+	}
+
+	reqBody, err := json.Marshal(loadRequest)
+	if err != nil {
+		return "", fmt.Errorf("failed to marshal load request: %w", err)
+	}
+
+	// Call loadCodeAssist endpoint
+	url := fmt.Sprintf("%s:loadCodeAssist", baseURL)
+	req, err := http.NewRequestWithContext(ctx, "POST", url, bytes.NewReader(reqBody))
+	if err != nil {
+		return "", fmt.Errorf("failed to create load request: %w", err)
+	}
+
+	req.Header.Set("Authorization", "Bearer "+accessToken)
+	req.Header.Set("Content-Type", "application/json")
+	req.Header.Set("User-Agent", "google-api-nodejs-client/9.15.1")
+	req.Header.Set("X-Goog-Api-Client", "gl-node/22.17.0")
+	req.Header.Set("Client-Metadata", "ideType=IDE_UNSPECIFIED,platform=PLATFORM_UNSPECIFIED,pluginType=GEMINI")
+
+	client := a.httpClient
+	if client == nil {
+		client = &http.Client{Timeout: 30 * time.Second}
+	}
+
+	resp, err := client.Do(req)
+	if err != nil {
+		return "", fmt.Errorf("failed to send load request: %w", err)
+	}
+	defer resp.Body.Close()
+
+	if resp.StatusCode != http.StatusOK {
+		body, _ := io.ReadAll(resp.Body)
+		return "", fmt.Errorf("loadCodeAssist failed (status %d): %s", resp.StatusCode, string(body))
+	}
+
+	respBody, err := io.ReadAll(resp.Body)
+	if err != nil {
+		return "", fmt.Errorf("failed to read load response: %w", err)
+	}
+
+	var loadResponse map[string]interface{}
+	if err := json.Unmarshal(respBody, &loadResponse); err != nil {
+		return "", fmt.Errorf("failed to decode load response: %w", err)
+	}
+
+	// Check if project ID exists in response
+	if projectID, ok := loadResponse["cloudaicompanionProject"].(string); ok && projectID != "" {
+		return projectID, nil
+	}
+
+	// If no existing project, try to onboard
+	allowedTiers, ok := loadResponse["allowedTiers"].([]interface{})
+	var tierID string
+	if ok && len(allowedTiers) > 0 {
+		for _, tier := range allowedTiers {
+			if tierMap, ok := tier.(map[string]interface{}); ok {
+				if isDefault, exists := tierMap["isDefault"].(bool); exists && isDefault {
+					if id, idExists := tierMap["id"].(string); idExists {
+						tierID = id
+						break
+					}
+				}
+			}
+		}
+	}
+
+	if tierID == "" {
+		tierID = "free-tier"
+	}
+
+	// Prepare onboardUser request
+	onboardRequest := map[string]interface{}{
+		"tierId":                  tierID,
+		"cloudaicompanionProject": "",
+		"metadata":                clientMetadata,
+	}
+
+	onboardReqBody, err := json.Marshal(onboardRequest)
+	if err != nil {
+		return "", fmt.Errorf("failed to marshal onboard request: %w", err)
+	}
+
+	onboardUrl := fmt.Sprintf("%s:onboardUser", baseURL)
+	onboardReq, err := http.NewRequestWithContext(ctx, "POST", onboardUrl, bytes.NewReader(onboardReqBody))
+	if err != nil {
+		return "", fmt.Errorf("failed to create onboard request: %w", err)
+	}
+
+	onboardReq.Header.Set("Authorization", "Bearer "+accessToken)
+	onboardReq.Header.Set("Content-Type", "application/json")
+	onboardReq.Header.Set("User-Agent", "qwencoder-proxy/1.0")
+	onboardReq.Header.Set("X-Goog-Api-Client", "gl-node/22.17.0")
+	onboardReq.Header.Set("Client-Metadata", "ideType=IDE_UNSPECIFIED,platform=PLATFORM_UNSPECIFIED,pluginType=GEMINI")
+
+	onboardResp, err := client.Do(onboardReq)
+	if err != nil {
+		return "", fmt.Errorf("failed to send onboard request: %w", err)
+	}
+	defer onboardResp.Body.Close()
+
+	if onboardResp.StatusCode != http.StatusOK {
+		body, _ := io.ReadAll(onboardResp.Body)
+		return "", fmt.Errorf("onboardUser failed (status %d): %s", onboardResp.StatusCode, string(body))
+	}
+
+	onboardRespBody, err := io.ReadAll(onboardResp.Body)
+	if err != nil {
+		return "", fmt.Errorf("failed to read onboard response: %w", err)
+	}
+
+	var onboardResponse map[string]interface{}
+	if err := json.Unmarshal(onboardRespBody, &onboardResponse); err != nil {
+		return "", fmt.Errorf("failed to decode onboard response: %w", err)
+	}
+
+	// Extract project ID from onboard response
+	if response, ok := onboardResponse["response"].(map[string]interface{}); ok {
+		if project, exists := response["cloudaicompanionProject"].(map[string]interface{}); exists {
+			if id, idExists := project["id"].(string); idExists {
+				return id, nil
+			}
+		}
+	}
+
+	// Fallback: try to get project ID directly from response
+	if id, exists := onboardResponse["cloudaicompanionProject"].(string); exists {
+		return id, nil
+	}
+
+	return "", fmt.Errorf("failed to discover or create project ID")
 }
 
 // geminiTokenRefresher implements ProviderRefresh for Gemini
@@ -479,10 +639,10 @@ func (g *geminiTokenRefresher) RefreshToken(ctx context.Context, token tokenpkg.
 	g.logger.InfoLog("[GeminiRefresh] Token refresh successful for token ID %s, new expiry %s", token.ID, expiryDate.Format(time.RFC3339))
 
 	// Log token details for debugging
-	g.logger.DebugLog("[GeminiRefresh] Token details - ID: %s, Email: %s, Healthy: true, ExpiryDate: %d, RefreshToken: %s",
-		token.ID, token.Email, expiryDate.UnixMilli(), token.RefreshToken)
+	g.logger.DebugLog("[GeminiRefresh] Token details - ID: %s, Email: %s, Healthy: true, ExpiryDate: %d, RefreshToken: %s, ProjectID: %s",
+		token.ID, token.Email, expiryDate.UnixMilli(), token.RefreshToken, token.ProjectID)
 
-	// Return refreshed token
+	// Return refreshed token, preserving ProjectID
 	return tokenpkg.ProviderToken{
 		ID:           token.ID,
 		AccessToken:  tokenResp.AccessToken,
@@ -491,6 +651,7 @@ func (g *geminiTokenRefresher) RefreshToken(ctx context.Context, token tokenpkg.
 		ExpiryDate:   expiryDate.UnixMilli(),
 		Email:        token.Email,
 		Scope:        token.Scope,
+		ProjectID:    token.ProjectID, // PRESERVE project ID on refresh
 		Healthy:      true,
 		HealthScore:  1.0,
 		LastUsed:     token.LastUsed,

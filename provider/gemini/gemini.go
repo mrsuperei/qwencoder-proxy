@@ -125,14 +125,9 @@ func (p *Provider) ClearInitializationError() {
 
 // ListModels returns available models in native Gemini format
 func (p *Provider) ListModels(ctx context.Context) (interface{}, error) {
-	// Try to initialize project to get actual models
-	if p.projectID == "" {
-		if err := p.initializeProject(ctx); err != nil {
-			p.GetLogger().DebugLog("[Gemini] Failed to initialize project for model discovery: %v", err)
-			// Fall back to hardcoded models if initialization fails
-			return p.getHardcodedModels(), nil
-		}
-	}
+	// Note: project initialization is now handled per-token in GenerateContent/GenerateContentStream
+	// Fall back to hardcoded models for model discovery
+	return p.getHardcodedModels(), nil
 
 	// Try to discover actual models from the API
 	if actualModels, err := p.discoverModels(ctx); err == nil {
@@ -523,21 +518,33 @@ func (p *Provider) initializeProject(ctx context.Context) error {
 	return fmt.Errorf("failed to discover or create project ID")
 }
 
-// GenerateContent handles non-streaming requests with native format
-func (p *Provider) GenerateContent(ctx context.Context, model string, request interface{}) (interface{}, error) {
-	// Ensure project is initialized
-	// Note: We retry initialization even if there was a previous error,
-	// because tokens might have been added via the dashboard OAuth flow.
-	if p.projectID == "" {
-		if err := p.initializeProject(ctx); err != nil {
-			return nil, fmt.Errorf("failed to initialize project: %w", err)
+// discoverProjectIDForToken discovers the project ID for a token and updates it in the store
+func (p *Provider) discoverProjectIDForToken(ctx context.Context, tokenID, accessToken string) (string, error) {
+	// Reuse the discoverProjectID method from authenticator
+	projectID, err := p.authenticator.discoverProjectID(ctx, accessToken)
+	if err != nil {
+		return "", err
+	}
+
+	// Update the token's project ID in the store
+	if p.GetTokenManager() != nil {
+		if updateErr := p.GetTokenManager().UpdateToken(tokenID, func(t *tokenpkg.TokenMetadata) {
+			t.ProjectID = projectID
+		}); updateErr != nil {
+			p.GetLogger().WarnLog("[Gemini] Failed to update project ID for token %s: %v", tokenID, updateErr)
 		}
 	}
 
+	return projectID, nil
+}
+
+// GenerateContent handles non-streaming requests with native format
+func (p *Provider) GenerateContent(ctx context.Context, model string, request interface{}) (interface{}, error) {
 	// Get token and proxy-aware client
 	var client *http.Client
 	var token string
 	var tokenID string
+	var projectID string // Use token-specific project ID
 
 	// Try to use token manager for proxy-aware client selection
 	if p.GetTokenManager() != nil {
@@ -554,15 +561,27 @@ func (p *Provider) GenerateContent(ctx context.Context, model string, request in
 		}
 		token = selectedToken.AccessToken
 		tokenID = selectedToken.ID
+		projectID = selectedToken.ProjectID // Use token's project ID
 
 		// DEBUG: Log token details
-		p.GetLogger().DebugLog("[Gemini] Selected token: ID=%s, Email=%s", tokenID, selectedToken.Email)
+		p.GetLogger().DebugLog("[Gemini] Selected token: ID=%s, Email=%s, ProjectID=%s", tokenID, selectedToken.Email, projectID)
 
 		// Log proxy usage
 		if selectedToken.Proxy != nil && selectedToken.Proxy.Type != "none" {
 			p.GetLogger().DebugLog("[Gemini] GenerateContent using token %s with proxy: %s:%d", tokenID, selectedToken.Proxy.Host, selectedToken.Proxy.Port)
 		} else {
 			p.GetLogger().DebugLog("[Gemini] GenerateContent using token %s with direct connection", tokenID)
+		}
+
+		// Lazy project ID discovery for tokens without project ID
+		if projectID == "" {
+			p.GetLogger().DebugLog("[Gemini] Token %s has no project ID, discovering...", tokenID)
+			discoveredID, err := p.discoverProjectIDForToken(ctx, tokenID, token)
+			if err != nil {
+				return nil, fmt.Errorf("failed to discover project ID for token %s: %w", tokenID, err)
+			}
+			projectID = discoveredID
+			p.GetLogger().DebugLog("[Gemini] Discovered project ID %s for token %s", projectID, tokenID)
 		}
 	} else {
 		// No token manager, use authenticator and default client
@@ -574,6 +593,7 @@ func (p *Provider) GenerateContent(ctx context.Context, model string, request in
 		}
 		client = p.GetHTTPClient()
 		tokenID = "fallback"
+		projectID = "" // Will trigger lazy initialization
 	}
 
 	// Prepare the request body with model information for Cloud Code Assist API
@@ -599,13 +619,13 @@ func (p *Provider) GenerateContent(ctx context.Context, model string, request in
 	if hasModel && hasProject && hasRequest {
 		// This is already a Cloud Code Assist API formatted request
 		// Just update the project ID
-		requestMap["project"] = p.projectID
+		requestMap["project"] = projectID
 		finalRequest = requestMap
 	} else {
 		// This is a standard Gemini API request, format it for Cloud Code Assist API
 		finalRequest = map[string]interface{}{
 			"model":   model,
-			"project": p.projectID,
+			"project": projectID,
 			"request": requestMap,
 		}
 	}
@@ -618,7 +638,7 @@ func (p *Provider) GenerateContent(ctx context.Context, model string, request in
 
 	// DEBUG: Log the actual request being sent
 	p.GetLogger().DebugLog("[Gemini] Request payload: %s", string(reqBody))
-	p.GetLogger().DebugLog("[Gemini] Using projectID: %s", p.projectID)
+	p.GetLogger().DebugLog("[Gemini] Using projectID: %s", projectID)
 
 	url := fmt.Sprintf("%s:generateContent", p.baseURL)
 	req, err := http.NewRequestWithContext(ctx, "POST", url, bytes.NewReader(reqBody))
@@ -722,17 +742,11 @@ func (p *Provider) GenerateContent(ctx context.Context, model string, request in
 
 // GenerateContentStream handles streaming requests with native format
 func (p *Provider) GenerateContentStream(ctx context.Context, model string, request interface{}) (io.ReadCloser, error) {
-	// Ensure project is initialized
-	if p.projectID == "" {
-		if err := p.initializeProject(ctx); err != nil {
-			return nil, fmt.Errorf("failed to initialize project: %w", err)
-		}
-	}
-
 	// Get token and proxy-aware client
 	var client *http.Client
 	var token string
 	var tokenID string
+	var projectID string // Use token-specific project ID
 
 	// Try to use token manager for proxy-aware client selection
 	if p.GetTokenManager() != nil {
@@ -749,12 +763,24 @@ func (p *Provider) GenerateContentStream(ctx context.Context, model string, requ
 		}
 		token = selectedToken.AccessToken
 		tokenID = selectedToken.ID
+		projectID = selectedToken.ProjectID // Use token's project ID
 
 		// Log proxy usage
 		if selectedToken.Proxy != nil && selectedToken.Proxy.Type != "none" {
 			p.GetLogger().DebugLog("[Gemini] GenerateContentStream using token %s with proxy: %s:%d", tokenID, selectedToken.Proxy.Host, selectedToken.Proxy.Port)
 		} else {
 			p.GetLogger().DebugLog("[Gemini] GenerateContentStream using token %s with direct connection", tokenID)
+		}
+
+		// Lazy project ID discovery for tokens without project ID
+		if projectID == "" {
+			p.GetLogger().DebugLog("[Gemini] Token %s has no project ID, discovering...", tokenID)
+			discoveredID, err := p.discoverProjectIDForToken(ctx, tokenID, token)
+			if err != nil {
+				return nil, fmt.Errorf("failed to discover project ID for token %s: %w", tokenID, err)
+			}
+			projectID = discoveredID
+			p.GetLogger().DebugLog("[Gemini] Discovered project ID %s for token %s", projectID, tokenID)
 		}
 	} else {
 		// No token manager, use authenticator and default client
@@ -766,6 +792,7 @@ func (p *Provider) GenerateContentStream(ctx context.Context, model string, requ
 		}
 		client = p.GetHTTPClient()
 		tokenID = "fallback"
+		projectID = "" // Will trigger lazy initialization
 	}
 
 	// Prepare the request body with model information for Cloud Code Assist API
@@ -786,7 +813,7 @@ func (p *Provider) GenerateContentStream(ctx context.Context, model string, requ
 	// with project and model at the top level, and the actual request in a "request" field.
 	finalRequest := map[string]interface{}{
 		"model":   model,
-		"project": p.projectID,
+		"project": projectID,
 		"request": requestMap,
 	}
 

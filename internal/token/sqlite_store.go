@@ -82,6 +82,7 @@ const (
 	sqlCreateIndexTokensProviderID      = "CREATE INDEX IF NOT EXISTS idx_tokens_provider_id ON tokens(provider_id)"
 	sqlCreateIndexTokensEmail           = "CREATE INDEX IF NOT EXISTS idx_tokens_email ON tokens(email)"
 	sqlCreateIndexTokensExpiryDate      = "CREATE INDEX IF NOT EXISTS idx_tokens_expiry_date ON tokens(expiry_date)"
+	sqlCreateIndexTokensProjectID       = "CREATE INDEX IF NOT EXISTS idx_tokens_project_id ON tokens(project_id)"
 	sqlCreateIndexTokensHealthy         = "CREATE INDEX IF NOT EXISTS idx_tokens_healthy ON tokens(healthy)"
 	sqlCreateIndexTokensProviderHealthy = "CREATE INDEX IF NOT EXISTS idx_tokens_provider_healthy ON tokens(provider_id, healthy)"
 	sqlCreateIndexTokensProviderExpiry  = "CREATE INDEX IF NOT EXISTS idx_tokens_provider_expiry ON tokens(provider_id, expiry_date)"
@@ -167,10 +168,10 @@ func (s *SQLiteStore) prepareStatements() error {
 	s.stmtInsertToken, err = s.db.Prepare(`
 		INSERT INTO tokens (
 			id, provider_id, access_token, refresh_token, token_type,
-			expiry_date, email, resource_url, scope, api_key,
+			expiry_date, email, resource_url, scope, api_key, project_id,
 			healthy, health_score, last_used, created_at,
 			error_count, last_error, proxy_id
-		) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+		) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
 	`)
 	if err != nil {
 		return fmt.Errorf("failed to prepare insert token statement: %w", err)
@@ -179,8 +180,8 @@ func (s *SQLiteStore) prepareStatements() error {
 	// Prepare SELECT statement by token ID
 	s.stmtSelectTokenByID, err = s.db.Prepare(`
 		SELECT id, access_token, refresh_token, token_type, expiry_date,
-		       email, resource_url, scope, api_key, healthy,
-		       health_score, last_used, created_at, error_count,
+		       email, resource_url, scope, api_key, project_id,
+		       healthy, health_score, last_used, created_at, error_count,
 		       last_error, proxy_id
 		FROM tokens WHERE provider_id = ? AND id = ?
 	`)
@@ -191,8 +192,8 @@ func (s *SQLiteStore) prepareStatements() error {
 	// Prepare SELECT statement by provider
 	s.stmtSelectTokensByProvider, err = s.db.Prepare(`
 		SELECT id, access_token, refresh_token, token_type, expiry_date,
-		       email, resource_url, scope, api_key, healthy,
-		       health_score, last_used, created_at, error_count,
+		       email, resource_url, scope, api_key, project_id,
+		       healthy, health_score, last_used, created_at, error_count,
 		       last_error, proxy_id
 		FROM tokens WHERE provider_id = ?
 	`)
@@ -203,8 +204,8 @@ func (s *SQLiteStore) prepareStatements() error {
 	// Prepare SELECT statement for valid tokens (healthy and not expired)
 	s.stmtSelectValidTokens, err = s.db.Prepare(`
 		SELECT id, access_token, refresh_token, token_type, expiry_date,
-		       email, resource_url, scope, api_key, healthy,
-		       health_score, last_used, created_at, error_count,
+		       email, resource_url, scope, api_key, project_id,
+		       healthy, health_score, last_used, created_at, error_count,
 		       last_error, proxy_id
 		FROM tokens
 		WHERE provider_id = ? AND healthy = 1 AND expiry_date > ?
@@ -218,7 +219,7 @@ func (s *SQLiteStore) prepareStatements() error {
 		UPDATE tokens SET
 			access_token = ?, refresh_token = ?, token_type = ?,
 			expiry_date = ?, email = ?, resource_url = ?, scope = ?,
-			api_key = ?, healthy = ?, health_score = ?,
+			api_key = ?, project_id = ?, healthy = ?, health_score = ?,
 			last_used = ?, error_count = ?, last_error = ?
 		WHERE provider_id = ? AND id = ?
 	`)
@@ -340,6 +341,7 @@ func (s *SQLiteStore) migrate() error {
 	// Run migrations in order
 	migrations := []migration{
 		{1, "Initial schema with all tables and indexes", func() error { return s.migrateToV1() }},
+		{2, "Add project_id column for Gemini provider", func() error { return s.migrateToV2() }},
 		// Future migrations here
 	}
 
@@ -438,6 +440,7 @@ func (s *SQLiteStore) migrateToV1() error {
 		"CREATE INDEX IF NOT EXISTS idx_tokens_provider_id ON tokens(provider_id)",
 		"CREATE INDEX IF NOT EXISTS idx_tokens_email ON tokens(email)",
 		"CREATE INDEX IF NOT EXISTS idx_tokens_expiry_date ON tokens(expiry_date)",
+		"CREATE INDEX IF NOT EXISTS idx_tokens_project_id ON tokens(project_id)",
 		"CREATE INDEX IF NOT EXISTS idx_tokens_healthy ON tokens(healthy)",
 		"CREATE INDEX IF NOT EXISTS idx_tokens_provider_healthy ON tokens(provider_id, healthy)",
 		"CREATE INDEX IF NOT EXISTS idx_tokens_provider_expiry ON tokens(provider_id, expiry_date)",
@@ -449,6 +452,26 @@ func (s *SQLiteStore) migrateToV1() error {
 		}
 	}
 
+	return nil
+}
+
+// migrateToV2 adds project_id column for Gemini provider
+func (s *SQLiteStore) migrateToV2() error {
+	// Add project_id column to tokens table
+	if _, err := s.db.Exec(`
+		ALTER TABLE tokens ADD COLUMN project_id TEXT
+	`); err != nil {
+		return fmt.Errorf("failed to add project_id column: %w", err)
+	}
+
+	// Create index for project_id (optional, for queries filtering by project)
+	if _, err := s.db.Exec(`
+		CREATE INDEX IF NOT EXISTS idx_tokens_project_id ON tokens(project_id)
+	`); err != nil {
+		return fmt.Errorf("failed to create project_id index: %w", err)
+	}
+
+	s.logger.InfoLog("[SQLiteStore] Migration to V2 completed: added project_id column")
 	return nil
 }
 
@@ -469,6 +492,7 @@ func intToBool(i int) bool {
 func (s *SQLiteStore) scanToken(scanner interface{ Scan(...interface{}) error }) (TokenMetadata, error) {
 	var token TokenMetadata
 	var proxyID sql.NullString
+	var projectID sql.NullString
 	var healthy int
 	var lastError sql.NullString
 
@@ -482,6 +506,7 @@ func (s *SQLiteStore) scanToken(scanner interface{ Scan(...interface{}) error })
 		&token.ResourceURL,
 		&token.Scope,
 		&token.APIKey,
+		&projectID,
 		&healthy,
 		&token.HealthScore,
 		&token.LastUsed,
@@ -498,6 +523,9 @@ func (s *SQLiteStore) scanToken(scanner interface{ Scan(...interface{}) error })
 	token.Healthy = intToBool(healthy)
 	if lastError.Valid {
 		token.LastError = lastError.String
+	}
+	if projectID.Valid {
+		token.ProjectID = projectID.String
 	}
 
 	// Note: proxy_id is stored but ProxyConfig is loaded separately
@@ -519,6 +547,7 @@ func (s *SQLiteStore) bindToken(stmt *sql.Stmt, token TokenMetadata) error {
 		token.ResourceURL,
 		token.Scope,
 		token.APIKey,
+		sql.NullString{String: token.ProjectID, Valid: token.ProjectID != ""},
 		boolToInt(token.Healthy),
 		token.HealthScore,
 		token.LastUsed,
@@ -602,6 +631,7 @@ func (s *SQLiteStore) Save(tokens map[string]TokenMetadata) error {
 				token.ResourceURL,
 				token.Scope,
 				token.APIKey,
+				sql.NullString{String: token.ProjectID, Valid: token.ProjectID != ""},
 				boolToInt(token.Healthy),
 				token.HealthScore,
 				token.LastUsed,
@@ -626,6 +656,7 @@ func (s *SQLiteStore) Save(tokens map[string]TokenMetadata) error {
 				token.ResourceURL,
 				token.Scope,
 				token.APIKey,
+				sql.NullString{String: token.ProjectID, Valid: token.ProjectID != ""},
 				boolToInt(token.Healthy),
 				token.HealthScore,
 				token.LastUsed,
@@ -682,6 +713,7 @@ func (s *SQLiteStore) AddToken(token TokenMetadata) error {
 		token.ResourceURL,
 		token.Scope,
 		token.APIKey,
+		sql.NullString{String: token.ProjectID, Valid: token.ProjectID != ""},
 		boolToInt(token.Healthy),
 		token.HealthScore,
 		token.LastUsed,
@@ -757,6 +789,7 @@ func (s *SQLiteStore) updateTokenLocked(tokenID string, updateFunc interface{}) 
 		token.ResourceURL,
 		token.Scope,
 		token.APIKey,
+		sql.NullString{String: token.ProjectID, Valid: token.ProjectID != ""},
 		boolToInt(token.Healthy),
 		token.HealthScore,
 		token.LastUsed,

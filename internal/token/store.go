@@ -11,6 +11,7 @@ type ProviderToken struct {
 	ResourceURL      string       `json:"resource_url,omitempty"`       // For Qwen
 	Scope            string       `json:"scope,omitempty"`              // For Gemini
 	APIKey           string       `json:"api_key,omitempty"`            // For IFlow
+	ProjectID        string       `json:"project_id,omitempty"`         // For Gemini - Cloud Code Assist project ID
 	Healthy          bool         `json:"healthy"`                      // Track if token is working
 	HealthScore      float64      `json:"health_score"`                 // 0.0-1.0 health score
 	LastUsed         int64        `json:"last_used"`                    // Timestamp of last use

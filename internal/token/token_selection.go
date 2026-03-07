@@ -394,6 +394,29 @@ func (tm *TokenManager) UpdateProxyHealth(tokenID string, healthy bool, err erro
 	return nil
 }
 
+// UpdateToken updates a token using the provided update function.
+// This is a convenience method that delegates to the store's UpdateToken.
+//
+// Parameters:
+//   - tokenID: The ID of the token to update
+//   - updateFunc: A function that modifies the token metadata
+//
+// Returns an error if the token is not found or if the update fails.
+func (tm *TokenManager) UpdateToken(tokenID string, updateFunc func(*TokenMetadata)) error {
+	tm.mu.Lock()
+	defer tm.mu.Unlock()
+
+	// Update token in store
+	updateErr := tm.store.UpdateToken(tokenID, updateFunc)
+	if updateErr != nil {
+		tm.logger.ErrorLog("Failed to update token %s: %v", tokenID, updateErr)
+		return fmt.Errorf("failed to update token: %w", updateErr)
+	}
+
+	tm.logger.DebugLog("Updated token %s", tokenID)
+	return nil
+}
+
 // HealthTracker tracks token health and provides recommendations
 type HealthTracker struct {
 	store  *SQLiteStore
