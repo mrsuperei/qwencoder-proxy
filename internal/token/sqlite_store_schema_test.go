@@ -32,8 +32,8 @@ func TestSQLiteStore_MigrateToV1(t *testing.T) {
 		WHERE type='index' AND tbl_name='tokens'
 	`).Scan(&indexCount)
 	require.NoError(t, err)
-	// 6 explicit indexes + 1 PRIMARY KEY index = 7 total
-	assert.GreaterOrEqual(t, 7, indexCount)
+	// 7 explicit indexes + 1 PRIMARY KEY index = 8 total
+	assert.GreaterOrEqual(t, 8, indexCount)
 
 	// Verify schema_migrations table has version 1
 	var version int

@@ -39,6 +39,7 @@ const (
 			resource_url TEXT,
 			scope TEXT,
 			api_key TEXT,
+			project_id TEXT,
 			healthy INTEGER NOT NULL DEFAULT 1,
 			health_score REAL NOT NULL DEFAULT 1.0,
 			last_used INTEGER NOT NULL DEFAULT 0,
@@ -340,8 +341,7 @@ func (s *SQLiteStore) migrate() error {
 
 	// Run migrations in order
 	migrations := []migration{
-		{1, "Initial schema with all tables and indexes", func() error { return s.migrateToV1() }},
-		{2, "Add project_id column for Gemini provider", func() error { return s.migrateToV2() }},
+		{1, "Initial schema with all tables and indexes including project_id", func() error { return s.migrateToV1() }},
 		// Future migrations here
 	}
 
@@ -385,6 +385,7 @@ func (s *SQLiteStore) migrateToV1() error {
 			resource_url TEXT,
 			scope TEXT,
 			api_key TEXT,
+			project_id TEXT,
 			healthy INTEGER NOT NULL DEFAULT 1,
 			health_score REAL NOT NULL DEFAULT 1.0,
 			last_used INTEGER NOT NULL DEFAULT 0,
@@ -452,26 +453,6 @@ func (s *SQLiteStore) migrateToV1() error {
 		}
 	}
 
-	return nil
-}
-
-// migrateToV2 adds project_id column for Gemini provider
-func (s *SQLiteStore) migrateToV2() error {
-	// Add project_id column to tokens table
-	if _, err := s.db.Exec(`
-		ALTER TABLE tokens ADD COLUMN project_id TEXT
-	`); err != nil {
-		return fmt.Errorf("failed to add project_id column: %w", err)
-	}
-
-	// Create index for project_id (optional, for queries filtering by project)
-	if _, err := s.db.Exec(`
-		CREATE INDEX IF NOT EXISTS idx_tokens_project_id ON tokens(project_id)
-	`); err != nil {
-		return fmt.Errorf("failed to create project_id index: %w", err)
-	}
-
-	s.logger.InfoLog("[SQLiteStore] Migration to V2 completed: added project_id column")
 	return nil
 }
 

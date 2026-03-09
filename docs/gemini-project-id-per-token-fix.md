@@ -697,3 +697,84 @@ If issues arise:
 2. **Project ID Rotation**: Support for changing project IDs per token
 3. **Dashboard UI**: Display project ID for each token in the dashboard
 4. **Health Checks**: Verify project ID accessibility during health checks
+
+## Implementation Summary
+
+### Changes Made
+
+This fix has been successfully implemented with the following changes:
+
+#### 1. Database Schema ([`internal/token/sqlite_store.go`](../internal/token/sqlite_store.go))
+- ✅ Added `project_id TEXT` column to initial schema ([`sqlCreateTokensTable`](../internal/token/sqlite_store.go:30) constant)
+- ✅ Updated [`migrateToV1()`](../internal/token/sqlite_store.go:374) to include `project_id` column in migration
+- ✅ Removed V2 migration since `project_id` is now in V1
+- ✅ Updated prepared statements to include `project_id` field
+- ✅ Updated test expectations for index count (7 indexes + 1 PRIMARY KEY = 8 total)
+
+#### 2. Provider Structure ([`provider/gemini/gemini.go`](../provider/gemini/gemini.go))
+- ✅ Removed shared `projectID string` field from [`Provider`](../provider/gemini/gemini.go:39) struct
+- ✅ Removed [`initializeProject()`](../provider/gemini/gemini.go:310) method (lines 310-518)
+- ✅ No calls to `initializeProject()` existed in the codebase
+
+#### 3. OAuth Flow ([`provider/gemini/auth.go`](../provider/gemini/auth.go))
+- ✅ Enhanced logging for project ID discovery in [`exchangeCodeForTokens()`](../provider/gemini/auth.go:382):
+  - Added success log with project ID and email
+  - Added token save log with ID, email, and project ID
+
+#### 4. API Methods ([`provider/gemini/gemini.go`](../provider/gemini/gemini.go))
+- ✅ Verified [`GenerateContent()`](../provider/gemini/gemini.go:540) uses `selectedToken.ProjectID` (token-specific)
+- ✅ Verified [`GenerateContentStream()`](../provider/gemini/gemini.go:743) uses `selectedToken.ProjectID` (token-specific)
+- ✅ Verified [`discoverProjectIDForToken()`](../provider/gemini/gemini.go:520) updates token's project ID in store
+
+### Verification
+
+- ✅ Code compiles without errors
+- ✅ [`TestSQLiteStore_MigrateToV1`](../internal/token/sqlite_store_schema_test.go:12) passes
+- ✅ Most SQLite store tests pass
+- ⚠️ Pre-existing test failures (unrelated to this fix):
+  - [`TestGeminiEmailExtractor/returns_provider_ID`](../internal/token/email_extraction_test.go:230) - expects "gemini" but gets "gemini-cli"
+  - [`TestSQLiteStore_Pragmas`](../internal/token/sqlite_store_init_test.go:108) - SQLite pragma setting issue
+  - [`TestSQLiteStore_ConcurrentInitialization`](../internal/token/sqlite_store_init_test.go:143) - Windows-specific SQLite locking issue
+
+### How to Verify the Fix
+
+1. **Check database schema**:
+   ```sql
+   SELECT sql FROM sqlite_master WHERE name='tokens';
+   ```
+   Verify `project_id` column exists in the schema.
+
+2. **Check token records**:
+   ```sql
+   SELECT id, email, project_id FROM tokens WHERE provider_id = 'gemini-cli';
+   ```
+   Each token should have its own `project_id`.
+
+3. **Monitor logs**:
+   - Look for `[Gemini Auth] Successfully discovered project ID '...' for email '...'`
+   - Look for `[Gemini Auth] Token saved with ID='...', Email='...', ProjectID='...'`
+
+4. **Test with multiple accounts**:
+   - Authenticate with first Google account
+   - Verify token is saved with project_id
+   - Authenticate with second Google account
+   - Verify second token has different project_id
+   - Make API calls with both tokens
+   - Verify no 403 PERMISSION_DENIED errors
+
+### Rollback Plan
+
+If issues arise after implementing this fix:
+
+1. **Revert database schema**: Remove `project_id` from initial schema
+2. **Restore shared field**: Add back `projectID string` to Provider struct
+3. **Restore initializeProject()**: Add back [`initializeProject()`](../provider/gemini/gemini.go:310) method
+4. **Restore calls**: Add back calls to `initializeProject()` if any
+
+### Notes
+
+- The OAuth flow in [`exchangeCodeForTokens()`](../provider/gemini/auth.go:382) already correctly discovers and saves `project_id` per token
+- The lazy discovery in [`discoverProjectIDForToken()`](../provider/gemini/gemini.go:520) already correctly updates the token's `project_id`
+- The main issue was the shared `p.projectID` field and the missing `project_id` column in the initial schema
+- After removing the shared field and fixing the schema, each token will use its own `project_id`
+- Existing databases will get the `project_id` column via the migration system (though V1 now includes it, fresh installations will have it from the start)

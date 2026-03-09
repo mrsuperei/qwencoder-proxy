@@ -385,7 +385,7 @@ func (a *Authenticator) exchangeCodeForTokens(ctx context.Context, code, redirec
 		a.GetLogger().WarnLog("[Gemini Auth] Failed to discover project ID: %v", err)
 		projectID = "" // Empty string means project ID not yet discovered
 	} else {
-		a.GetLogger().InfoLog("[Gemini Auth] Discovered project ID: %s for email: %s", projectID, email)
+		a.GetLogger().InfoLog("[Gemini Auth] Successfully discovered project ID '%s' for email '%s'", projectID, email)
 	}
 
 	providerToken := tokenpkg.ProviderToken{
@@ -408,6 +408,8 @@ func (a *Authenticator) exchangeCodeForTokens(ctx context.Context, code, redirec
 		return fmt.Errorf("failed to save token to multi-token store: %w", err)
 	}
 
+	// Log token details with project ID
+	a.GetLogger().InfoLog("[Gemini Auth] Token saved with ID='%s', Email='%s', ProjectID='%s'", providerToken.ID, providerToken.Email, providerToken.ProjectID)
 	a.GetLogger().DebugLog("[Gemini Auth] Authentication successful, credentials saved to multi-token store")
 	return nil
 }
