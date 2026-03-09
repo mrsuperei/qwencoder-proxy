@@ -328,6 +328,11 @@ func (p *Provider) classifyProxyError(err error) string {
 // doRequestWithProxy executes an HTTP request using the provided client
 // and handles proxy error classification and health tracking
 func (p *Provider) doRequestWithProxy(req *http.Request, client *http.Client, tokenID string) (*http.Response, error) {
+	// Log request headers before sending
+	p.GetLogger().DebugLog("[Qwen] Request URL: %s", req.URL.String())
+	p.GetLogger().DebugLog("[Qwen] Request Method: %s", req.Method)
+	p.GetLogger().DebugLog("[Qwen] Request Headers: %v", req.Header)
+
 	resp, err := client.Do(req)
 	if err != nil {
 		// Check if this is a proxy error
@@ -346,6 +351,10 @@ func (p *Provider) doRequestWithProxy(req *http.Request, client *http.Client, to
 		}
 		return nil, err
 	}
+
+	// Log response headers after receiving
+	p.GetLogger().DebugLog("[Qwen] Response Status: %s", resp.Status)
+	p.GetLogger().DebugLog("[Qwen] Response Headers: %v", resp.Header)
 
 	// Update proxy health on success
 	if p.GetTokenManager() != nil {

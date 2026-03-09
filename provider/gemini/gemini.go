@@ -262,6 +262,11 @@ func (p *Provider) classifyProxyError(err error) string {
 // doRequestWithProxy executes an HTTP request using the provided client
 // and handles proxy error classification and health tracking
 func (p *Provider) doRequestWithProxy(req *http.Request, client *http.Client, tokenID string) (*http.Response, error) {
+	// Log request headers before sending
+	p.GetLogger().DebugLog("[Gemini] Request URL: %s", req.URL.String())
+	p.GetLogger().DebugLog("[Gemini] Request Method: %s", req.Method)
+	p.GetLogger().DebugLog("[Gemini] Request Headers: %v", req.Header)
+
 	resp, err := client.Do(req)
 	if err != nil {
 		// Check if this is a proxy error
@@ -280,6 +285,10 @@ func (p *Provider) doRequestWithProxy(req *http.Request, client *http.Client, to
 		}
 		return nil, err
 	}
+
+	// Log response headers after receiving
+	p.GetLogger().DebugLog("[Gemini] Response Status: %s", resp.Status)
+	p.GetLogger().DebugLog("[Gemini] Response Headers: %v", resp.Header)
 
 	// Update proxy health on success
 	if p.GetTokenManager() != nil {
