@@ -5,7 +5,7 @@ import (
 	"time"
 
 	auth "github.com/sunbankio/qwencoder-proxy/internal/token"
-	"github.com/sunbankio/qwencoder-proxy/logging"
+	"github.com/sunbankio/qwencoder-proxy/internal/logging"
 )
 
 // BaseProvider provides common behavior for provider implementations.

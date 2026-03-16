@@ -2,7 +2,7 @@
 package converter
 
 import (
-	"github.com/sunbankio/qwencoder-proxy/provider"
+	"github.com/sunbankio/qwencoder-proxy/internal/provider"
 )
 
 // Converter handles protocol translation between different API formats

@@ -6,9 +6,9 @@ import (
 	"io"
 	"net/http"
 
-	"github.com/sunbankio/qwencoder-proxy/converter"
-	"github.com/sunbankio/qwencoder-proxy/logging"
-	"github.com/sunbankio/qwencoder-proxy/provider"
+	"github.com/sunbankio/qwencoder-proxy/internal/converter"
+	"github.com/sunbankio/qwencoder-proxy/internal/logging"
+	"github.com/sunbankio/qwencoder-proxy/internal/provider"
 )
 
 // GenerateAndConvert handles non-streaming content generation and conversion to OpenAI format

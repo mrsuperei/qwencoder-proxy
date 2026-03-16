@@ -7,10 +7,10 @@ import (
 	"net/http"
 	"strings"
 
-	"github.com/sunbankio/qwencoder-proxy/converter"
+	"github.com/sunbankio/qwencoder-proxy/internal/converter"
 	auth "github.com/sunbankio/qwencoder-proxy/internal/token"
-	"github.com/sunbankio/qwencoder-proxy/logging"
-	"github.com/sunbankio/qwencoder-proxy/provider"
+	"github.com/sunbankio/qwencoder-proxy/internal/logging"
+	"github.com/sunbankio/qwencoder-proxy/internal/provider"
 )
 
 // OpenAIHandler handles OpenAI-compatible requests and routes them to appropriate providers

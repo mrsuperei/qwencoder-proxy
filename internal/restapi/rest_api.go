@@ -17,15 +17,15 @@ import (
 	"time"
 
 	"github.com/google/uuid"
-	"github.com/sunbankio/qwencoder-proxy/converter"
+	"github.com/sunbankio/qwencoder-proxy/internal/converter"
 	tokpkg "github.com/sunbankio/qwencoder-proxy/internal/token"
-	"github.com/sunbankio/qwencoder-proxy/logging"
-	"github.com/sunbankio/qwencoder-proxy/provider"
-	"github.com/sunbankio/qwencoder-proxy/provider/antigravity"
-	"github.com/sunbankio/qwencoder-proxy/provider/gemini"
-	"github.com/sunbankio/qwencoder-proxy/provider/iflow"
-	"github.com/sunbankio/qwencoder-proxy/provider/qwen"
-	"github.com/sunbankio/qwencoder-proxy/proxy"
+	"github.com/sunbankio/qwencoder-proxy/internal/logging"
+	"github.com/sunbankio/qwencoder-proxy/internal/provider"
+	"github.com/sunbankio/qwencoder-proxy/internal/provider/antigravity"
+	"github.com/sunbankio/qwencoder-proxy/internal/provider/gemini"
+	"github.com/sunbankio/qwencoder-proxy/internal/provider/iflow"
+	"github.com/sunbankio/qwencoder-proxy/internal/provider/qwen"
+	"github.com/sunbankio/qwencoder-proxy/internal/proxy"
 	"golang.org/x/oauth2"
 )
 

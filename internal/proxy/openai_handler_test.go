@@ -11,10 +11,10 @@ import (
 	"strings"
 	"testing"
 
-	"github.com/sunbankio/qwencoder-proxy/converter"
+	"github.com/sunbankio/qwencoder-proxy/internal/converter"
 	"github.com/sunbankio/qwencoder-proxy/internal/token"
-	"github.com/sunbankio/qwencoder-proxy/logging"
-	"github.com/sunbankio/qwencoder-proxy/provider"
+	"github.com/sunbankio/qwencoder-proxy/internal/logging"
+	"github.com/sunbankio/qwencoder-proxy/internal/provider"
 )
 
 // mockProvider is a mock implementation of provider.Provider for testing
@@ -130,7 +130,7 @@ func (m *mockAuthenticator) GetHTTPClient() (*http.Client, error) {
 
 // TestNewOpenAIHandler tests constructor
 func TestNewOpenAIHandler(t *testing.T) {
-	factory := provider.NewFactory()
+	factory := provider.NewFactory(logging.NewLogger())
 	convFactory := converter.NewFactory()
 
 	handler := NewOpenAIHandler(factory, convFactory)
@@ -154,7 +154,7 @@ func TestNewOpenAIHandler(t *testing.T) {
 
 // TestNewOpenAIHandlerWithTokenManager tests the constructor with token manager
 func TestNewOpenAIHandlerWithTokenManager(t *testing.T) {
-	factory := provider.NewFactory()
+	factory := provider.NewFactory(logging.NewLogger())
 	convFactory := converter.NewFactory()
 	tokenManager := token.NewTokenManager(nil, token.NewRandomSelectionStrategy(), logging.NewLogger(), nil, nil)
 
@@ -170,7 +170,7 @@ func TestNewOpenAIHandlerWithTokenManager(t *testing.T) {
 
 // TestNewProviderSpecificHandler tests the provider-specific constructor
 func TestNewProviderSpecificHandler(t *testing.T) {
-	factory := provider.NewFactory()
+	factory := provider.NewFactory(logging.NewLogger())
 	convFactory := converter.NewFactory()
 
 	handler := NewProviderSpecificHandler(factory, convFactory, provider.ProviderGeminiCLI)
@@ -185,7 +185,7 @@ func TestNewProviderSpecificHandler(t *testing.T) {
 
 // TestNewProviderSpecificHandlerWithTokenManager tests the provider-specific constructor with token manager
 func TestNewProviderSpecificHandlerWithTokenManager(t *testing.T) {
-	factory := provider.NewFactory()
+	factory := provider.NewFactory(logging.NewLogger())
 	convFactory := converter.NewFactory()
 	tokenManager := token.NewTokenManager(nil, token.NewRandomSelectionStrategy(), logging.NewLogger(), nil, nil)
 
@@ -261,7 +261,7 @@ func TestIsProxyError(t *testing.T) {
 		},
 	}
 
-	handler := NewOpenAIHandler(provider.NewFactory(), converter.NewFactory())
+	handler := NewOpenAIHandler(provider.NewFactory(logging.NewLogger()), converter.NewFactory())
 
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
@@ -307,7 +307,7 @@ func TestGetProxyErrorDetails(t *testing.T) {
 		},
 	}
 
-	handler := NewOpenAIHandler(provider.NewFactory(), converter.NewFactory())
+	handler := NewOpenAIHandler(provider.NewFactory(logging.NewLogger()), converter.NewFactory())
 
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
@@ -327,7 +327,7 @@ func TestGetProxyErrorDetails(t *testing.T) {
 
 // TestFormatProxyError tests proxy error formatting
 func TestFormatProxyError(t *testing.T) {
-	handler := NewOpenAIHandler(provider.NewFactory(), converter.NewFactory())
+	handler := NewOpenAIHandler(provider.NewFactory(logging.NewLogger()), converter.NewFactory())
 	err := errors.New("dial tcp: lookup proxy.example.com:1080: no such host")
 
 	jsonBytes := handler.FormatProxyError(err)
@@ -356,7 +356,7 @@ func TestFormatProxyError(t *testing.T) {
 
 // TestHandleProxyError tests the handleProxyError method
 func TestHandleProxyError(t *testing.T) {
-	handler := NewOpenAIHandler(provider.NewFactory(), converter.NewFactory())
+	handler := NewOpenAIHandler(provider.NewFactory(logging.NewLogger()), converter.NewFactory())
 	err := errors.New("dial tcp: lookup proxy.example.com:1080: no such host")
 
 	w := httptest.NewRecorder()
@@ -413,7 +413,7 @@ func TestHandleProxyError(t *testing.T) {
 
 // TestHandleStreamingError tests streaming error handling
 func TestHandleStreamingError(t *testing.T) {
-	handler := NewOpenAIHandler(provider.NewFactory(), converter.NewFactory())
+	handler := NewOpenAIHandler(provider.NewFactory(logging.NewLogger()), converter.NewFactory())
 
 	tests := []struct {
 		name        string
@@ -452,7 +452,7 @@ func TestHandleStreamingError(t *testing.T) {
 
 // TestBackwardCompatibility tests backward compatibility with nil tokenManager
 func TestBackwardCompatibility(t *testing.T) {
-	handler := NewOpenAIHandler(provider.NewFactory(), converter.NewFactory())
+	handler := NewOpenAIHandler(provider.NewFactory(logging.NewLogger()), converter.NewFactory())
 
 	// Create a proxy error
 	err := errors.New("dial tcp: lookup proxy.example.com:1080: no such host")
@@ -469,7 +469,7 @@ func TestBackwardCompatibility(t *testing.T) {
 
 // TestLogProxyError tests the logProxyError method
 func TestLogProxyError(t *testing.T) {
-	handler := NewOpenAIHandler(provider.NewFactory(), converter.NewFactory())
+	handler := NewOpenAIHandler(provider.NewFactory(logging.NewLogger()), converter.NewFactory())
 	err := errors.New("dial tcp: lookup proxy.example.com:1080: no such host")
 	details := map[string]interface{}{
 		"proxy_type":     "socks5",
@@ -484,7 +484,7 @@ func TestLogProxyError(t *testing.T) {
 
 // TestServeHTTPWithCORS tests CORS headers
 func TestServeHTTPWithCORS(t *testing.T) {
-	handler := NewOpenAIHandler(provider.NewFactory(), converter.NewFactory())
+	handler := NewOpenAIHandler(provider.NewFactory(logging.NewLogger()), converter.NewFactory())
 
 	req := httptest.NewRequest("OPTIONS", "/v1/chat/completions", nil)
 	w := httptest.NewRecorder()
@@ -510,7 +510,7 @@ func TestServeHTTPWithCORS(t *testing.T) {
 
 // TestServeHTTPWithInvalidJSON tests ServeHTTP method with invalid JSON
 func TestServeHTTPWithInvalidJSON(t *testing.T) {
-	handler := NewOpenAIHandler(provider.NewFactory(), converter.NewFactory())
+	handler := NewOpenAIHandler(provider.NewFactory(logging.NewLogger()), converter.NewFactory())
 
 	req := httptest.NewRequest("POST", "/v1/chat/completions", strings.NewReader(`invalid json`))
 	w := httptest.NewRecorder()
@@ -524,7 +524,7 @@ func TestServeHTTPWithInvalidJSON(t *testing.T) {
 
 // TestServeHTTPWithMissingModel tests ServeHTTP method with missing model
 func TestServeHTTPWithMissingModel(t *testing.T) {
-	handler := NewOpenAIHandler(provider.NewFactory(), converter.NewFactory())
+	handler := NewOpenAIHandler(provider.NewFactory(logging.NewLogger()), converter.NewFactory())
 
 	req := httptest.NewRequest("POST", "/v1/chat/completions", strings.NewReader(`{
 		"messages": [{"role": "user", "content": "Hello"}]
@@ -540,7 +540,7 @@ func TestServeHTTPWithMissingModel(t *testing.T) {
 
 // TestServeHTTPWithUnknownModel tests ServeHTTP method with unknown model
 func TestServeHTTPWithUnknownModel(t *testing.T) {
-	handler := NewOpenAIHandler(provider.NewFactory(), converter.NewFactory())
+	handler := NewOpenAIHandler(provider.NewFactory(logging.NewLogger()), converter.NewFactory())
 
 	req := httptest.NewRequest("POST", "/v1/chat/completions", strings.NewReader(`{
 		"model": "unknown-model",
@@ -557,7 +557,7 @@ func TestServeHTTPWithUnknownModel(t *testing.T) {
 
 // TestHandleListModels tests the handleListModels method
 func TestHandleListModels(t *testing.T) {
-	factory := provider.NewFactory()
+	factory := provider.NewFactory(logging.NewLogger())
 	convFactory := converter.NewFactory()
 
 	// Create a provider with models
@@ -605,7 +605,7 @@ func TestHandleListModels(t *testing.T) {
 
 // TestHandleNonStreamCompletionsWithProxyError tests non-streaming completions with proxy errors
 func TestHandleNonStreamCompletionsWithProxyError(t *testing.T) {
-	factory := provider.NewFactory()
+	factory := provider.NewFactory(logging.NewLogger())
 	convFactory := converter.NewFactory()
 
 	// Create a provider that will fail with a proxy error
@@ -649,7 +649,7 @@ func TestHandleNonStreamCompletionsWithProxyError(t *testing.T) {
 
 // TestHandleNonStreamCompletionsWithNonProxyError tests non-streaming completions with non-proxy errors
 func TestHandleNonStreamCompletionsWithNonProxyError(t *testing.T) {
-	factory := provider.NewFactory()
+	factory := provider.NewFactory(logging.NewLogger())
 	convFactory := converter.NewFactory()
 
 	// Create a provider that will fail with a non-proxy error
@@ -692,7 +692,7 @@ func TestHandleNonStreamCompletionsWithNonProxyError(t *testing.T) {
 
 // TestHandleNonStreamCompletionsWithSuccess tests non-streaming completions with success
 func TestHandleNonStreamCompletionsWithSuccess(t *testing.T) {
-	factory := provider.NewFactory()
+	factory := provider.NewFactory(logging.NewLogger())
 	convFactory := converter.NewFactory()
 
 	// Create a provider that succeeds

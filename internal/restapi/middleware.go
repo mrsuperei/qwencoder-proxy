@@ -8,7 +8,7 @@ import (
 	"net/http"
 	"time"
 
-	"github.com/sunbankio/qwencoder-proxy/logging"
+	"github.com/sunbankio/qwencoder-proxy/internal/logging"
 )
 
 // ErrorResponse represents a standard error response

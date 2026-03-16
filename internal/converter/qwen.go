@@ -2,7 +2,7 @@
 package converter
 
 import (
-	"github.com/sunbankio/qwencoder-proxy/provider"
+	"github.com/sunbankio/qwencoder-proxy/internal/provider"
 )
 
 // QwenConverter handles Qwen to/from OpenAI format conversions

@@ -10,7 +10,7 @@ import (
 	"strings"
 
 	"github.com/sunbankio/qwencoder-proxy/internal/token"
-	"github.com/sunbankio/qwencoder-proxy/logging"
+	"github.com/sunbankio/qwencoder-proxy/internal/logging"
 )
 
 // BaseHandler provides common behavior for handler implementations.

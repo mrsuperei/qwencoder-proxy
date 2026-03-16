@@ -5,7 +5,7 @@ import (
 	"sync"
 	"time"
 
-	"github.com/sunbankio/qwencoder-proxy/logging"
+	"github.com/sunbankio/qwencoder-proxy/internal/logging"
 )
 
 // MockStore is an in-memory implementation of token storage for testing.

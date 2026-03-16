@@ -11,17 +11,17 @@ import (
 	"syscall"
 	"time"
 
-	"github.com/sunbankio/qwencoder-proxy/config"
-	"github.com/sunbankio/qwencoder-proxy/converter"
+	"github.com/sunbankio/qwencoder-proxy/internal/config"
+	"github.com/sunbankio/qwencoder-proxy/internal/converter"
 	"github.com/sunbankio/qwencoder-proxy/internal/token"
-	"github.com/sunbankio/qwencoder-proxy/logging"
-	"github.com/sunbankio/qwencoder-proxy/provider"
-	"github.com/sunbankio/qwencoder-proxy/provider/antigravity"
-	"github.com/sunbankio/qwencoder-proxy/provider/gemini"
-	"github.com/sunbankio/qwencoder-proxy/provider/iflow"
-	"github.com/sunbankio/qwencoder-proxy/provider/kiro"
-	"github.com/sunbankio/qwencoder-proxy/provider/qwen"
-	"github.com/sunbankio/qwencoder-proxy/restapi"
+	"github.com/sunbankio/qwencoder-proxy/internal/logging"
+	"github.com/sunbankio/qwencoder-proxy/internal/provider"
+	"github.com/sunbankio/qwencoder-proxy/internal/provider/antigravity"
+	"github.com/sunbankio/qwencoder-proxy/internal/provider/gemini"
+	"github.com/sunbankio/qwencoder-proxy/internal/provider/iflow"
+	"github.com/sunbankio/qwencoder-proxy/internal/provider/kiro"
+	"github.com/sunbankio/qwencoder-proxy/internal/provider/qwen"
+	"github.com/sunbankio/qwencoder-proxy/internal/restapi"
 )
 
 func main() {

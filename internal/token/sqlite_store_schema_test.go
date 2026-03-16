@@ -3,7 +3,7 @@ package token
 import (
 	"testing"
 
-	"github.com/sunbankio/qwencoder-proxy/logging"
+	"github.com/sunbankio/qwencoder-proxy/internal/logging"
 
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"

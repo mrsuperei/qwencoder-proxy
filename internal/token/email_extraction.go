@@ -12,7 +12,7 @@ import (
 	"sync"
 	"time"
 
-	"github.com/sunbankio/qwencoder-proxy/logging"
+	"github.com/sunbankio/qwencoder-proxy/internal/logging"
 )
 
 // EmailExtractor defines the interface for extracting email from OAuth responses

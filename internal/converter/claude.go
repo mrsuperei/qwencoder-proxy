@@ -4,8 +4,8 @@ package converter
 import (
 	"fmt"
 
-	"github.com/sunbankio/qwencoder-proxy/provider"
-	"github.com/sunbankio/qwencoder-proxy/provider/kiro"
+	"github.com/sunbankio/qwencoder-proxy/internal/provider"
+	"github.com/sunbankio/qwencoder-proxy/internal/provider/kiro"
 )
 
 // ClaudeConverter handles Claude to/from OpenAI format conversions

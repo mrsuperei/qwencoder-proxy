@@ -12,8 +12,8 @@ import (
 	"time"
 
 	tokenpkg "github.com/sunbankio/qwencoder-proxy/internal/token"
-	"github.com/sunbankio/qwencoder-proxy/logging"
-	"github.com/sunbankio/qwencoder-proxy/provider/gemini"
+	"github.com/sunbankio/qwencoder-proxy/internal/logging"
+	"github.com/sunbankio/qwencoder-proxy/internal/provider/gemini"
 )
 
 // OAuthConfig holds OAuth configuration for Antigravity

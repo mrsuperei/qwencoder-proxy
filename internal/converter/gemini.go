@@ -6,8 +6,8 @@ import (
 	"fmt"
 	"time"
 
-	"github.com/sunbankio/qwencoder-proxy/provider"
-	"github.com/sunbankio/qwencoder-proxy/provider/gemini"
+	"github.com/sunbankio/qwencoder-proxy/internal/provider"
+	"github.com/sunbankio/qwencoder-proxy/internal/provider/gemini"
 )
 
 // GeminiConverter handles Gemini to/from OpenAI format conversions

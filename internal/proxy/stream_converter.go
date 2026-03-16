@@ -8,9 +8,9 @@ import (
 	"net/http"
 	"strings"
 
-	"github.com/sunbankio/qwencoder-proxy/converter"
-	"github.com/sunbankio/qwencoder-proxy/logging"
-	"github.com/sunbankio/qwencoder-proxy/provider"
+	"github.com/sunbankio/qwencoder-proxy/internal/converter"
+	"github.com/sunbankio/qwencoder-proxy/internal/logging"
+	"github.com/sunbankio/qwencoder-proxy/internal/provider"
 )
 
 // StreamConverter wraps a native provider stream and converts it to OpenAI SSE format

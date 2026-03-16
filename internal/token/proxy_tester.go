@@ -11,7 +11,7 @@ import (
 	"strings"
 	"time"
 
-	"github.com/sunbankio/qwencoder-proxy/logging"
+	"github.com/sunbankio/qwencoder-proxy/internal/logging"
 	"golang.org/x/net/proxy"
 )
 

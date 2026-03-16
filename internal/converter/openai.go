@@ -2,7 +2,7 @@
 package converter
 
 import (
-	"github.com/sunbankio/qwencoder-proxy/provider"
+	"github.com/sunbankio/qwencoder-proxy/internal/provider"
 )
 
 // OpenAIConverter is a pass-through converter for the OpenAI protocol.

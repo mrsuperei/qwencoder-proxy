@@ -6,7 +6,7 @@ import (
 	"sync"
 	"time"
 
-	"github.com/sunbankio/qwencoder-proxy/logging"
+	"github.com/sunbankio/qwencoder-proxy/internal/logging"
 )
 
 // ProxyHealthTracker monitors and tracks the health status of proxy connections.

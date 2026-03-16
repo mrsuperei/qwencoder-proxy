@@ -12,6 +12,7 @@ import (
 	"github.com/stretchr/testify/require"
 
 	auth "github.com/sunbankio/qwencoder-proxy/internal/token"
+	"github.com/sunbankio/qwencoder-proxy/internal/logging"
 )
 
 // MockAuthenticator is a mock implementation for testing
@@ -250,7 +251,7 @@ func TestNonTokenManagerAwareProvider(t *testing.T) {
 
 // TestFactoryRegisterWithTokenManager tests the RegisterWithTokenManager method
 func TestFactoryRegisterWithTokenManager(t *testing.T) {
-	factory := NewFactory()
+	factory := NewFactory(logging.NewLogger())
 
 	// Create a mock TokenManager
 	tokenManager := &auth.TokenManager{}
@@ -275,7 +276,7 @@ func TestFactoryRegisterWithTokenManager(t *testing.T) {
 
 // TestFactoryRegisterWithTokenManagerNonAware tests RegisterWithTokenManager with non-aware provider
 func TestFactoryRegisterWithTokenManagerNonAware(t *testing.T) {
-	factory := NewFactory()
+	factory := NewFactory(logging.NewLogger())
 
 	// Create a mock TokenManager
 	tokenManager := &auth.TokenManager{}
@@ -297,7 +298,7 @@ func TestFactoryRegisterWithTokenManagerNonAware(t *testing.T) {
 
 // TestFactoryRegisterBackwardCompatibility tests that Register still works without TokenManager
 func TestFactoryRegisterBackwardCompatibility(t *testing.T) {
-	factory := NewFactory()
+	factory := NewFactory(logging.NewLogger())
 
 	// Create a provider that implements TokenManagerAware
 	awareProvider := &MockTokenManagerAware{

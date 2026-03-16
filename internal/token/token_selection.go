@@ -9,7 +9,7 @@ import (
 	"sync"
 	"time"
 
-	"github.com/sunbankio/qwencoder-proxy/logging"
+	"github.com/sunbankio/qwencoder-proxy/internal/logging"
 )
 
 // ProxyClientFactory is an interface for creating HTTP clients with proxy configuration.
