@@ -5,10 +5,13 @@ import (
 	"database/sql"
 	"errors"
 	"fmt"
+	"os"
+	"path/filepath"
 	"strings"
 	"sync"
 	"time"
 
+	"github.com/google/uuid"
 	"github.com/sunbankio/qwencoder-proxy/internal/logging"
 	_ "modernc.org/sqlite"
 )
@@ -63,6 +66,7 @@ const (
 	sqlCreateProxyConfigsTable = `
 		CREATE TABLE IF NOT EXISTS proxy_configs (
 			id TEXT PRIMARY KEY,
+			type TEXT NOT NULL DEFAULT 'http',
 			host TEXT NOT NULL,
 			port INTEGER NOT NULL,
 			username TEXT,
@@ -109,6 +113,13 @@ type SQLiteStore struct {
 	// Statement health tracking
 	stmtHealth          *sql.Stmt
 	stmtLastHealthCheck time.Time
+
+	// Retry configuration and metrics
+	retryMetrics *RetryMetrics
+	retryConfig  *RetryConfig
+
+	// Warning tracking to avoid repeated warnings
+	typeColumnWarningLogged bool
 }
 
 // StatementHealth represents the health status of a prepared statement
@@ -132,8 +143,9 @@ func applyPragmas(db *sql.DB, logger logging.Logger) error {
 		{"cache_size", "-10240"},
 		// Enable foreign key constraints
 		{"foreign_keys", "ON"},
-		// Set busy timeout to 5 seconds (database waits if locked)
-		{"busy_timeout", "5000"},
+		// Set busy timeout to 60 seconds (database waits if locked)
+		// Increased from 30s to 60s to handle database locking with multiple SQLiteStore instances
+		{"busy_timeout", "60000"},
 		// Enable query planner improvements
 		{"query_only", "0"},
 		// Set temp_store to MEMORY (use memory for temporary tables)
@@ -264,6 +276,52 @@ func (s *SQLiteStore) prepareStatements() error {
 	return nil
 }
 
+// executeWithRetry executes a function with exponential backoff retry.
+func (s *SQLiteStore) executeWithRetry(
+	operation string,
+	fn func() error,
+) error {
+	var lastErr error
+
+	for attempt := 0; attempt < s.retryConfig.MaxRetries; attempt++ {
+		s.retryMetrics.TotalAttempts.Add(1)
+
+		if attempt > 0 {
+			// Calculate exponential backoff delay
+			delay := s.retryConfig.BaseDelay * time.Duration(1<<uint(attempt-1))
+			if delay > s.retryConfig.MaxDelay {
+				delay = s.retryConfig.MaxDelay
+			}
+
+			s.logger.DebugLog("[SQLiteStore] %s: retry attempt %d/%d after %v",
+				operation, attempt+1, s.retryConfig.MaxRetries, delay)
+			time.Sleep(delay)
+		}
+
+		err := fn()
+		if err == nil {
+			if attempt > 0 {
+				s.retryMetrics.SuccessfulRetry.Add(1)
+			}
+			return nil
+		}
+
+		lastErr = err
+
+		// Check if this is a retryable error
+		if isSQLiteBusy(err) && attempt < s.retryConfig.MaxRetries-1 {
+			s.retryMetrics.BusyErrors.Add(1)
+			continue
+		}
+
+		// Non-retryable error or max retries reached
+		break
+	}
+
+	s.retryMetrics.FailedAfterRetry.Add(1)
+	return fmt.Errorf("%s failed after %d attempts: %w", operation, s.retryConfig.MaxRetries, lastErr)
+}
+
 // NewSQLiteStore creates a new SQLite-backed token store
 func NewSQLiteStore(dbPath, providerID string, logger logging.Logger) (*SQLiteStore, error) {
 	// Open database connection
@@ -280,9 +338,10 @@ func NewSQLiteStore(dbPath, providerID string, logger logging.Logger) (*SQLiteSt
 
 	// Configure connection pool
 	// SetMaxOpenConns: Maximum number of open connections to the database
-	db.SetMaxOpenConns(25)
+	// Reduced to minimize database locking with multiple SQLiteStore instances
+	db.SetMaxOpenConns(1)
 	// SetMaxIdleConns: Maximum number of idle connections in the pool
-	db.SetMaxIdleConns(5)
+	db.SetMaxIdleConns(1)
 	// SetConnMaxLifetime: Maximum amount of time a connection may be reused
 	db.SetConnMaxLifetime(5 * time.Minute)
 	// SetConnMaxIdleTime: Maximum amount of time a connection may be idle
@@ -295,9 +354,11 @@ func NewSQLiteStore(dbPath, providerID string, logger logging.Logger) (*SQLiteSt
 	}
 
 	store := &SQLiteStore{
-		db:         db,
-		providerID: providerID,
-		logger:     logger,
+		db:           db,
+		providerID:   providerID,
+		logger:       logger,
+		retryMetrics: &RetryMetrics{},
+		retryConfig:  DefaultRetryConfig(),
 	}
 
 	// Run schema migrations
@@ -313,6 +374,43 @@ func NewSQLiteStore(dbPath, providerID string, logger logging.Logger) (*SQLiteSt
 	}
 
 	logger.InfoLog("[SQLiteStore] Initialized SQLite store for provider %s at %s", providerID, dbPath)
+	return store, nil
+}
+
+// NewSQLiteStoreWithDB creates a new SQLite-backed token store with a shared database connection
+func NewSQLiteStoreWithDB(dbPath, providerID string, logger logging.Logger, sharedDB *sql.DB) (*SQLiteStore, error) {
+	// Ensure database directory exists
+	dbDir := filepath.Dir(dbPath)
+	if err := os.MkdirAll(dbDir, 0755); err != nil {
+		return nil, fmt.Errorf("failed to create database directory %s: %w", dbDir, err)
+	}
+
+	// Create SQLite store with shared database connection
+	store := &SQLiteStore{
+		db:           sharedDB,
+		providerID:   providerID,
+		logger:       logger,
+		mu:           sync.RWMutex{},
+		retryMetrics: &RetryMetrics{},
+		retryConfig:  DefaultRetryConfig(),
+	}
+
+	// Verify connection works
+	if err := sharedDB.Ping(); err != nil {
+		return nil, fmt.Errorf("failed to ping shared database: %w", err)
+	}
+
+	// Run schema migrations
+	if err := store.migrate(); err != nil {
+		return nil, fmt.Errorf("failed to run migrations: %w", err)
+	}
+
+	// Prepare statements for performance
+	if err := store.prepareStatements(); err != nil {
+		return nil, fmt.Errorf("failed to prepare statements: %w", err)
+	}
+
+	logger.InfoLog("[SQLiteStore] Initialized SQLite store for provider %s at %s with shared DB", providerID, dbPath)
 	return store, nil
 }
 
@@ -334,6 +432,10 @@ func (s *SQLiteStore) migrate() error {
 			// Table doesn't exist, this is a fresh installation
 			version = 0
 			s.logger.InfoLog("[SQLiteStore] schema_migrations table not found, treating as fresh installation")
+		} else if strings.Contains(err.Error(), "no such column") || strings.Contains(err.Error(), "database is locked") || strings.Contains(err.Error(), "sql: Scan error") {
+			// Handle edge cases: table exists but is empty, has no version column, or other scan errors
+			s.logger.WarnLog("[SQLiteStore] Unable to read schema version, treating as version 0: %v", err)
+			version = 0
 		} else {
 			return fmt.Errorf("failed to get schema version: %w", err)
 		}
@@ -342,6 +444,8 @@ func (s *SQLiteStore) migrate() error {
 	// Run migrations in order
 	migrations := []migration{
 		{1, "Initial schema with all tables and indexes including project_id", func() error { return s.migrateToV1() }},
+		{2, "Add type column to proxy_configs table", func() error { return s.migrateToV2() }},
+		{3, "Ensure type column exists in proxy_configs table", func() error { return s.migrateToV3() }},
 		// Future migrations here
 	}
 
@@ -415,6 +519,7 @@ func (s *SQLiteStore) migrateToV1() error {
 	if _, err := s.db.Exec(`
 		CREATE TABLE IF NOT EXISTS proxy_configs (
 			id TEXT PRIMARY KEY,
+			type TEXT NOT NULL DEFAULT 'http',
 			host TEXT NOT NULL,
 			port INTEGER NOT NULL,
 			username TEXT,
@@ -453,6 +558,92 @@ func (s *SQLiteStore) migrateToV1() error {
 		}
 	}
 
+	return nil
+}
+
+// migrateToV2 adds the type column to proxy_configs table
+func (s *SQLiteStore) migrateToV2() error {
+	s.logger.InfoLog("[SQLiteStore] Running V2 migration: Add type column to proxy_configs table")
+
+	// Check if the type column already exists
+	var columnName string
+	err := s.db.QueryRow(`
+		SELECT name FROM pragma_table_info('proxy_configs')
+		WHERE name = 'type'
+	`).Scan(&columnName)
+
+	if err == nil {
+		// Column already exists, skip migration
+		s.logger.InfoLog("[SQLiteStore] V2: type column already exists in proxy_configs table, skipping migration")
+		return nil
+	}
+
+	// Check if the error is because the table doesn't exist
+	if strings.Contains(err.Error(), "no such table") {
+		s.logger.InfoLog("[SQLiteStore] V2: proxy_configs table doesn't exist yet, will be created in V1")
+		return nil
+	}
+
+	// Log the error for debugging
+	s.logger.WarnLog("[SQLiteStore] V2: type column check failed: %v", err)
+
+	// Try to add the type column
+	if _, err := s.db.Exec(`
+		ALTER TABLE proxy_configs ADD COLUMN type TEXT NOT NULL DEFAULT 'http'
+	`); err != nil {
+		// Check if it's a duplicate column error (column was added by another process)
+		if strings.Contains(err.Error(), "duplicate column") {
+			s.logger.InfoLog("[SQLiteStore] V2: type column already exists (duplicate column error), skipping migration")
+			return nil
+		}
+		return fmt.Errorf("V2: failed to add type column to proxy_configs table: %w", err)
+	}
+
+	s.logger.InfoLog("[SQLiteStore] V2: Successfully added type column to proxy_configs table")
+	return nil
+}
+
+// migrateToV3 ensures the type column exists in proxy_configs table
+// This migration is a safety net for databases that may have been created
+// before the migration system was properly implemented
+func (s *SQLiteStore) migrateToV3() error {
+	s.logger.InfoLog("[SQLiteStore] Running V3 migration: Ensure type column exists in proxy_configs table")
+
+	// Check if the type column already exists
+	var columnName string
+	err := s.db.QueryRow(`
+		SELECT name FROM pragma_table_info('proxy_configs')
+		WHERE name = 'type'
+	`).Scan(&columnName)
+
+	if err == nil {
+		// Column already exists, skip migration
+		s.logger.InfoLog("[SQLiteStore] V3: type column already exists in proxy_configs table, skipping migration")
+		return nil
+	}
+
+	// Check if the error is because the table doesn't exist
+	if strings.Contains(err.Error(), "no such table") {
+		s.logger.WarnLog("[SQLiteStore] V3: proxy_configs table doesn't exist, cannot add type column")
+		return nil
+	}
+
+	// Log the error for debugging
+	s.logger.WarnLog("[SQLiteStore] V3: type column check failed: %v", err)
+
+	// Try to add the type column
+	if _, err := s.db.Exec(`
+		ALTER TABLE proxy_configs ADD COLUMN type TEXT NOT NULL DEFAULT 'http'
+	`); err != nil {
+		// Check if it's a duplicate column error (column was added by another process)
+		if strings.Contains(err.Error(), "duplicate column") {
+			s.logger.InfoLog("[SQLiteStore] V3: type column already exists (duplicate column error), skipping migration")
+			return nil
+		}
+		return fmt.Errorf("V3: failed to add type column to proxy_configs table: %w", err)
+	}
+
+	s.logger.InfoLog("[SQLiteStore] V3: Successfully added type column to proxy_configs table")
 	return nil
 }
 
@@ -575,90 +766,146 @@ func (s *SQLiteStore) Save(tokens map[string]ProviderToken) error {
 	s.mu.Lock()
 	defer s.mu.Unlock()
 
-	// Start transaction
-	tx, err := s.db.Begin()
-	if err != nil {
-		return fmt.Errorf("failed to begin transaction: %w", err)
-	}
-	defer tx.Rollback()
+	// Retry logic for SQLITE_BUSY errors
+	maxRetries := 10
+	baseDelay := 50 * time.Millisecond
 
-	// Delete existing tokens for this provider
-	if _, err := tx.Exec("DELETE FROM tokens WHERE provider_id = ?", s.providerID); err != nil {
-		return fmt.Errorf("failed to delete existing tokens: %w", err)
-	}
-
-	// Update or insert each token
-	for _, token := range tokens {
-		// Check if token exists
-		var existingID string
-		err := tx.QueryRow(
-			"SELECT id FROM tokens WHERE provider_id = ? AND id = ?",
-			s.providerID, token.ID,
-		).Scan(&existingID)
-
-		if err != nil && !errors.Is(err, sql.ErrNoRows) {
-			// Unexpected error
-			return fmt.Errorf("failed to check for existing token: %w", err)
+	var lastErr error
+	for attempt := 0; attempt < maxRetries; attempt++ {
+		if attempt > 0 {
+			// Exponential backoff
+			delay := baseDelay * time.Duration(1<<uint(attempt-1))
+			if delay > 2*time.Second {
+				delay = 2 * time.Second
+			}
+			s.logger.DebugLog("[SQLiteStore] Retry attempt %d/%d after %v", attempt+1, maxRetries, delay)
+			time.Sleep(delay)
 		}
 
-		if existingID != "" {
-			// Token exists, update it
-			_, err = tx.Stmt(s.stmtUpdateToken).Exec(
-				token.AccessToken,
-				token.RefreshToken,
-				token.TokenType,
-				token.ExpiryDate,
-				token.Email,
-				token.ResourceURL,
-				token.Scope,
-				token.APIKey,
-				sql.NullString{String: token.ProjectID, Valid: token.ProjectID != ""},
-				boolToInt(token.Healthy),
-				token.HealthScore,
-				token.LastUsed,
-				token.ErrorCount,
-				sql.NullString{String: token.LastError, Valid: token.LastError != ""},
-				s.providerID,
-				token.ID,
-			)
-			if err != nil {
-				return fmt.Errorf("failed to update token %s: %w", token.ID, err)
+		// Start transaction
+		tx, err := s.db.Begin()
+		if err != nil {
+			lastErr = fmt.Errorf("failed to begin transaction: %w", err)
+			if isSQLiteBusy(err) && attempt < maxRetries-1 {
+				continue
 			}
-		} else {
-			// Token doesn't exist, insert it
-			_, err = tx.Stmt(s.stmtInsertToken).Exec(
-				token.ID,
-				s.providerID,
-				token.AccessToken,
-				token.RefreshToken,
-				token.TokenType,
-				token.ExpiryDate,
-				token.Email,
-				token.ResourceURL,
-				token.Scope,
-				token.APIKey,
-				sql.NullString{String: token.ProjectID, Valid: token.ProjectID != ""},
-				boolToInt(token.Healthy),
-				token.HealthScore,
-				token.LastUsed,
-				token.CreatedAt,
-				token.ErrorCount,
-				sql.NullString{String: token.LastError, Valid: token.LastError != ""},
-				nil, // proxy_id
-			)
-			if err != nil {
-				return fmt.Errorf("failed to insert token %s: %w", token.ID, err)
+			return lastErr
+		}
+
+		// Delete existing tokens for this provider
+		if _, err := tx.Exec("DELETE FROM tokens WHERE provider_id = ?", s.providerID); err != nil {
+			tx.Rollback()
+			lastErr = fmt.Errorf("failed to delete existing tokens: %w", err)
+			if isSQLiteBusy(err) && attempt < maxRetries-1 {
+				continue
+			}
+			return lastErr
+		}
+
+		// Update or insert each token
+		for _, token := range tokens {
+			// Check if token exists
+			var existingID string
+			err := tx.QueryRow(
+				"SELECT id FROM tokens WHERE provider_id = ? AND id = ?",
+				s.providerID, token.ID,
+			).Scan(&existingID)
+
+			if err != nil && !errors.Is(err, sql.ErrNoRows) {
+				tx.Rollback()
+				lastErr = fmt.Errorf("failed to check for existing token: %w", err)
+				if isSQLiteBusy(err) && attempt < maxRetries-1 {
+					continue
+				}
+				return lastErr
+			}
+
+			if existingID != "" {
+				// Token exists, update it
+				_, err = tx.Stmt(s.stmtUpdateToken).Exec(
+					token.AccessToken,
+					token.RefreshToken,
+					token.TokenType,
+					token.ExpiryDate,
+					token.Email,
+					token.ResourceURL,
+					token.Scope,
+					token.APIKey,
+					sql.NullString{String: token.ProjectID, Valid: token.ProjectID != ""},
+					boolToInt(token.Healthy),
+					token.HealthScore,
+					token.LastUsed,
+					token.ErrorCount,
+					sql.NullString{String: token.LastError, Valid: token.LastError != ""},
+					s.providerID,
+					token.ID,
+				)
+				if err != nil {
+					tx.Rollback()
+					lastErr = fmt.Errorf("failed to update token %s: %w", token.ID, err)
+					if isSQLiteBusy(err) && attempt < maxRetries-1 {
+						continue
+					}
+					return lastErr
+				}
+			} else {
+				// Token doesn't exist, insert it
+				_, err = tx.Stmt(s.stmtInsertToken).Exec(
+					token.ID,
+					s.providerID,
+					token.AccessToken,
+					token.RefreshToken,
+					token.TokenType,
+					token.ExpiryDate,
+					token.Email,
+					token.ResourceURL,
+					token.Scope,
+					token.APIKey,
+					sql.NullString{String: token.ProjectID, Valid: token.ProjectID != ""},
+					boolToInt(token.Healthy),
+					token.HealthScore,
+					token.LastUsed,
+					token.CreatedAt,
+					token.ErrorCount,
+					sql.NullString{String: token.LastError, Valid: token.LastError != ""},
+					nil, // proxy_id
+				)
+				if err != nil {
+					tx.Rollback()
+					lastErr = fmt.Errorf("failed to insert token %s: %w", token.ID, err)
+					if isSQLiteBusy(err) && attempt < maxRetries-1 {
+						continue
+					}
+					return lastErr
+				}
 			}
 		}
+
+		// Commit transaction
+		if err := tx.Commit(); err != nil {
+			lastErr = fmt.Errorf("failed to commit transaction: %w", err)
+			if isSQLiteBusy(err) && attempt < maxRetries-1 {
+				continue
+			}
+			return lastErr
+		}
+
+		s.logger.DebugLog("[SQLiteStore] Saved %d tokens for provider %s", len(tokens), s.providerID)
+		return nil
 	}
 
-	// Commit transaction
-	if err := tx.Commit(); err != nil {
-		return fmt.Errorf("failed to commit transaction: %w", err)
-	}
+	return lastErr
+}
 
-	s.logger.DebugLog("[SQLiteStore] Saved %d tokens for provider %s", len(tokens), s.providerID)
-	return nil
+// isSQLiteBusy checks if an error is a SQLITE_BUSY error
+func isSQLiteBusy(err error) bool {
+	if err == nil {
+		return false
+	}
+	errStr := err.Error()
+	return strings.Contains(errStr, "database is locked") ||
+		strings.Contains(errStr, "SQLITE_BUSY") ||
+		strings.Contains(errStr, "(5)")
 }
 
 // AddToken adds a new token to the store
@@ -666,50 +913,52 @@ func (s *SQLiteStore) AddToken(token TokenMetadata) error {
 	s.mu.Lock()
 	defer s.mu.Unlock()
 
-	// Check for duplicate by refresh_token
-	var existingID string
-	err := s.db.QueryRow(
-		"SELECT id FROM tokens WHERE provider_id = ? AND refresh_token = ?",
-		s.providerID, token.RefreshToken,
-	).Scan(&existingID)
+	return s.executeWithRetry("addToken", func() error {
+		// Check for duplicate by refresh_token
+		var existingID string
+		err := s.db.QueryRow(
+			"SELECT id FROM tokens WHERE provider_id = ? AND refresh_token = ?",
+			s.providerID, token.RefreshToken,
+		).Scan(&existingID)
 
-	if err == nil {
-		// Duplicate found, update existing
-		s.logger.DebugLog("[SQLiteStore] Duplicate refresh_token found, updating existing token %s with new access_token=%s", existingID, token.AccessToken)
-		return s.updateTokenLocked(existingID, token)
-	} else if !errors.Is(err, sql.ErrNoRows) {
-		// Unexpected error
-		return fmt.Errorf("failed to check for duplicate token: %w", err)
-	}
+		if err == nil {
+			// Duplicate found, update existing
+			s.logger.DebugLog("[SQLiteStore] Duplicate refresh_token found, updating existing token %s with new access_token=%s", existingID, token.AccessToken)
+			return s.updateTokenLocked(existingID, token)
+		} else if !errors.Is(err, sql.ErrNoRows) {
+			// Unexpected error
+			return fmt.Errorf("failed to check for duplicate token: %w", err)
+		}
 
-	// Insert new token
-	_, err = s.stmtInsertToken.Exec(
-		token.ID,
-		s.providerID,
-		token.AccessToken,
-		token.RefreshToken,
-		token.TokenType,
-		token.ExpiryDate,
-		token.Email,
-		token.ResourceURL,
-		token.Scope,
-		token.APIKey,
-		sql.NullString{String: token.ProjectID, Valid: token.ProjectID != ""},
-		boolToInt(token.Healthy),
-		token.HealthScore,
-		token.LastUsed,
-		token.CreatedAt,
-		token.ErrorCount,
-		sql.NullString{String: token.LastError, Valid: token.LastError != ""},
-		nil, // proxy_id
-	)
+		// Insert new token
+		_, err = s.stmtInsertToken.Exec(
+			token.ID,
+			s.providerID,
+			token.AccessToken,
+			token.RefreshToken,
+			token.TokenType,
+			token.ExpiryDate,
+			token.Email,
+			token.ResourceURL,
+			token.Scope,
+			token.APIKey,
+			sql.NullString{String: token.ProjectID, Valid: token.ProjectID != ""},
+			boolToInt(token.Healthy),
+			token.HealthScore,
+			token.LastUsed,
+			token.CreatedAt,
+			token.ErrorCount,
+			sql.NullString{String: token.LastError, Valid: token.LastError != ""},
+			nil, // proxy_id
+		)
 
-	if err != nil {
-		return fmt.Errorf("failed to insert token: %w", err)
-	}
+		if err != nil {
+			return fmt.Errorf("failed to insert token: %w", err)
+		}
 
-	s.logger.DebugLog("[SQLiteStore] Added token %s (email: %s)", token.ID, token.Email)
-	return nil
+		s.logger.DebugLog("[SQLiteStore] Added token %s (email: %s)", token.ID, token.Email)
+		return nil
+	})
 }
 
 // getTokenLocked retrieves a token by ID (caller must hold lock)
@@ -744,48 +993,53 @@ func (s *SQLiteStore) UpdateToken(tokenID string, updateFunc func(*ProviderToken
 
 // updateTokenLocked updates a token (must hold lock)
 func (s *SQLiteStore) updateTokenLocked(tokenID string, updateFunc interface{}) error {
-	// Get current token (already holding lock)
-	token, err := s.getTokenLocked(tokenID)
-	if err != nil {
-		return err
-	}
+	var token *ProviderToken
+	var err error
 
-	// Apply update
-	if fn, ok := updateFunc.(func(*ProviderToken)); ok {
-		fn(token)
-	} else if tokenData, ok := updateFunc.(ProviderToken); ok {
-		*token = tokenData
-	} else {
-		return fmt.Errorf("invalid update function type")
-	}
+	return s.executeWithRetry("updateToken", func() error {
+		// Get current token (already holding lock)
+		token, err = s.getTokenLocked(tokenID)
+		if err != nil {
+			return err
+		}
 
-	// Update in database
-	s.logger.DebugLog("[SQLiteStore] Updating token %s with access_token=%s", tokenID, token.AccessToken)
-	_, err = s.stmtUpdateToken.Exec(
-		token.AccessToken,
-		token.RefreshToken,
-		token.TokenType,
-		token.ExpiryDate,
-		token.Email,
-		token.ResourceURL,
-		token.Scope,
-		token.APIKey,
-		sql.NullString{String: token.ProjectID, Valid: token.ProjectID != ""},
-		boolToInt(token.Healthy),
-		token.HealthScore,
-		token.LastUsed,
-		token.ErrorCount,
-		sql.NullString{String: token.LastError, Valid: token.LastError != ""},
-		s.providerID,
-		tokenID,
-	)
+		// Apply update
+		if fn, ok := updateFunc.(func(*ProviderToken)); ok {
+			fn(token)
+		} else if tokenData, ok := updateFunc.(ProviderToken); ok {
+			*token = tokenData
+		} else {
+			return fmt.Errorf("invalid update function type")
+		}
 
-	if err != nil {
-		return fmt.Errorf("failed to update token: %w", err)
-	}
+		// Update in database
+		s.logger.DebugLog("[SQLiteStore] Updating token %s with access_token=%s", tokenID, token.AccessToken)
+		_, err = s.stmtUpdateToken.Exec(
+			token.AccessToken,
+			token.RefreshToken,
+			token.TokenType,
+			token.ExpiryDate,
+			token.Email,
+			token.ResourceURL,
+			token.Scope,
+			token.APIKey,
+			sql.NullString{String: token.ProjectID, Valid: token.ProjectID != ""},
+			boolToInt(token.Healthy),
+			token.HealthScore,
+			token.LastUsed,
+			token.ErrorCount,
+			sql.NullString{String: token.LastError, Valid: token.LastError != ""},
+			s.providerID,
+			tokenID,
+		)
 
-	s.logger.DebugLog("[SQLiteStore] Updated token %s", tokenID)
-	return nil
+		if err != nil {
+			return fmt.Errorf("failed to update token: %w", err)
+		}
+
+		s.logger.DebugLog("[SQLiteStore] Updated token %s", tokenID)
+		return nil
+	})
 }
 
 // RemoveToken removes a token by ID
@@ -793,22 +1047,24 @@ func (s *SQLiteStore) RemoveToken(tokenID string) error {
 	s.mu.Lock()
 	defer s.mu.Unlock()
 
-	result, err := s.stmtDeleteToken.Exec(s.providerID, tokenID)
-	if err != nil {
-		return fmt.Errorf("failed to delete token: %w", err)
-	}
+	return s.executeWithRetry("removeToken", func() error {
+		result, err := s.stmtDeleteToken.Exec(s.providerID, tokenID)
+		if err != nil {
+			return fmt.Errorf("failed to delete token: %w", err)
+		}
 
-	rowsAffected, err := result.RowsAffected()
-	if err != nil {
-		return fmt.Errorf("failed to get rows affected: %w", err)
-	}
+		rowsAffected, err := result.RowsAffected()
+		if err != nil {
+			return fmt.Errorf("failed to get rows affected: %w", err)
+		}
 
-	if rowsAffected == 0 {
-		return fmt.Errorf("token %s not found", tokenID)
-	}
+		if rowsAffected == 0 {
+			return fmt.Errorf("token %s not found", tokenID)
+		}
 
-	s.logger.DebugLog("[SQLiteStore] Removed token %s", tokenID)
-	return nil
+		s.logger.DebugLog("[SQLiteStore] Removed token %s", tokenID)
+		return nil
+	})
 }
 
 // GetValidTokens returns all valid (healthy and not expired) tokens
@@ -967,34 +1223,36 @@ func (s *SQLiteStore) SaveSettings(settings StoreSettings) error {
 	s.mu.Lock()
 	defer s.mu.Unlock()
 
-	// Set default values if not provided
-	if settings.SelectionStrategy == "" {
-		settings.SelectionStrategy = "random"
-	}
-	if settings.RefreshBufferSec == 0 {
-		settings.RefreshBufferSec = 1800
-	}
-	if settings.MaxErrorCount == 0 {
-		settings.MaxErrorCount = 3
-	}
-	if settings.UpdatedAt == 0 {
-		settings.UpdatedAt = time.Now().UnixMilli()
-	}
+	return s.executeWithRetry("saveSettings", func() error {
+		// Set default values if not provided
+		if settings.SelectionStrategy == "" {
+			settings.SelectionStrategy = "random"
+		}
+		if settings.RefreshBufferSec == 0 {
+			settings.RefreshBufferSec = 1800
+		}
+		if settings.MaxErrorCount == 0 {
+			settings.MaxErrorCount = 3
+		}
+		if settings.UpdatedAt == 0 {
+			settings.UpdatedAt = time.Now().UnixMilli()
+		}
 
-	_, err := s.stmtUpsertSettings.Exec(
-		s.providerID,
-		settings.SelectionStrategy,
-		settings.RefreshBufferSec,
-		settings.MaxErrorCount,
-		settings.UpdatedAt,
-	)
+		_, err := s.stmtUpsertSettings.Exec(
+			s.providerID,
+			settings.SelectionStrategy,
+			settings.RefreshBufferSec,
+			settings.MaxErrorCount,
+			settings.UpdatedAt,
+		)
 
-	if err != nil {
-		return fmt.Errorf("failed to save settings: %w", err)
-	}
+		if err != nil {
+			return fmt.Errorf("failed to save settings: %w", err)
+		}
 
-	s.logger.DebugLog("[SQLiteStore] Saved settings for provider %s", s.providerID)
-	return nil
+		s.logger.DebugLog("[SQLiteStore] Saved settings for provider %s", s.providerID)
+		return nil
+	})
 }
 
 // Clear removes all tokens for the provider
@@ -1098,6 +1356,360 @@ func (s *SQLiteStore) GetTokenCount() int {
 		return 0
 	}
 	return count
+}
+
+// nullString converts a string to sql.NullString
+func nullString(s string) sql.NullString {
+	if s == "" {
+		return sql.NullString{Valid: false}
+	}
+	return sql.NullString{String: s, Valid: true}
+}
+
+// GetProxy retrieves a proxy configuration by ID
+func (s *SQLiteStore) GetProxy(proxyID string) (*ProxyConfig, error) {
+	s.mu.RLock()
+	defer s.mu.RUnlock()
+
+	// Check if the type column exists
+	var hasTypeColumn bool
+	err := s.db.QueryRow(`
+		SELECT COUNT(*) FROM pragma_table_info('proxy_configs')
+		WHERE name = 'type'
+	`).Scan(&hasTypeColumn)
+	if err != nil {
+		s.logger.WarnLog("[SQLiteStore] Failed to check for type column: %v", err)
+		hasTypeColumn = false
+	}
+
+	var query string
+	if hasTypeColumn {
+		query = `
+			SELECT id, type, host, port, username, password, created_at
+			FROM proxy_configs
+			WHERE id = ?
+		`
+	} else {
+		// Only log the warning once
+		if !s.typeColumnWarningLogged {
+			s.logger.WarnLog("[SQLiteStore] type column missing from proxy_configs table, using fallback query with default type 'http'")
+			s.typeColumnWarningLogged = true
+		}
+		query = `
+			SELECT id, 'http' as type, host, port, username, password, created_at
+			FROM proxy_configs
+			WHERE id = ?
+		`
+	}
+
+	var proxy ProxyConfig
+	var createdAt int64
+	var username, password sql.NullString
+
+	err = s.db.QueryRow(query, proxyID).Scan(
+		&proxy.ID,
+		&proxy.Type,
+		&proxy.Host,
+		&proxy.Port,
+		&username,
+		&password,
+		&createdAt,
+	)
+
+	if err == sql.ErrNoRows {
+		return nil, fmt.Errorf("proxy not found: %s", proxyID)
+	}
+	if err != nil {
+		return nil, fmt.Errorf("failed to get proxy: %w", err)
+	}
+
+	if username.Valid {
+		proxy.Username = username.String
+	}
+	if password.Valid {
+		proxy.Password = password.String
+	}
+
+	return &proxy, nil
+}
+
+// ListProxies retrieves all proxy configurations
+func (s *SQLiteStore) ListProxies() ([]ProxyConfig, error) {
+	s.mu.RLock()
+	defer s.mu.RUnlock()
+
+	// Check if the type column exists
+	var hasTypeColumn bool
+	err := s.db.QueryRow(`
+		SELECT COUNT(*) FROM pragma_table_info('proxy_configs')
+		WHERE name = 'type'
+	`).Scan(&hasTypeColumn)
+	if err != nil {
+		s.logger.WarnLog("[SQLiteStore] Failed to check for type column: %v", err)
+		hasTypeColumn = false
+	}
+
+	var query string
+	if hasTypeColumn {
+		query = `
+			SELECT id, type, host, port, username, password, created_at
+			FROM proxy_configs
+			ORDER BY created_at DESC
+		`
+	} else {
+		// Only log the warning once
+		if !s.typeColumnWarningLogged {
+			s.logger.WarnLog("[SQLiteStore] type column missing from proxy_configs table, using fallback query with default type 'http'")
+			s.typeColumnWarningLogged = true
+		}
+		query = `
+			SELECT id, 'http' as type, host, port, username, password, created_at
+			FROM proxy_configs
+			ORDER BY created_at DESC
+		`
+	}
+
+	rows, err := s.db.Query(query)
+	if err != nil {
+		return nil, fmt.Errorf("failed to list proxies: %w", err)
+	}
+	defer rows.Close()
+
+	var proxies []ProxyConfig
+
+	for rows.Next() {
+		var proxy ProxyConfig
+		var createdAt int64
+		var username, password sql.NullString
+
+		err := rows.Scan(
+			&proxy.ID,
+			&proxy.Type,
+			&proxy.Host,
+			&proxy.Port,
+			&username,
+			&password,
+			&createdAt,
+		)
+
+		if err != nil {
+			return nil, fmt.Errorf("failed to scan proxy: %w", err)
+		}
+
+		if username.Valid {
+			proxy.Username = username.String
+		}
+		if password.Valid {
+			proxy.Password = password.String
+		}
+
+		proxies = append(proxies, proxy)
+	}
+
+	if err = rows.Err(); err != nil {
+		return nil, fmt.Errorf("error iterating proxies: %w", err)
+	}
+
+	return proxies, nil
+}
+
+// AddProxy adds a new proxy configuration
+func (s *SQLiteStore) AddProxy(proxy ProxyConfig) error {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+
+	// Validate proxy configuration
+	if err := proxy.Validate(); err != nil {
+		return fmt.Errorf("invalid proxy configuration: %w", err)
+	}
+
+	// Generate ID if not provided
+	if proxy.ID == "" {
+		proxy.ID = uuid.New().String()
+	}
+
+	query := `
+		INSERT INTO proxy_configs (id, type, host, port, username, password, created_at)
+		VALUES (?, ?, ?, ?, ?, ?, ?)
+	`
+
+	result, err := s.db.Exec(
+		query,
+		proxy.ID,
+		proxy.Type,
+		proxy.Host,
+		proxy.Port,
+		nullString(proxy.Username),
+		nullString(proxy.Password),
+		time.Now().UnixMilli(),
+	)
+
+	if err != nil {
+		return fmt.Errorf("failed to add proxy: %w", err)
+	}
+
+	rowsAffected, err := result.RowsAffected()
+	if err != nil {
+		return fmt.Errorf("failed to get rows affected: %w", err)
+	}
+
+	if rowsAffected == 0 {
+		return fmt.Errorf("no rows affected when adding proxy")
+	}
+
+	return nil
+}
+
+// UpdateProxy updates an existing proxy configuration
+func (s *SQLiteStore) UpdateProxy(proxyID string, proxy ProxyConfig) error {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+
+	// Validate proxy configuration
+	if err := proxy.Validate(); err != nil {
+		return fmt.Errorf("invalid proxy configuration: %w", err)
+	}
+
+	query := `
+		UPDATE proxy_configs
+		SET type = ?, host = ?, port = ?, username = ?, password = ?
+		WHERE id = ?
+	`
+
+	result, err := s.db.Exec(
+		query,
+		proxy.Type,
+		proxy.Host,
+		proxy.Port,
+		nullString(proxy.Username),
+		nullString(proxy.Password),
+		proxyID,
+	)
+
+	if err != nil {
+		return fmt.Errorf("failed to update proxy: %w", err)
+	}
+
+	rowsAffected, err := result.RowsAffected()
+	if err != nil {
+		return fmt.Errorf("failed to get rows affected: %w", err)
+	}
+
+	if rowsAffected == 0 {
+		return fmt.Errorf("proxy not found: %s", proxyID)
+	}
+
+	return nil
+}
+
+// DeleteProxy deletes a proxy configuration by ID
+// This will cascade by setting proxy_id to NULL for all linked tokens
+func (s *SQLiteStore) DeleteProxy(proxyID string) error {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+
+	// Start transaction
+	tx, err := s.db.Begin()
+	if err != nil {
+		return fmt.Errorf("failed to begin transaction: %w", err)
+	}
+	defer tx.Rollback()
+
+	// First, update all tokens that reference this proxy to set proxy_id to NULL
+	updateTokensQuery := `
+		UPDATE tokens
+		SET proxy_id = NULL
+		WHERE proxy_id = ?
+	`
+
+	_, err = tx.Exec(updateTokensQuery, proxyID)
+	if err != nil {
+		return fmt.Errorf("failed to unlink tokens from proxy: %w", err)
+	}
+
+	// Then delete the proxy
+	deleteProxyQuery := `
+		DELETE FROM proxy_configs
+		WHERE id = ?
+	`
+
+	result, err := tx.Exec(deleteProxyQuery, proxyID)
+	if err != nil {
+		return fmt.Errorf("failed to delete proxy: %w", err)
+	}
+
+	rowsAffected, err := result.RowsAffected()
+	if err != nil {
+		return fmt.Errorf("failed to get rows affected: %w", err)
+	}
+
+	if rowsAffected == 0 {
+		return fmt.Errorf("proxy not found: %s", proxyID)
+	}
+
+	// Commit transaction
+	if err = tx.Commit(); err != nil {
+		return fmt.Errorf("failed to commit transaction: %w", err)
+	}
+
+	return nil
+}
+
+// GetTokensByProxy retrieves all tokens linked to a specific proxy
+func (s *SQLiteStore) GetTokensByProxy(proxyID string) ([]ProviderToken, error) {
+	s.mu.RLock()
+	defer s.mu.RUnlock()
+
+	query := `
+		SELECT id, access_token, refresh_token, token_type, expiry_date, email,
+		       resource_url, scope, api_key, project_id, healthy, health_score,
+		       last_used, created_at, error_count, last_error, proxy_id
+		FROM tokens
+		WHERE proxy_id = ?
+		ORDER BY created_at DESC
+	`
+
+	rows, err := s.db.Query(query, proxyID)
+	if err != nil {
+		return nil, fmt.Errorf("failed to get tokens by proxy: %w", err)
+	}
+	defer rows.Close()
+
+	var tokens []ProviderToken
+
+	for rows.Next() {
+		token, err := s.scanToken(rows)
+		if err != nil {
+			return nil, fmt.Errorf("failed to scan token: %w", err)
+		}
+		tokens = append(tokens, token)
+	}
+
+	if err = rows.Err(); err != nil {
+		return nil, fmt.Errorf("error iterating tokens: %w", err)
+	}
+
+	return tokens, nil
+}
+
+// GetProxyTokenCount returns the number of tokens linked to a proxy
+func (s *SQLiteStore) GetProxyTokenCount(proxyID string) (int, error) {
+	s.mu.RLock()
+	defer s.mu.RUnlock()
+
+	query := `
+		SELECT COUNT(*)
+		FROM tokens
+		WHERE proxy_id = ?
+	`
+
+	var count int
+	err := s.db.QueryRow(query, proxyID).Scan(&count)
+	if err != nil {
+		return 0, fmt.Errorf("failed to get proxy token count: %w", err)
+	}
+
+	return count, nil
 }
 
 // StorageType returns the storage type

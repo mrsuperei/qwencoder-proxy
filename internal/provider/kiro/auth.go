@@ -382,7 +382,18 @@ func (a *Authenticator) GetToken(ctx context.Context) (string, error) {
 
 // GetTokenWithClient returns a valid access token and an HTTP client.
 // The HTTP client is configured with the proxy settings from the selected token.
+// If a token is already selected in the context (by rate limiting middleware),
+// it will be used instead of selecting a new token.
 func (a *Authenticator) GetTokenWithClient(ctx context.Context) (string, *http.Client, error) {
+	// Check if token is already selected in context (by rate limiting middleware)
+	if selectedToken, ok := ctx.Value("selected_token").(*tokenpkg.ProviderToken); ok {
+		a.GetLogger().DebugLog("[KiroAuth] Using pre-selected token from context: ID=%s", selectedToken.ID)
+		// Use default HTTP client for now
+		// Note: Proxy-aware client creation would require access to client factory
+		return selectedToken.AccessToken, &http.Client{Timeout: 30 * time.Second}, nil
+	}
+
+	// Fallback to original selection logic
 	tokenManager := a.GetTokenManager()
 	if tokenManager == nil {
 		token, err := a.GetToken(ctx)

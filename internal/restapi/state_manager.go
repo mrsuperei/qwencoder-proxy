@@ -18,6 +18,7 @@ type OAuthState struct {
 	Provider     string    // Provider ID
 	CodeVerifier string    // PKCE code verifier
 	RedirectURI  string    // Redirect URI for callback
+	Email        string    // User email or alias (required for providers like Qwen)
 	ExpiresAt    time.Time // State expiration time
 	CreatedAt    time.Time // Creation time
 }
@@ -27,6 +28,7 @@ type DevicePollState struct {
 	PollID       string            // Unique poll identifier
 	Provider     string            // Provider ID
 	DeviceCode   string            // Device code from OAuth provider
+	Email        string            // User email or alias (required for providers like Qwen)
 	ExpiresAt    time.Time         // Poll expiration time
 	Interval     time.Duration     // Polling interval
 	Status       string            // Current status: "pending", "authorized", "error"
@@ -63,7 +65,7 @@ func NewStateManager(logger logging.Logger) *StateManager {
 }
 
 // CreateState creates a new OAuth state for authorization code flow
-func (sm *StateManager) CreateState(provider, codeVerifier, redirectURI string, ttl time.Duration) (string, error) {
+func (sm *StateManager) CreateState(provider, codeVerifier, redirectURI, email string, ttl time.Duration) (string, error) {
 	stateID, err := generateRandomString(16)
 	if err != nil {
 		return "", fmt.Errorf("failed to generate state ID: %w", err)
@@ -78,12 +80,13 @@ func (sm *StateManager) CreateState(provider, codeVerifier, redirectURI string, 
 		Provider:     provider,
 		CodeVerifier: codeVerifier,
 		RedirectURI:  redirectURI,
+		Email:        email,
 		ExpiresAt:    now.Add(ttl),
 		CreatedAt:    now,
 	}
 
-	sm.logger.DebugLog("[StateManager] Created state: %s for provider: %s, redirectURI: %s, expires at: %v",
-		stateID, provider, redirectURI, now.Add(ttl))
+	sm.logger.DebugLog("[StateManager] Created state: %s for provider: %s, redirectURI: %s, email: %s, expires at: %v",
+		stateID, provider, redirectURI, email, now.Add(ttl))
 
 	return stateID, nil
 }
@@ -120,7 +123,7 @@ func (sm *StateManager) ValidateAndConsume(stateID string) (*OAuthState, error) 
 }
 
 // CreatePoll creates a new device code poll state
-func (sm *StateManager) CreatePoll(provider, deviceCode string, interval time.Duration, ttl time.Duration) (string, error) {
+func (sm *StateManager) CreatePoll(provider, deviceCode, email string, interval time.Duration, ttl time.Duration) (string, error) {
 	pollID, err := generateUUID()
 	if err != nil {
 		return "", fmt.Errorf("failed to generate poll ID: %w", err)
@@ -134,6 +137,7 @@ func (sm *StateManager) CreatePoll(provider, deviceCode string, interval time.Du
 		PollID:       pollID,
 		Provider:     provider,
 		DeviceCode:   deviceCode,
+		Email:        email,
 		ExpiresAt:    now.Add(ttl),
 		Interval:     interval,
 		Status:       "pending",

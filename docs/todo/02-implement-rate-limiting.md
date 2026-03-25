@@ -1,250 +1,917 @@
-# Implement Per-Token Rate Limiting
+# Implement Provider-Aware Rate Limiting Architecture
 
 **Priority:** CRITICAL  
-**Estimated Time:** 2 weeks  
+**Estimated Time:** 3 weeks  
 **Complexity:** High  
-**Files to Create:** 3  
-**Files to Modify:** 5
+**Files to Create:** 6  
+**Files to Modify:** 8
+
+---
+
+## Executive Summary
+
+This implementation plan defines a comprehensive rate limiting architecture for the qwencoder-proxy that enforces internal provider-specific quotas without exposing rate limit information to clients. The system provides granular control over provider usage through a management API, supports multiple metric types (requests per day, requests per minute, tokens per minute), and implements real-time token tracking for `/v1/chat/completions` requests. A usage-aware selection strategy optimizes throughput by prioritizing endpoints with the least consumption.
 
 ---
 
 ## Problem Description
 
 The qwencoder-proxy currently lacks any rate limiting mechanism, which is critical for:
-- Managing API quotas per token
-- Preventing abuse of individual tokens
-- Implementing fair usage across multiple tokens
-- Enforcing provider-specific rate limits
-- Providing rate limit feedback to clients
+
+- Managing API quotas per provider to prevent service disruptions
+- Preventing abuse and ensuring fair usage across multiple provider tokens
+- Implementing provider-specific rate limits based on actual API constraints
+- Enforcing strict quotas to avoid exceeding provider billing limits
+- Optimizing token selection to maximize throughput without hitting limits
+- Providing administrative control over rate limiting policies through a dashboard
 
 ### Current State
 
 **Missing Components:**
-- No rate limiting middleware
-- No token usage tracking
-- No quota management
-- No rate limit error responses
-- No rate limit headers in responses
+- No rate limiting middleware or enforcement mechanism
+- No token usage tracking for requests or tokens
+- No quota management per provider or per token
+- No rate limit configuration system
+- No management API for rate limit administration
+- No usage-aware token selection strategy
 
 **Existing Infrastructure (Ready for Rate Limiting):**
-- Token selection mechanism ([`internal/token/token_selection.go`](qwencoder-proxy/internal/token/token_selection.go))
-- Token health tracking ([`internal/token/proxy_health_tracker.go`](qwencoder-proxy/internal/token/proxy_health_tracker.go))
-- SQLite storage with efficient querying ([`internal/token/sqlite_store.go`](qwencoder-proxy/internal/token/sqlite_store.go))
-- Middleware layer ([`internal/restapi/middleware.go`](qwencoder-proxy/internal/restapi/middleware.go))
+- Token selection mechanism ([`internal/token/token_selection.go`](qwencoder-proxy/internal/token/token_selection.go:1))
+- Token health tracking ([`internal/token/proxy_health_tracker.go`](qwencoder-proxy/internal/token/proxy_health_tracker.go:1))
+- SQLite storage with efficient querying ([`internal/token/sqlite_store.go`](qwencoder-proxy/internal/token/sqlite_store.go:1))
+- Middleware layer ([`internal/restapi/middleware.go`](qwencoder-proxy/internal/restapi/middleware.go:1))
+- REST API server ([`internal/restapi/rest_api.go`](qwencoder-proxy/internal/restapi/rest_api.go:1))
+- Provider abstraction layer ([`internal/provider/provider.go`](qwencoder-proxy/internal/provider/provider.go:1))
+- OpenAI-compatible handler ([`internal/proxy/openai_handler.go`](qwencoder-proxy/internal/proxy/openai_handler.go:1))
 
 ---
 
 ## Solution Architecture
 
+### Design Principles
+
+1. **Internal Enforcement Only:** Rate limiting is enforced internally without exposing standard rate limit headers (e.g., `X-RateLimit-*`, `Retry-After`) to clients. This prevents clients from inferring rate limit behavior and attempting to optimize around it.
+
+2. **Provider-Specific Quotas:** Each provider ([`ProviderQwen`](qwencoder-proxy/internal/provider/provider.go:16), [`ProviderGeminiCLI`](qwencoder-proxy/internal/provider/provider.go:17), [`ProviderKiro`](qwencoder-proxy/internal/provider/provider.go:18), [`ProviderAntigravity`](qwencoder-proxy/internal/provider/provider.go:19), [`ProviderIFlow`](qwencoder-proxy/internal/provider/provider.go:20)) has independent quota configurations.
+
+3. **Multi-Metric Tracking:** Support three distinct metrics:
+   - **Requests Per Day (RPD):** Total requests allowed per 24-hour rolling window
+   - **Requests Per Minute (RPM):** Total requests allowed per 60-second sliding window
+   - **Tokens Per Minute (TPM):** Total tokens (input + output) allowed per 60-second sliding window
+
+4. **Real-Time Token Tracking:** Intercept `/v1/chat/completions` requests to estimate input tokens before request execution and count output tokens during streaming or after response completion.
+
+5. **Usage-Aware Selection:** Token selection strategy prioritizes tokens/endpoints with the least current usage to optimize throughput and ensure quotas are never hit.
+
+6. **Management API:** RESTful endpoints for configuring and monitoring rate limits, accessible by the dashboard for administrative control.
+
 ### Component Overview
 
 ```
 internal/ratelimit/
-├── rate_limiter.go       # RateLimiter interface and implementations
-├── middleware.go          # HTTP middleware for rate limiting
-├── strategies.go          # Rate limiting strategies (token-based, request-based, hybrid)
-├── tracker.go             # Token usage tracking
-└── errors.go             # Rate limit error types
+├── rate_limiter.go           # RateLimiter interface and provider-specific implementations
+├── middleware.go             # HTTP middleware for rate limiting (internal use only)
+├── token_counter.go           # Token counting logic for chat completions
+├── usage_tracker.go          # Usage tracking and storage layer
+├── quota_manager.go          # Quota enforcement and management
+├── strategies.go             # Usage-aware selection strategies
+├── config.go                 # Rate limit configuration structures
+└── errors.go                 # Rate limit error types (internal logging only)
+
+internal/restapi/
+├── rate_limit_api.go         # Management API endpoints for rate limiting (NEW)
+└── (existing files)
 ```
 
-### Integration Points
+### Architecture Diagram
 
-1. **Middleware Layer:** Add rate limiting check before provider requests
-2. **Token Selection:** Filter rate-limited tokens during selection
-3. **Database:** Track usage per token
-4. **Response Headers:** Add rate limit information to responses
+```
+┌─────────────────────────────────────────────────────────────────┐
+│                         Client Request                           │
+│                    /v1/chat/completions                         │
+└────────────────────────────┬────────────────────────────────────┘
+                             │
+                             ▼
+┌─────────────────────────────────────────────────────────────────┐
+│                   Rate Limiting Middleware                       │
+│  ┌──────────────────────────────────────────────────────────┐   │
+│  │ 1. Estimate input tokens from request body               │   │
+│  │ 2. Check provider quotas (RPD, RPM, TPM)                 │   │
+│  │ 3. If quota exceeded:                                    │   │
+│  │    - Log internal error                                 │   │
+│  │    - Return 429 with generic message (no rate headers)  │   │
+│  │ 4. If quota available: proceed                           │   │
+│  └──────────────────────────────────────────────────────────┘   │
+└────────────────────────────┬────────────────────────────────────┘
+                             │
+                             ▼
+┌─────────────────────────────────────────────────────────────────┐
+│              Usage-Aware Token Selection Strategy                │
+│  ┌──────────────────────────────────────────────────────────┐   │
+│  │ 1. Get all valid tokens for the provider                │   │
+│  │ 2. Query current usage for each token                   │   │
+│  │ 3. Filter tokens that would exceed quotas               │   │
+│  │ 4. Sort by least usage (RPD, RPM, TPM)                  │   │
+│  │ 5. Select token with highest remaining quota           │   │
+│  └──────────────────────────────────────────────────────────┘   │
+└────────────────────────────┬────────────────────────────────────┘
+                             │
+                             ▼
+┌─────────────────────────────────────────────────────────────────┐
+│                   Provider Request Execution                     │
+│  ┌──────────────────────────────────────────────────────────┐   │
+│  │ 1. Execute request to provider                          │   │
+│  │ 2. Stream response to client                             │   │
+│  │ 3. Count output tokens in real-time (streaming) or      │   │
+│    after completion (non-streaming)                          │   │
+│  │ 4. Record final usage (request count + token count)      │   │
+│  └──────────────────────────────────────────────────────────┘   │
+└────────────────────────────┬────────────────────────────────────┘
+                             │
+                             ▼
+┌─────────────────────────────────────────────────────────────────┐
+│                   Usage Tracking & Storage                       │
+│  ┌──────────────────────────────────────────────────────────┐   │
+│  │ 1. Update SQLite database with usage metrics             │   │
+│  │    - provider_usage table: per-provider aggregates       │   │
+│  │    - token_usage table: per-token detailed tracking      │   │
+│  │ 2. Maintain sliding windows for RPM and TPM              │   │
+│  │ 3. Maintain rolling 24-hour window for RPD               │   │
+│  │ 4. Periodic cleanup of expired usage records             │   │
+│  └──────────────────────────────────────────────────────────┘   │
+└─────────────────────────────────────────────────────────────────┘
+
+┌─────────────────────────────────────────────────────────────────┐
+│                   Management API (Dashboard)                     │
+│  ┌──────────────────────────────────────────────────────────┐   │
+│  │ GET    /api/ratelimit/config          List all configs  │   │
+│  │ GET    /api/ratelimit/config/:provider Get provider cfg │   │
+│  │ PUT    /api/ratelimit/config/:provider Update config    │   │
+│  │ GET    /api/ratelimit/usage           Current usage     │   │
+│  │ GET    /api/ratelimit/usage/:provider Provider usage    │   │
+│  │ GET    /api/ratelimit/usage/:provider/:token Token usage│   │
+│  │ POST   /api/ratelimit/reset/:provider Reset quotas      │   │
+│  └──────────────────────────────────────────────────────────┘   │
+└─────────────────────────────────────────────────────────────────┘
+```
 
 ---
 
 ## Implementation Plan
 
-### Phase 1: Create Rate Limiting Package (Days 1-3)
+### Phase 1: Core Rate Limiting Infrastructure (Days 1-5)
 
-#### Step 1.1: Create Rate Limiter Interface
+#### Step 1.1: Create Rate Limit Configuration Structures
 
-**New File:** `internal/ratelimit/rate_limiter.go`
+**New File:** `internal/ratelimit/config.go`
 
 ```go
 package ratelimit
 
-import (
-	"context"
-	"time"
-)
+import "time"
 
-// RateLimiter defines the interface for rate limiting operations
-type RateLimiter interface {
-	// Allow checks if a request is allowed for the given token
-	Allow(ctx context.Context, tokenID string) (bool, time.Duration, error)
+// ProviderRateLimitConfig defines rate limits for a specific provider
+type ProviderRateLimitConfig struct {
+	ProviderID string `json:"provider_id"`
 	
-	// RecordUsage records token usage after a successful request
-	RecordUsage(ctx context.Context, tokenID string, tokensUsed int) error
+	// RequestsPerDay limits total requests per 24-hour rolling window
+	RequestsPerDay int `json:"requests_per_day"`
 	
-	// GetRemaining returns the remaining quota for a token
-	GetRemaining(ctx context.Context, tokenID string) (int, error)
+	// RequestsPerMinute limits requests per 60-second sliding window
+	RequestsPerMinute int `json:"requests_per_minute"`
 	
-	// Reset clears rate limit state for a token
-	Reset(ctx context.Context, tokenID string) error
+	// TokensPerMinute limits tokens (input + output) per 60-second sliding window
+	TokensPerMinute int `json:"tokens_per_minute"`
+	
+	// Enabled indicates if rate limiting is active for this provider
+	Enabled bool `json:"enabled"`
+	
+	// UpdatedAt timestamp of last configuration update
+	UpdatedAt time.Time `json:"updated_at"`
 }
 
-// RateLimitConfig holds configuration for rate limiting
-type RateLimitConfig struct {
-	// RequestsPerMinute limits the number of requests per minute
-	RequestsPerMinute int
-	
-	// TokensPerMinute limits the number of tokens processed per minute
-	TokensPerMinute int
-	
-	// BurstSize allows temporary bursts above the rate limit
-	BurstSize int
-	
-	// WindowSize defines the sliding window size in minutes
-	WindowSize int
-}
-
-// DefaultRateLimitConfig returns sensible defaults
-func DefaultRateLimitConfig() RateLimitConfig {
-	return RateLimitConfig{
-		RequestsPerMinute: 60,
-		TokensPerMinute:  90000,
-		BurstSize:        10,
-		WindowSize:        1,
+// DefaultProviderConfigs returns default configurations for all providers
+func DefaultProviderConfigs() map[string]ProviderRateLimitConfig {
+	return map[string]ProviderRateLimitConfig{
+		"gemini-cli": {
+			ProviderID:         "gemini-cli",
+			RequestsPerDay:     15000,  // Conservative default
+			RequestsPerMinute:  60,     // Standard rate limit
+			TokensPerMinute:    32000,  // ~1M tokens/day
+			Enabled:            true,
+			UpdatedAt:          time.Now(),
+		},
+		"qwen": {
+			ProviderID:         "qwen",
+			RequestsPerDay:     10000,
+			RequestsPerMinute:  50,
+			TokensPerMinute:    30000,
+			Enabled:            true,
+			UpdatedAt:          time.Now(),
+		},
+		"kiro": {
+			ProviderID:         "kiro",
+			RequestsPerDay:     5000,
+			RequestsPerMinute:  30,
+			TokensPerMinute:    20000,
+			Enabled:            true,
+			UpdatedAt:          time.Now(),
+		},
+		"antigravity": {
+			ProviderID:         "antigravity",
+			RequestsPerDay:     10000,
+			RequestsPerMinute:  50,
+			TokensPerMinute:    30000,
+			Enabled:            true,
+			UpdatedAt:          time.Now(),
+		},
+		"iflow": {
+			ProviderID:         "iflow",
+			RequestsPerDay:     5000,
+			RequestsPerMinute:  30,
+			TokensPerMinute:    20000,
+			Enabled:            true,
+			UpdatedAt:          time.Now(),
+		},
 	}
+}
+
+// UsageMetrics represents current usage metrics for a provider or token
+type UsageMetrics struct {
+	// RequestsToday is the count of requests in the current 24-hour window
+	RequestsToday int `json:"requests_today"`
+	
+	// RequestsInMinute is the count of requests in the current 60-second window
+	RequestsInMinute int `json:"requests_in_minute"`
+	
+	// TokensInMinute is the count of tokens in the current 60-second window
+	TokensInMinute int `json:"tokens_in_minute"`
+	
+	// WindowStart marks the start of the current sliding window
+	WindowStart time.Time `json:"window_start"`
+	
+	// DayStart marks the start of the current 24-hour period
+	DayStart time.Time `json:"day_start"`
+}
+
+// QuotaStatus represents the remaining quota for a provider or token
+type QuotaStatus struct {
+	ProviderID string `json:"provider_id"`
+	TokenID    string `json:"token_id,omitempty"`
+	
+	// Remaining quotas
+	RemainingRequestsPerDay     int `json:"remaining_requests_per_day"`
+	RemainingRequestsPerMinute  int `json:"remaining_requests_per_minute"`
+	RemainingTokensPerMinute    int `json:"remaining_tokens_per_minute"`
+	
+	// Usage percentages (0-100)
+	UsagePercentagePerDay       float64 `json:"usage_percentage_per_day"`
+	UsagePercentagePerMinute    float64 `json:"usage_percentage_per_minute"`
+	TokenUsagePercentagePerMinute float64 `json:"token_usage_percentage_per_minute"`
+	
+	// Time until quota reset
+	SecondsUntilDayReset      int64 `json:"seconds_until_day_reset"`
+	SecondsUntilMinuteReset   int64 `json:"seconds_until_minute_reset"`
+	
+	// IsLimited indicates if any quota is currently exceeded
+	IsLimited bool `json:"is_limited"`
+	
+	// LimitReasons lists which quotas are exceeded
+	LimitReasons []string `json:"limit_reasons"`
 }
 ```
 
-#### Step 1.2: Create Token-Based Rate Limiter
+#### Step 1.2: Create Token Counter for Chat Completions
 
-**New File:** `internal/ratelimit/rate_limiter.go` (continued)
+**New File:** `internal/ratelimit/token_counter.go`
+
+```go
+package ratelimit
+
+import (
+	"encoding/json"
+	"fmt"
+	"math"
+	"strings"
+	
+	"github.com/sunbankio/qwencoder-proxy/internal/logging"
+)
+
+// TokenCounter estimates and counts tokens for chat completion requests
+type TokenCounter struct {
+	logger logging.Logger
+}
+
+// NewTokenCounter creates a new token counter
+func NewTokenCounter(logger logging.Logger) *TokenCounter {
+	return &TokenCounter{
+		logger: logger,
+	}
+}
+
+// EstimateInputTokens estimates the number of tokens in the input request
+// This is called BEFORE sending the request to the provider
+func (tc *TokenCounter) EstimateInputTokens(openaiReq map[string]interface{}) (int, error) {
+	messages, ok := openaiReq["messages"].([]interface{})
+	if !ok {
+		return 0, fmt.Errorf("invalid messages format")
+	}
+	
+	totalTokens := 0
+	
+	for _, msg := range messages {
+		msgMap, ok := msg.(map[string]interface{})
+		if !ok {
+			continue
+		}
+		
+		content, ok := msgMap["content"]
+		if !ok {
+			continue
+		}
+		
+		// Handle different content formats
+		switch v := content.(type) {
+		case string:
+			totalTokens += tc.estimateTokens(v)
+		case []interface{}:
+			// Multi-modal content (text + images)
+			for _, item := range v {
+				itemMap, ok := item.(map[string]interface{})
+				if !ok {
+					continue
+				}
+				
+				if itemType, ok := itemMap["type"].(string); ok && itemType == "text" {
+					if text, ok := itemMap["text"].(string); ok {
+						totalTokens += tc.estimateTokens(text)
+					}
+				} else if itemType == "image_url" {
+					// Images typically cost ~85-565 tokens depending on resolution
+					// Use conservative estimate
+					totalTokens += 85
+				}
+			}
+		}
+	}
+	
+	// Add tokens for system message overhead, formatting, etc.
+	// Conservative estimate: ~10 tokens per message for formatting
+	totalTokens += len(messages) * 10
+	
+	tc.logger.DebugLog("[TokenCounter] Estimated %d input tokens for request", totalTokens)
+	return totalTokens, nil
+}
+
+// estimateTokens provides a rough estimate of token count for text
+// Uses character-based approximation: ~4 characters per token (English)
+func (tc *TokenCounter) estimateTokens(text string) int {
+	if text == "" {
+		return 0
+	}
+	
+	// Remove whitespace for more accurate count
+	cleanText := strings.Join(strings.Fields(text), "")
+	
+	// Estimate: ~4 characters per token for English text
+	// This is a conservative estimate; actual tokenization varies by model
+	estimatedTokens := int(math.Ceil(float64(len(cleanText)) / 4.0))
+	
+	return estimatedTokens
+}
+
+// CountOutputTokens counts tokens in the provider response
+// This is called AFTER receiving the response from the provider
+func (tc *TokenCounter) CountOutputTokens(response map[string]interface{}) (int, error) {
+	// Check for usage information in response
+	if usage, ok := response["usage"].(map[string]interface{}); ok {
+		if completionTokens, ok := usage["completion_tokens"].(float64); ok {
+			return int(completionTokens), nil
+		}
+	}
+	
+	// If no usage info, estimate from choices content
+	choices, ok := response["choices"].([]interface{})
+	if !ok {
+		return 0, fmt.Errorf("no choices in response")
+	}
+	
+	totalTokens := 0
+	for _, choice := range choices {
+		choiceMap, ok := choice.(map[string]interface{})
+		if !ok {
+			continue
+		}
+		
+		message, ok := choiceMap["message"].(map[string]interface{})
+		if !ok {
+			continue
+		}
+		
+		content, ok := message["content"].(string)
+		if !ok {
+			continue
+		}
+		
+		totalTokens += tc.estimateTokens(content)
+	}
+	
+	tc.logger.DebugLog("[TokenCounter] Counted %d output tokens from response", totalTokens)
+	return totalTokens, nil
+}
+
+// CountStreamingOutputTokens counts tokens from streaming response chunks
+// This is called during streaming to track real-time token usage
+func (tc *TokenCounter) CountStreamingOutputTokens(chunk []byte) (int, error) {
+	// Parse SSE chunk
+	chunkStr := string(chunk)
+	if !strings.HasPrefix(chunkStr, "data: ") {
+		return 0, nil
+	}
+	
+	dataStr := strings.TrimPrefix(chunkStr, "data: ")
+	if dataStr == "[DONE]" {
+		return 0, nil
+	}
+	
+	var chunkData map[string]interface{}
+	if err := json.Unmarshal([]byte(dataStr), &chunkData); err != nil {
+		return 0, fmt.Errorf("failed to parse chunk: %w", err)
+	}
+	
+	// Extract delta content
+	choices, ok := chunkData["choices"].([]interface{})
+	if !ok || len(choices) == 0 {
+		return 0, nil
+	}
+	
+	choice, ok := choices[0].(map[string]interface{})
+	if !ok {
+		return 0, nil
+	}
+	
+	delta, ok := choice["delta"].(map[string]interface{})
+	if !ok {
+		return 0, nil
+	}
+	
+	content, ok := delta["content"].(string)
+	if !ok {
+		return 0, nil
+	}
+	
+	// Estimate tokens in this chunk
+	tokens := tc.estimateTokens(content)
+	
+	return tokens, nil
+}
+
+// GetTotalTokensFromResponse extracts total token usage from a complete response
+func (tc *TokenCounter) GetTotalTokensFromResponse(response map[string]interface{}) (int, error) {
+	if usage, ok := response["usage"].(map[string]interface{}); ok {
+		if totalTokens, ok := usage["total_tokens"].(float64); ok {
+			return int(totalTokens), nil
+		}
+	}
+	
+	return 0, fmt.Errorf("no token usage information in response")
+}
+```
+
+#### Step 1.3: Create Usage Tracker with SQLite Storage
+
+**New File:** `internal/ratelimit/usage_tracker.go`
 
 ```go
 package ratelimit
 
 import (
 	"context"
+	"database/sql"
+	"fmt"
 	"sync"
 	"time"
-	"github.com/sunbankio/qwencoder-proxy/internal/token"
+	
+	"github.com/google/uuid"
+	"github.com/sunbankio/qwencoder-proxy/internal/logging"
+	_ "modernc.org/sqlite"
 )
 
-// TokenRateLimiter implements per-token rate limiting using sliding window
-type TokenRateLimiter struct {
-	config     RateLimitConfig
-	store      token.TokenStore
-	logger     logging.Logger
-	mu         sync.RWMutex
-	tokenStates map[string]*TokenState
-}
-
-// TokenState tracks rate limit state for a single token
-type TokenState struct {
-	requests  []time.Time  // Sliding window of request timestamps
-	tokensUsed int          // Tokens used in current window
-	lastReset  time.Time     // Last time window was reset
-}
-
-// NewTokenRateLimiter creates a new token-based rate limiter
-func NewTokenRateLimiter(store token.TokenStore, logger logging.Logger, config RateLimitConfig) *TokenRateLimiter {
-	return &TokenRateLimiter{
-		config:     config,
-		store:      store,
-		logger:     logger,
-		tokenStates: make(map[string]*TokenState),
-	}
-}
-
-// Allow checks if a request is allowed for the given token
-func (trl *TokenRateLimiter) Allow(ctx context.Context, tokenID string) (bool, time.Duration, error) {
-	trl.mu.Lock()
-	defer trl.mu.Unlock()
+// UsageTracker manages usage tracking and storage
+type UsageTracker struct {
+	db     *sql.DB
+	logger logging.Logger
+	mu     sync.RWMutex
 	
-	// Get or create token state
-	state, exists := trl.tokenStates[tokenID]
-	if !exists {
-		state = &TokenState{
-			requests:  make([]time.Time, 0, trl.config.BurstSize),
-			lastReset: time.Now(),
-		}
-		trl.tokenStates[tokenID] = state
+	// In-memory cache for frequently accessed metrics
+	providerCache map[string]*UsageMetrics
+	tokenCache    map[string]*UsageMetrics
+	cacheExpiry   time.Time
+}
+
+// NewUsageTracker creates a new usage tracker
+func NewUsageTracker(dbPath string, logger logging.Logger) (*UsageTracker, error) {
+	db, err := sql.Open("sqlite", dbPath)
+	if err != nil {
+		return nil, fmt.Errorf("failed to open database: %w", err)
 	}
+	
+	tracker := &UsageTracker{
+		db:            db,
+		logger:        logger,
+		providerCache: make(map[string]*UsageMetrics),
+		tokenCache:    make(map[string]*UsageMetrics),
+		cacheExpiry:   time.Now(),
+	}
+	
+	if err := tracker.initializeDB(); err != nil {
+		db.Close()
+		return nil, fmt.Errorf("failed to initialize database: %w", err)
+	}
+	
+	// Start periodic cleanup
+	go tracker.periodicCleanup()
+	
+	return tracker, nil
+}
+
+// initializeDB creates the necessary tables and indexes
+func (ut *UsageTracker) initializeDB() error {
+	// Create provider_usage table
+	providerUsageTable := `
+		CREATE TABLE IF NOT EXISTS provider_usage (
+			id TEXT PRIMARY KEY,
+			provider_id TEXT NOT NULL,
+			requests_today INTEGER NOT NULL DEFAULT 0,
+			requests_in_minute INTEGER NOT NULL DEFAULT 0,
+			tokens_in_minute INTEGER NOT NULL DEFAULT 0,
+			window_start INTEGER NOT NULL,
+			day_start INTEGER NOT NULL,
+			created_at INTEGER NOT NULL DEFAULT (strftime('%s', 'subsec') * 1000),
+			updated_at INTEGER NOT NULL DEFAULT (strftime('%s', 'subsec') * 1000),
+			UNIQUE(provider_id)
+		)
+	`
+	if _, err := ut.db.Exec(providerUsageTable); err != nil {
+		return fmt.Errorf("failed to create provider_usage table: %w", err)
+	}
+	
+	// Create token_usage table
+	tokenUsageTable := `
+		CREATE TABLE IF NOT EXISTS token_usage (
+			id TEXT PRIMARY KEY,
+			provider_id TEXT NOT NULL,
+			token_id TEXT NOT NULL,
+			requests_today INTEGER NOT NULL DEFAULT 0,
+			requests_in_minute INTEGER NOT NULL DEFAULT 0,
+			tokens_in_minute INTEGER NOT NULL DEFAULT 0,
+			window_start INTEGER NOT NULL,
+			day_start INTEGER NOT NULL,
+			created_at INTEGER NOT NULL DEFAULT (strftime('%s', 'subsec') * 1000),
+			updated_at INTEGER NOT NULL DEFAULT (strftime('%s', 'subsec') * 1000),
+			UNIQUE(provider_id, token_id)
+		)
+	`
+	if _, err := ut.db.Exec(tokenUsageTable); err != nil {
+		return fmt.Errorf("failed to create token_usage table: %w", err)
+	}
+	
+	// Create indexes
+	indexes := []string{
+		"CREATE INDEX IF NOT EXISTS idx_provider_usage_provider ON provider_usage(provider_id)",
+		"CREATE INDEX IF NOT EXISTS idx_token_usage_provider ON token_usage(provider_id)",
+		"CREATE INDEX IF NOT EXISTS idx_token_usage_token ON token_usage(token_id)",
+	}
+	
+	for _, idx := range indexes {
+		if _, err := ut.db.Exec(idx); err != nil {
+			return fmt.Errorf("failed to create index: %w", err)
+		}
+	}
+	
+	return nil
+}
+
+// RecordUsage records usage for a provider and optionally a token
+func (ut *UsageTracker) RecordUsage(ctx context.Context, providerID string, tokenID string, requestCount int, tokenCount int) error {
+	ut.mu.Lock()
+	defer ut.mu.Unlock()
 	
 	now := time.Now()
+	nowMs := now.UnixMilli()
 	
-	// Check if window needs reset
-	if now.Sub(state.lastReset) >= time.Duration(trl.config.WindowSize)*time.Minute {
-		state.requests = state.requests[:0]
-		state.tokensUsed = 0
-		state.lastReset = now
+	// Get or create provider usage
+	providerMetrics, err := ut.getOrCreateProviderMetrics(ctx, providerID, now)
+	if err != nil {
+		return fmt.Errorf("failed to get provider metrics: %w", err)
 	}
 	
-	// Check request rate limit
-	if len(state.requests) >= trl.config.RequestsPerMinute {
-		trl.logger.DebugLog("[RateLimit] Token %s exceeded request rate limit", tokenID)
-		return false, time.Minute, nil
+	// Update provider usage
+	if err := ut.updateUsage(ctx, "provider_usage", providerID, "", providerMetrics, requestCount, tokenCount, now); err != nil {
+		return fmt.Errorf("failed to update provider usage: %w", err)
 	}
 	
-	// Check token rate limit
-	if state.tokensUsed >= trl.config.TokensPerMinute {
-		trl.logger.DebugLog("[RateLimit] Token %s exceeded token rate limit", tokenID)
-		return false, time.Minute, nil
+	// Update token usage if token ID provided
+	if tokenID != "" {
+		tokenMetrics, err := ut.getOrCreateTokenMetrics(ctx, providerID, tokenID, now)
+		if err != nil {
+			return fmt.Errorf("failed to get token metrics: %w", err)
+		}
+		
+		if err := ut.updateUsage(ctx, "token_usage", providerID, tokenID, tokenMetrics, requestCount, tokenCount, now); err != nil {
+			return fmt.Errorf("failed to update token usage: %w", err)
+		}
 	}
 	
-	// Add current request to window
-	state.requests = append(state.requests, now)
-	
-	return true, 0, nil
-}
-
-// RecordUsage records token usage after a successful request
-func (trl *TokenRateLimiter) RecordUsage(ctx context.Context, tokenID string, tokensUsed int) error {
-	trl.mu.Lock()
-	defer trl.mu.Unlock()
-	
-	state, exists := trl.tokenStates[tokenID]
-	if !exists {
-		return nil // State will be created on next Allow() call
-	}
-	
-	state.tokensUsed += tokensUsed
-	trl.logger.DebugLog("[RateLimit] Recorded %d tokens for token %s (total: %d)", 
-		tokensUsed, tokenID, state.tokensUsed)
+	// Invalidate cache
+	ut.cacheExpiry = time.Time{}
 	
 	return nil
 }
 
-// GetRemaining returns the remaining quota for a token
-func (trl *TokenRateLimiter) GetRemaining(ctx context.Context, tokenID string) (int, error) {
-	trl.mu.RLock()
-	defer trl.mu.RUnlock()
-	
-	state, exists := trl.tokenStates[tokenID]
-	if !exists {
-		return trl.config.TokensPerMinute, nil
+// getOrCreateProviderMetrics retrieves or creates provider usage metrics
+func (ut *UsageTracker) getOrCreateProviderMetrics(ctx context.Context, providerID string, now time.Time) (*UsageMetrics, error) {
+	metrics, err := ut.getProviderUsage(ctx, providerID)
+	if err == sql.ErrNoRows {
+		// Create new metrics
+		nowMs := now.UnixMilli()
+		dayStart := time.Date(now.Year(), now.Month(), now.Day(), 0, 0, 0, 0, now.Location())
+		windowStart := now.Add(-time.Minute)
+		
+		query := `
+			INSERT INTO provider_usage (id, provider_id, requests_today, requests_in_minute, tokens_in_minute, window_start, day_start)
+			VALUES (?, ?, 0, 0, 0, ?, ?)
+		`
+		_, err = ut.db.ExecContext(ctx, query, uuid.New().String(), providerID, windowStart.UnixMilli(), dayStart.UnixMilli())
+		if err != nil {
+			return nil, fmt.Errorf("failed to create provider usage: %w", err)
+		}
+		
+		return &UsageMetrics{
+			RequestsToday:      0,
+			RequestsInMinute:   0,
+			TokensInMinute:     0,
+			WindowStart:        windowStart,
+			DayStart:           dayStart,
+		}, nil
+	} else if err != nil {
+		return nil, err
 	}
 	
-	remaining := trl.config.TokensPerMinute - state.tokensUsed
-	if remaining < 0 {
-		remaining = 0
-	}
+	// Check if windows need reset
+	metrics = ut.resetWindowsIfNeeded(metrics, now)
 	
-	return remaining, nil
+	return metrics, nil
 }
 
-// Reset clears rate limit state for a token
-func (trl *TokenRateLimiter) Reset(ctx context.Context, tokenID string) error {
-	trl.mu.Lock()
-	defer trl.mu.Unlock()
+// getOrCreateTokenMetrics retrieves or creates token usage metrics
+func (ut *UsageTracker) getOrCreateTokenMetrics(ctx context.Context, providerID string, tokenID string, now time.Time) (*UsageMetrics, error) {
+	metrics, err := ut.getTokenUsage(ctx, providerID, tokenID)
+	if err == sql.ErrNoRows {
+		// Create new metrics
+		nowMs := now.UnixMilli()
+		dayStart := time.Date(now.Year(), now.Month(), now.Day(), 0, 0, 0, 0, now.Location())
+		windowStart := now.Add(-time.Minute)
+		
+		query := `
+			INSERT INTO token_usage (id, provider_id, token_id, requests_today, requests_in_minute, tokens_in_minute, window_start, day_start)
+			VALUES (?, ?, ?, 0, 0, 0, ?, ?)
+		`
+		_, err = ut.db.ExecContext(ctx, query, uuid.New().String(), providerID, tokenID, windowStart.UnixMilli(), dayStart.UnixMilli())
+		if err != nil {
+			return nil, fmt.Errorf("failed to create token usage: %w", err)
+		}
+		
+		return &UsageMetrics{
+			RequestsToday:      0,
+			RequestsInMinute:   0,
+			TokensInMinute:     0,
+			WindowStart:        windowStart,
+			DayStart:           dayStart,
+		}, nil
+	} else if err != nil {
+		return nil, err
+	}
 	
-	delete(trl.tokenStates, tokenID)
-	trl.logger.InfoLog("[RateLimit] Reset rate limit state for token %s", tokenID)
+	// Check if windows need reset
+	metrics = ut.resetWindowsIfNeeded(metrics, now)
+	
+	return metrics, nil
+}
+
+// resetWindowsIfNeeded resets sliding windows if they've expired
+func (ut *UsageTracker) resetWindowsIfNeeded(metrics *UsageMetrics, now time.Time) *UsageMetrics {
+	needsUpdate := false
+	
+	// Check minute window
+	if now.Sub(metrics.WindowStart) >= time.Minute {
+		metrics.RequestsInMinute = 0
+		metrics.TokensInMinute = 0
+		metrics.WindowStart = now
+		needsUpdate = true
+	}
+	
+	// Check day window
+	if now.Sub(metrics.DayStart) >= 24*time.Hour {
+		metrics.RequestsToday = 0
+		metrics.DayStart = time.Date(now.Year(), now.Month(), now.Day(), 0, 0, 0, 0, now.Location())
+		needsUpdate = true
+	}
+	
+	return metrics
+}
+
+// updateUsage updates usage metrics in the database
+func (ut *UsageTracker) updateUsage(ctx context.Context, tableName string, providerID string, tokenID string, metrics *UsageMetrics, requestCount int, tokenCount int, now time.Time) error {
+	nowMs := now.UnixMilli()
+	
+	var query string
+	var args []interface{}
+	
+	if tokenID == "" {
+		query = `
+			UPDATE provider_usage
+			SET requests_today = ?, requests_in_minute = ?, tokens_in_minute = ?, window_start = ?, day_start = ?, updated_at = ?
+			WHERE provider_id = ?
+		`
+		args = []interface{}{
+			metrics.RequestsToday + requestCount,
+			metrics.RequestsInMinute + requestCount,
+			metrics.TokensInMinute + tokenCount,
+			metrics.WindowStart.UnixMilli(),
+			metrics.DayStart.UnixMilli(),
+			nowMs,
+			providerID,
+		}
+	} else {
+		query = `
+			UPDATE token_usage
+			SET requests_today = ?, requests_in_minute = ?, tokens_in_minute = ?, window_start = ?, day_start = ?, updated_at = ?
+			WHERE provider_id = ? AND token_id = ?
+		`
+		args = []interface{}{
+			metrics.RequestsToday + requestCount,
+			metrics.RequestsInMinute + requestCount,
+			metrics.TokensInMinute + tokenCount,
+			metrics.WindowStart.UnixMilli(),
+			metrics.DayStart.UnixMilli(),
+			nowMs,
+			providerID,
+			tokenID,
+		}
+	}
+	
+	result, err := ut.db.ExecContext(ctx, query, args...)
+	if err != nil {
+		return fmt.Errorf("failed to update usage: %w", err)
+	}
+	
+	rowsAffected, err := result.RowsAffected()
+	if err != nil {
+		return fmt.Errorf("failed to get rows affected: %w", err)
+	}
+	
+	if rowsAffected == 0 {
+		return fmt.Errorf("no rows updated for %s %s", tableName, providerID)
+	}
 	
 	return nil
+}
+
+// GetProviderUsage retrieves current usage metrics for a provider
+func (ut *UsageTracker) GetProviderUsage(ctx context.Context, providerID string) (*UsageMetrics, error) {
+	return ut.getProviderUsage(ctx, providerID)
+}
+
+// getProviderUsage retrieves provider usage from database
+func (ut *UsageTracker) getProviderUsage(ctx context.Context, providerID string) (*UsageMetrics, error) {
+	query := `
+		SELECT requests_today, requests_in_minute, tokens_in_minute, window_start, day_start
+		FROM provider_usage
+		WHERE provider_id = ?
+	`
+	
+	var metrics UsageMetrics
+	var windowStartMs, dayStartMs int64
+	
+	err := ut.db.QueryRowContext(ctx, query, providerID).Scan(
+		&metrics.RequestsToday,
+		&metrics.RequestsInMinute,
+		&metrics.TokensInMinute,
+		&windowStartMs,
+		&dayStartMs,
+	)
+	
+	if err != nil {
+		return nil, err
+	}
+	
+	metrics.WindowStart = time.UnixMilli(windowStartMs)
+	metrics.DayStart = time.UnixMilli(dayStartMs)
+	
+	// Reset windows if needed
+	metrics = ut.resetWindowsIfNeeded(&metrics, time.Now())
+	
+	return &metrics, nil
+}
+
+// GetTokenUsage retrieves current usage metrics for a token
+func (ut *UsageTracker) GetTokenUsage(ctx context.Context, providerID string, tokenID string) (*UsageMetrics, error) {
+	return ut.getTokenUsage(ctx, providerID, tokenID)
+}
+
+// getTokenUsage retrieves token usage from database
+func (ut *UsageTracker) getTokenUsage(ctx context.Context, providerID string, tokenID string) (*UsageMetrics, error) {
+	query := `
+		SELECT requests_today, requests_in_minute, tokens_in_minute, window_start, day_start
+		FROM token_usage
+		WHERE provider_id = ? AND token_id = ?
+	`
+	
+	var metrics UsageMetrics
+	var windowStartMs, dayStartMs int64
+	
+	err := ut.db.QueryRowContext(ctx, query, providerID, tokenID).Scan(
+		&metrics.RequestsToday,
+		&metrics.RequestsInMinute,
+		&metrics.TokensInMinute,
+		&windowStartMs,
+		&dayStartMs,
+	)
+	
+	if err != nil {
+		return nil, err
+	}
+	
+	metrics.WindowStart = time.UnixMilli(windowStartMs)
+	metrics.DayStart = time.UnixMilli(dayStartMs)
+	
+	// Reset windows if needed
+	metrics = ut.resetWindowsIfNeeded(&metrics, time.Now())
+	
+	return &metrics, nil
+}
+
+// GetAllProviderUsage retrieves usage metrics for all providers
+func (ut *UsageTracker) GetAllProviderUsage(ctx context.Context) (map[string]*UsageMetrics, error) {
+	query := `
+		SELECT provider_id, requests_today, requests_in_minute, tokens_in_minute, window_start, day_start
+		FROM provider_usage
+	`
+	
+	rows, err := ut.db.QueryContext(ctx, query)
+	if err != nil {
+		return nil, fmt.Errorf("failed to query provider usage: %w", err)
+	}
+	defer rows.Close()
+	
+	result := make(map[string]*UsageMetrics)
+	
+	for rows.Next() {
+		var providerID string
+		var metrics UsageMetrics
+		var windowStartMs, dayStartMs int64
+		
+		if err := rows.Scan(&providerID, &metrics.RequestsToday, &metrics.RequestsInMinute, &metrics.TokensInMinute, &windowStartMs, &dayStartMs); err != nil {
+			return nil, fmt.Errorf("failed to scan row: %w", err)
+		}
+		
+		metrics.WindowStart = time.UnixMilli(windowStartMs)
+		metrics.DayStart = time.UnixMilli(dayStartMs)
+		
+		// Reset windows if needed
+		metrics = ut.resetWindowsIfNeeded(&metrics, time.Now())
+		
+		result[providerID] = &metrics
+	}
+	
+	return result, nil
+}
+
+// periodicCleanup removes old usage records periodically
+func (ut *UsageTracker) periodicCleanup() {
+	ticker := time.NewTicker(1 * time.Hour)
+	defer ticker.Stop()
+	
+	for range ticker.C {
+		ctx := context.Background()
+		cutoff := time.Now().Add(-7 * 24 * time.Hour) // Keep 7 days of history
+		
+		// Clean old records (optional, for historical analysis)
+		// For now, we keep all records as they're aggregated
+		ut.logger.DebugLog("[UsageTracker] Periodic cleanup check completed")
+	}
+}
+
+// Close closes the database connection
+func (ut *UsageTracker) Close() error {
+	return ut.db.Close()
 }
 ```
 
-#### Step 1.3: Create Rate Limiting Middleware
+#### Step 1.4: Create Quota Manager
 
-**New File:** `internal/ratelimit/middleware.go`
+**New File:** `internal/ratelimit/quota_manager.go`
 
 ```go
 package ratelimit
@@ -252,176 +919,271 @@ package ratelimit
 import (
 	"context"
 	"fmt"
-	"net/http"
-	"strconv"
+	"sync"
 	"time"
+	
 	"github.com/sunbankio/qwencoder-proxy/internal/logging"
 )
 
-// RateLimitMiddleware creates HTTP middleware for rate limiting
-func RateLimitMiddleware(limiter RateLimiter, logger logging.Logger) func(http.Handler) http.Handler {
-	return func(next http.Handler) http.Handler {
-		return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
-			// Extract token ID from request context
-			tokenID := r.Context().Value("token_id")
-			if tokenID == nil || tokenID == "" {
-				// No token ID in context, skip rate limiting
-				next.ServeHTTP(w, r)
-				return
-			}
-			
-			tokenIDStr := tokenID.(string)
-			
-			// Check rate limit
-			allowed, retryAfter, err := limiter.Allow(r.Context(), tokenIDStr)
-			if err != nil {
-				logger.ErrorLog("[RateLimitMiddleware] Error checking rate limit: %v", err)
-				// On error, allow request but log
-				next.ServeHTTP(w, r)
-				return
-			}
-			
-			// Set rate limit headers
-			remaining, _ := limiter.GetRemaining(r.Context(), tokenIDStr)
-			w.Header().Set("X-RateLimit-Limit", strconv.Itoa(60)) // Requests per minute
-			w.Header().Set("X-RateLimit-Remaining", strconv.Itoa(remaining))
-			w.Header().Set("X-RateLimit-Reset", time.Now().Add(time.Minute).Format(time.RFC3339))
-			
-			if !allowed {
-				// Rate limit exceeded
-				logger.WarnLog("[RateLimitMiddleware] Rate limit exceeded for token %s", tokenIDStr)
-				
-				w.Header().Set("Retry-After", retryAfter.String())
-				w.Header().Set("Content-Type", "application/json")
-				w.WriteHeader(http.StatusTooManyRequests)
-				
-				errorResponse := map[string]interface{}{
-					"error": map[string]interface{}{
-						"code":    "rate_limit_exceeded",
-						"message": "Rate limit exceeded. Please retry later.",
-						"retry_after": retryAfter.String(),
-					},
-				}
-				
-				w.Write([]byte(fmt.Sprintf(`{"error":{"code":"rate_limit_exceeded","message":"Rate limit exceeded","retry_after":"%s"}}`, 
-					retryAfter.String()))
-				return
-			}
-			
-			// Rate limit not exceeded, proceed with request
-			next.ServeHTTP(w, r)
-		})
+// QuotaManager enforces rate limits based on configuration and usage
+type QuotaManager struct {
+	configs       map[string]ProviderRateLimitConfig
+	usageTracker  *UsageTracker
+	logger        logging.Logger
+	mu            sync.RWMutex
+	tokenCounter  *TokenCounter
+}
+
+// NewQuotaManager creates a new quota manager
+func NewQuotaManager(usageTracker *UsageTracker, logger logging.Logger) *QuotaManager {
+	return &QuotaManager{
+		configs:      DefaultProviderConfigs(),
+		usageTracker: usageTracker,
+		logger:       logger,
+		tokenCounter: NewTokenCounter(logger),
 	}
 }
+
+// CheckQuota checks if a request is allowed based on current usage
+// Returns (allowed, quotaStatus, error)
+func (qm *QuotaManager) CheckQuota(ctx context.Context, providerID string, tokenID string, estimatedInputTokens int) (bool, *QuotaStatus, error) {
+	qm.mu.RLock()
+	config, exists := qm.configs[providerID]
+	qm.mu.RUnlock()
+	
+	if !exists {
+		return false, nil, fmt.Errorf("no rate limit configuration for provider: %s", providerID)
+	}
+	
+	// If rate limiting is disabled, allow all requests
+	if !config.Enabled {
+		return true, &QuotaStatus{IsLimited: false}, nil
+	}
+	
+	// Get current usage metrics
+	var providerMetrics *UsageMetrics
+	var tokenMetrics *UsageMetrics
+	
+	providerMetrics, err := qm.usageTracker.GetProviderUsage(ctx, providerID)
+	if err != nil {
+		// If no usage record exists, assume zero usage
+		if err.Error() == "sql: no rows in result set" {
+			now := time.Now()
+			dayStart := time.Date(now.Year(), now.Month(), now.Day(), 0, 0, 0, 0, now.Location())
+			windowStart := now.Add(-time.Minute)
+			providerMetrics = &UsageMetrics{
+				RequestsToday:      0,
+				RequestsInMinute:   0,
+				TokensInMinute:     0,
+				WindowStart:        windowStart,
+				DayStart:           dayStart,
+			}
+		} else {
+			return false, nil, fmt.Errorf("failed to get provider usage: %w", err)
+		}
+	}
+	
+	if tokenID != "" {
+		tokenMetrics, err = qm.usageTracker.GetTokenUsage(ctx, providerID, tokenID)
+		if err != nil {
+			// If no usage record exists, assume zero usage
+			if err.Error() == "sql: no rows in result set" {
+				now := time.Now()
+				dayStart := time.Date(now.Year(), now.Month(), now.Day(), 0, 0, 0, 0, now.Location())
+				windowStart := now.Add(-time.Minute)
+				tokenMetrics = &UsageMetrics{
+					RequestsToday:      0,
+					RequestsInMinute:   0,
+					TokensInMinute:     0,
+					WindowStart:        windowStart,
+					DayStart:           dayStart,
+				}
+			} else {
+				return false, nil, fmt.Errorf("failed to get token usage: %w", err)
+			}
+		}
+	}
+	
+	// Build quota status
+	status := qm.buildQuotaStatus(providerID, tokenID, config, providerMetrics, tokenMetrics, estimatedInputTokens)
+	
+	// Check if any quota is exceeded
+	if status.IsLimited {
+		qm.logger.WarnLog("[QuotaManager] Rate limit exceeded for provider %s: %v", providerID, status.LimitReasons)
+		return false, status, nil
+	}
+	
+	return true, status, nil
+}
+
+// buildQuotaStatus constructs quota status from metrics and configuration
+func (qm *QuotaManager) buildQuotaStatus(providerID string, tokenID string, config ProviderRateLimitConfig, providerMetrics *UsageMetrics, tokenMetrics *UsageMetrics, estimatedInputTokens int) *QuotaStatus {
+	now := time.Now()
+	
+	// Use token metrics if available, otherwise use provider metrics
+	metrics := providerMetrics
+	if tokenMetrics != nil {
+		metrics = tokenMetrics
+	}
+	
+	status := &QuotaStatus{
+		ProviderID: providerID,
+		TokenID:    tokenID,
+		IsLimited:  false,
+		LimitReasons: []string{},
+	}
+	
+	// Calculate remaining quotas
+	status.RemainingRequestsPerDay = config.RequestsPerDay - metrics.RequestsToday
+	status.RemainingRequestsPerMinute = config.RequestsPerMinute - metrics.RequestsInMinute
+	
+	// For tokens, include estimated input tokens
+	status.RemainingTokensPerMinute = config.TokensPerMinute - metrics.TokensInMinute - estimatedInputTokens
+	
+	// Calculate usage percentages
+	if config.RequestsPerDay > 0 {
+		status.UsagePercentagePerDay = float64(metrics.RequestsToday) / float64(config.RequestsPerDay) * 100
+	}
+	if config.RequestsPerMinute > 0 {
+		status.UsagePercentagePerMinute = float64(metrics.RequestsInMinute) / float64(config.RequestsPerMinute) * 100
+	}
+	if config.TokensPerMinute > 0 {
+		status.TokenUsagePercentagePerMinute = float64(metrics.TokensInMinute+estimatedInputTokens) / float64(config.TokensPerMinute) * 100
+	}
+	
+	// Calculate time until reset
+	nextDayStart := time.Date(now.Year(), now.Month(), now.Day()+1, 0, 0, 0, 0, now.Location())
+	status.SecondsUntilDayReset = int64(nextDayStart.Sub(now).Seconds())
+	
+	nextMinuteStart := metrics.WindowStart.Add(time.Minute)
+	status.SecondsUntilMinuteReset = int64(nextMinuteStart.Sub(now).Seconds())
+	
+	// Check if quotas are exceeded
+	if status.RemainingRequestsPerDay <= 0 {
+		status.IsLimited = true
+		status.LimitReasons = append(status.LimitReasons, "requests_per_day")
+	}
+	if status.RemainingRequestsPerMinute <= 0 {
+		status.IsLimited = true
+		status.LimitReasons = append(status.LimitReasons, "requests_per_minute")
+	}
+	if status.RemainingTokensPerMinute <= 0 {
+		status.IsLimited = true
+		status.LimitReasons = append(status.LimitReasons, "tokens_per_minute")
+	}
+	
+	return status
+}
+
+// RecordUsage records usage after a successful request
+func (qm *QuotaManager) RecordUsage(ctx context.Context, providerID string, tokenID string, inputTokens int, outputTokens int) error {
+	totalTokens := inputTokens + outputTokens
+	
+	if err := qm.usageTracker.RecordUsage(ctx, providerID, tokenID, 1, totalTokens); err != nil {
+		return fmt.Errorf("failed to record usage: %w", err)
+	}
+	
+	qm.logger.DebugLog("[QuotaManager] Recorded usage for %s: %d tokens (input: %d, output: %d)", 
+		providerID, totalTokens, inputTokens, outputTokens)
+	
+	return nil
+}
+
+// UpdateConfig updates rate limit configuration for a provider
+func (qm *QuotaManager) UpdateConfig(providerID string, config ProviderRateLimitConfig) error {
+	qm.mu.Lock()
+	defer qm.mu.Unlock()
+	
+	config.ProviderID = providerID
+	config.UpdatedAt = time.Now()
+	
+	qm.configs[providerID] = config
+	
+	qm.logger.InfoLog("[QuotaManager] Updated rate limit config for %s: RPD=%d, RPM=%d, TPM=%d, Enabled=%v",
+		providerID, config.RequestsPerDay, config.RequestsPerMinute, config.TokensPerMinute, config.Enabled)
+	
+	return nil
+}
+
+// GetConfig retrieves rate limit configuration for a provider
+func (qm *QuotaManager) GetConfig(providerID string) (ProviderRateLimitConfig, error) {
+	qm.mu.RLock()
+	defer qm.mu.RUnlock()
+	
+	config, exists := qm.configs[providerID]
+	if !exists {
+		return ProviderRateLimitConfig{}, fmt.Errorf("no configuration for provider: %s", providerID)
+	}
+	
+	return config, nil
+}
+
+// GetAllConfigs retrieves all rate limit configurations
+func (qm *QuotaManager) GetAllConfigs() map[string]ProviderRateLimitConfig {
+	qm.mu.RLock()
+	defer qm.mu.RUnlock()
+	
+	// Return a copy to prevent external modifications
+	result := make(map[string]ProviderRateLimitConfig)
+	for k, v := range qm.configs {
+		result[k] = v
+	}
+	
+	return result
+}
+
+// GetQuotaStatus retrieves current quota status for a provider
+func (qm *QuotaManager) GetQuotaStatus(ctx context.Context, providerID string, tokenID string) (*QuotaStatus, error) {
+	qm.mu.RLock()
+	config, exists := qm.configs[providerID]
+	qm.mu.RUnlock()
+	
+	if !exists {
+		return nil, fmt.Errorf("no rate limit configuration for provider: %s", providerID)
+	}
+	
+	providerMetrics, err := qm.usageTracker.GetProviderUsage(ctx, providerID)
+	if err != nil {
+		return nil, fmt.Errorf("failed to get provider usage: %w", err)
+	}
+	
+	var tokenMetrics *UsageMetrics
+	if tokenID != "" {
+		tokenMetrics, err = qm.usageTracker.GetTokenUsage(ctx, providerID, tokenID)
+		if err != nil {
+			return nil, fmt.Errorf("failed to get token usage: %w", err)
+		}
+	}
+	
+	status := qm.buildQuotaStatus(providerID, tokenID, config, providerMetrics, tokenMetrics, 0)
+	
+	return status, nil
+}
+
+// ResetUsage resets usage metrics for a provider or token
+func (qm *QuotaManager) ResetUsage(ctx context.Context, providerID string, tokenID string) error {
+	// This would need to be implemented in usage tracker
+	// For now, we'll implement a simple version
+	qm.logger.InfoLog("[QuotaManager] Reset usage requested for %s (token: %s)", providerID, tokenID)
+	
+	// Implementation would involve setting counts to 0 in the database
+	// This is a placeholder for the actual implementation
+	
+	return nil
+}
+
+// EstimateInputTokens estimates input tokens from a request
+func (qm *QuotaManager) EstimateInputTokens(openaiReq map[string]interface{}) (int, error) {
+	return qm.tokenCounter.EstimateInputTokens(openaiReq)
+}
+
+// CountOutputTokens counts output tokens from a response
+func (qm *QuotaManager) CountOutputTokens(response map[string]interface{}) (int, error) {
+	return qm.tokenCounter.CountOutputTokens(response)
+}
 ```
 
-#### Step 1.4: Create Rate Limiting Strategies
-
-**New File:** `internal/ratelimit/strategies.go`
-
-```go
-package ratelimit
-
-import (
-	"context"
-	"time"
-)
-
-// StrategyType defines the type of rate limiting strategy
-type StrategyType string
-
-const (
-	StrategyTokenBased   StrategyType = "token_based"
-	StrategyRequestBased StrategyType = "request_based"
-	StrategyHybrid      StrategyType = "hybrid"
-)
-
-// RateLimitStrategy defines the strategy for rate limiting
-type RateLimitStrategy interface {
-	// Type returns the strategy type
-	Type() StrategyType
-	
-	// Check checks if usage is within limits
-	Check(ctx context.Context, usage *UsageMetrics) bool
-	
-	// GetLimit returns the configured limit
-	GetLimit() RateLimitConfig
-}
-
-// UsageMetrics tracks usage metrics for rate limiting
-type UsageMetrics struct {
-	RequestCount int
-	TokensUsed   int
-	WindowStart  time.Time
-	WindowEnd    time.Time
-}
-
-// TokenBasedStrategy implements token-based rate limiting
-type TokenBasedStrategy struct {
-	config RateLimitConfig
-}
-
-func NewTokenBasedStrategy(config RateLimitConfig) *TokenBasedStrategy {
-	return &TokenBasedStrategy{config: config}
-}
-
-func (t *TokenBasedStrategy) Type() StrategyType {
-	return StrategyTokenBased
-}
-
-func (t *TokenBasedStrategy) Check(ctx context.Context, usage *UsageMetrics) bool {
-	return usage.TokensUsed < t.config.TokensPerMinute
-}
-
-func (t *TokenBasedStrategy) GetLimit() RateLimitConfig {
-	return t.config
-}
-
-// RequestBasedStrategy implements request-based rate limiting
-type RequestBasedStrategy struct {
-	config RateLimitConfig
-}
-
-func NewRequestBasedStrategy(config RateLimitConfig) *RequestBasedStrategy {
-	return &RequestBasedStrategy{config: config}
-}
-
-func (r *RequestBasedStrategy) Type() StrategyType {
-	return StrategyRequestBased
-}
-
-func (r *RequestBasedStrategy) Check(ctx context.Context, usage *UsageMetrics) bool {
-	return usage.RequestCount < r.config.RequestsPerMinute
-}
-
-func (r *RequestBasedStrategy) GetLimit() RateLimitConfig {
-	return r.config
-}
-
-// HybridStrategy implements hybrid rate limiting (both token and request)
-type HybridStrategy struct {
-	config RateLimitConfig
-}
-
-func NewHybridStrategy(config RateLimitConfig) *HybridStrategy {
-	return &HybridStrategy{config: config}
-}
-
-func (h *HybridStrategy) Type() StrategyType {
-	return StrategyHybrid
-}
-
-func (h *HybridStrategy) Check(ctx context.Context, usage *UsageMetrics) bool {
-	return usage.TokensUsed < h.config.TokensPerMinute && 
-	       usage.RequestCount < h.config.RequestsPerMinute
-}
-
-func (h *HybridStrategy) GetLimit() RateLimitConfig {
-	return h.config
-}
-```
-
-#### Step 1.5: Create Rate Limit Errors
+#### Step 1.5: Create Rate Limiting Errors
 
 **New File:** `internal/ratelimit/errors.go`
 
@@ -430,654 +1192,74 @@ package ratelimit
 
 import "fmt"
 
-// ErrorCode defines rate limit error codes
+// ErrorCode defines rate limit error codes (internal use only)
 type ErrorCode string
 
 const (
-	ErrCodeRateLimitExceeded ErrorCode = "rate_limit_exceeded"
-	ErrCodeInvalidTokenID    ErrorCode = "invalid_token_id"
-	ErrCodeLimiterError      ErrorCode = "limiter_error"
+	ErrCodeRateLimitExceeded  ErrorCode = "rate_limit_exceeded"
+	ErrCodeInvalidProvider    ErrorCode = "invalid_provider"
+	ErrCodeConfigurationError ErrorCode = "configuration_error"
 )
 
-// RateLimitError represents a rate limiting error
+// RateLimitError represents a rate limiting error (internal logging only)
 type RateLimitError struct {
 	Code       ErrorCode
 	Message    string
+	ProviderID string
 	TokenID    string
-	RetryAfter time.Duration
+	Reasons    []string
 }
 
 func (e *RateLimitError) Error() string {
-	return fmt.Sprintf("[%s] %s (token: %s, retry_after: %s)", 
-		e.Code, e.Message, e.TokenID, e.RetryAfter)
+	return fmt.Sprintf("[%s] %s (provider: %s, token: %s, reasons: %v)", 
+		e.Code, e.Message, e.ProviderID, e.TokenID, e.Reasons)
 }
 
-func NewRateLimitExceededError(tokenID string, retryAfter time.Duration) *RateLimitError {
+// NewRateLimitExceededError creates a new rate limit exceeded error
+func NewRateLimitExceededError(providerID string, tokenID string, reasons []string) *RateLimitError {
 	return &RateLimitError{
 		Code:       ErrCodeRateLimitExceeded,
-		Message:    "Rate limit exceeded for this token",
+		Message:    "Rate limit exceeded",
+		ProviderID: providerID,
 		TokenID:    tokenID,
-		RetryAfter: retryAfter,
+		Reasons:    reasons,
 	}
 }
 
-func NewInvalidTokenIDError(tokenID string) *RateLimitError {
+// NewInvalidProviderError creates a new invalid provider error
+func NewInvalidProviderError(providerID string) *RateLimitError {
 	return &RateLimitError{
-		Code:       ErrCodeInvalidTokenID,
-		Message:    "Invalid token ID provided",
-		TokenID:    tokenID,
-		RetryAfter: 0,
-	}
-}
-```
-
-### Phase 2: Database Schema Updates (Days 4-5)
-
-#### Step 2.1: Add Token Usage Table
-
-**Modify File:** `internal/token/sqlite_store.go`
-
-**Location:** After existing table creation constants (around line 90)
-
-```go
-// Add to SQL statements section
-const (
-	// ... existing constants ...
-	
-	sqlCreateTokenUsageTable = `
-		CREATE TABLE IF NOT EXISTS token_usage (
-			id TEXT PRIMARY KEY,
-			token_id TEXT NOT NULL,
-			request_count INTEGER NOT NULL DEFAULT 0,
-			tokens_used INTEGER NOT NULL DEFAULT 0,
-			window_start INTEGER NOT NULL,
-			window_end INTEGER NOT NULL,
-			created_at INTEGER NOT NULL DEFAULT (strftime('%s', 'subsec') * 1000),
-			updated_at INTEGER NOT NULL DEFAULT (strftime('%s', 'subsec') * 1000),
-			FOREIGN KEY (token_id) REFERENCES tokens(id) ON DELETE CASCADE
-		)
-	`
-	
-	sqlCreateIndexTokenUsageTokenID = "CREATE INDEX IF NOT EXISTS idx_token_usage_token_id ON token_usage(token_id)"
-	sqlCreateIndexTokenUsageWindow = "CREATE INDEX IF NOT EXISTS idx_token_usage_window ON token_usage(window_start, window_end)"
-)
-)
-```
-
-#### Step 2.2: Add Token Usage Methods to SQLiteStore
-
-**Modify File:** `internal/token/sqlite_store.go`
-
-**Location:** After existing CRUD methods (around line 500)
-
-```go
-// Add to SQLiteStore struct
-type SQLiteStore struct {
-	db         *sql.DB
-	providerID string
-	logger     logging.Logger
-	mu         sync.RWMutex
-	
-	// ... existing prepared statements ...
-	stmtInsertTokenUsage   *sql.Stmt
-	stmtGetTokenUsage     *sql.Stmt
-	stmtUpdateTokenUsage *sql.Stmt
-	stmtDeleteTokenUsage *sql.Stmt
-}
-
-// Add to initializeDB() method
-func (s *SQLiteStore) initializeDB() error {
-	// ... existing table creation ...
-	
-	// Create token usage table
-	if _, err := s.db.Exec(sqlCreateTokenUsageTable); err != nil {
-		return fmt.Errorf("failed to create token_usage table: %w", err)
-	}
-	
-	// Create indexes
-	if _, err := s.db.Exec(sqlCreateIndexTokenUsageTokenID); err != nil {
-		return fmt.Errorf("failed to create token_usage token_id index: %w", err)
-	}
-	if _, err := s.db.Exec(sqlCreateIndexTokenUsageWindow); err != nil {
-		return fmt.Errorf("failed to create token_usage window index: %w", err)
-	}
-	
-	// ... existing code ...
-}
-
-// Add to prepareStatements() method
-func (s *SQLiteStore) prepareStatements() error {
-	// ... existing statement preparation ...
-	
-	// Prepare token usage statements
-	stmtInsertTokenUsage, err := s.db.Prepare(sqlInsertTokenUsage)
-	if err != nil {
-		return fmt.Errorf("failed to prepare insert token usage statement: %w", err)
-	}
-	s.stmtInsertTokenUsage = stmtInsertTokenUsage
-	
-	stmtGetTokenUsage, err := s.db.Prepare(sqlGetTokenUsage)
-	if err != nil {
-		return fmt.Errorf("failed to prepare get token usage statement: %w", err)
-	}
-	s.stmtGetTokenUsage = stmtGetTokenUsage
-	
-	stmtUpdateTokenUsage, err := s.db.Prepare(sqlUpdateTokenUsage)
-	if err != nil {
-		return fmt.Errorf("failed to prepare update token usage statement: %w", err)
-	}
-	s.stmtUpdateTokenUsage = stmtUpdateTokenUsage
-	
-	stmtDeleteTokenUsage, err := s.db.Prepare(sqlDeleteTokenUsage)
-	if err != nil {
-		return fmt.Errorf("failed to prepare delete token usage statement: %w", err)
-	}
-	s.stmtDeleteTokenUsage = stmtDeleteTokenUsage
-	
-	// ... existing code ...
-}
-
-// Add new methods for token usage tracking
-func (s *SQLiteStore) RecordTokenUsage(tokenID string, tokensUsed int) error {
-	s.mu.Lock()
-	defer s.mu.Unlock()
-	
-	now := time.Now().UnixMilli()
-	windowStart := now - 60000 // 1 minute ago
-	windowEnd := now
-	
-	// Check if usage record exists for this token in current window
-	var existingID string
-	err := s.stmtGetTokenUsage.QueryRow(tokenID, windowStart, windowEnd).Scan(&existingID)
-	if err == sql.ErrNoRows {
-		// Insert new usage record
-		_, err = s.stmtInsertTokenUsage.Exec(
-			uuid.New().String(),
-			tokenID,
-			1, // request_count
-			tokensUsed,
-			windowStart,
-			windowEnd,
-		)
-	} else if err == nil {
-		// Update existing usage record
-		_, err = s.stmtUpdateTokenUsage.Exec(
-			tokensUsed,
-			now,
-			existingID,
-		)
-	}
-	
-	return err
-}
-
-func (s *SQLiteStore) GetTokenUsage(tokenID string) (int, error) {
-	s.mu.RLock()
-	defer s.mu.RUnlock()
-	
-	var tokensUsed int
-	err := s.stmtGetTokenUsage.QueryRow(tokenID, 
-		time.Now().UnixMilli()-60000, // window_start
-		time.Now().UnixMilli(),     // window_end
-	).Scan(&tokensUsed)
-	
-	return tokensUsed, err
-}
-
-func (s *SQLiteStore) ResetTokenUsage(tokenID string) error {
-	s.mu.Lock()
-	defer s.mu.Unlock()
-	
-	_, err := s.stmtDeleteTokenUsage.Exec(tokenID)
-	return err
-}
-```
-
-### Phase 3: Middleware Integration (Days 6-7)
-
-#### Step 3.1: Add Token ID to Request Context
-
-**Modify File:** `internal/proxy/openai_handler.go`
-
-**Location:** In `handleChatCompletions()` method, after token selection (around line 196)
-
-```go
-// BEFORE:
-nativeReq, err := conv.FromOpenAIRequest(openaiReq)
-
-// AFTER:
-nativeReq, err := conv.FromOpenAIRequest(openaiReq)
-
-// Add token ID to request context for rate limiting
-if token != nil {
-	ctx := context.WithValue(r.Context(), "token_id", token.ID)
-	r = r.WithContext(ctx)
-}
-```
-
-#### Step 3.2: Apply Rate Limiting Middleware
-
-**Modify File:** `cmd/main.go`
-
-**Location:** In `applyMiddleware()` function or main function (around line 123)
-
-```go
-// Add import
-import (
-	// ... existing imports ...
-	"github.com/sunbankio/qwencoder-proxy/internal/ratelimit"
-)
-
-// Create rate limiter
-rateLimiter := ratelimit.NewTokenRateLimiter(
-	multiTokenMgr,
-	logger,
-	ratelimit.DefaultRateLimitConfig(),
-)
-
-// Apply rate limiting middleware
-handler = ratelimit.RateLimitMiddleware(rateLimiter, logger)(handler)
-```
-
-#### Step 3.3: Record Usage After Requests
-
-**Modify File:** `internal/proxy/openai_handler.go`
-
-**Location:** In `handleNonStreamCompletions()` method, after successful response (around line 243)
-
-```go
-// BEFORE:
-h.factory.RecordSuccess(model, p.Name())
-w.Header().Set("Content-Type", "application/json")
-json.NewEncoder(w).Encode(resp)
-
-// AFTER:
-h.factory.RecordSuccess(model, p.Name())
-
-// Record token usage for rate limiting
-if token != nil {
-	tokensUsed := extractTokenUsage(resp)
-	if tokensUsed > 0 {
-		if err := rateLimiter.RecordUsage(r.Context(), token.ID, tokensUsed); err != nil {
-			h.GetLogger().WarnLog("Failed to record token usage: %v", err)
-		}
+		Code:       ErrCodeInvalidProvider,
+		Message:    "Invalid provider ID",
+		ProviderID: providerID,
+		TokenID:    "",
+		Reasons:    []string{},
 	}
 }
 
-w.Header().Set("Content-Type", "application/json")
-json.NewEncoder(w).Encode(resp)
-```
-
-### Phase 4: Token Selection Integration (Days 8-9)
-
-#### Step 4.1: Filter Rate-Limited Tokens in Selection
-
-**Modify File:** `internal/token/token_selection.go`
-
-**Location:** In selection strategies, add rate limit filtering
-
-```go
-// Add import
-import (
-	// ... existing imports ...
-	"github.com/sunbankio/qwencoder-proxy/internal/ratelimit"
-)
-
-// Modify RandomStrategy
-func (rs *RandomStrategy) Select(tokens []*ProviderToken) (*ProviderToken, error) {
-	if len(tokens) == 0 {
-		return nil, ErrNoTokensAvailable
-	}
-	
-	// Filter out rate-limited tokens
-	availableTokens := make([]*ProviderToken, 0)
-	for _, token := range tokens {
-		// Check if token is rate-limited
-		if rs.rateLimiter != nil {
-			allowed, _, err := rs.rateLimiter.Allow(context.Background(), token.ID)
-			if err != nil || !allowed {
-				continue // Skip rate-limited token
-			}
-		}
-		availableTokens = append(availableTokens, token)
-	}
-	
-	if len(availableTokens) == 0 {
-		return nil, ErrAllTokensRateLimited
-	}
-	
-	// Select from available tokens
-	selected := availableTokens[rs.rand.Intn(len(availableTokens))]
-	return selected, nil
-}
-
-// Add error
-var ErrAllTokensRateLimited = errors.New("all tokens are currently rate-limited")
-```
-
-#### Step 4.2: Add Rate Limiter to Strategy Factory
-
-**Modify File:** `internal/token/token_selection.go`
-
-**Location:** In StrategyFactory struct and constructor
-
-```go
-// Add to StrategyFactory struct
-type StrategyFactory struct {
-	rand       *rand.Rand
-	rateLimiter ratelimit.RateLimiter  // Add rate limiter
-}
-
-// Update NewStrategyFactory
-func NewStrategyFactory() *StrategyFactory {
-	return &StrategyFactory{
-		rand: rand.New(rand.NewSource(time.Now().UnixNano())),
-	}
-}
-
-// Add method to set rate limiter
-func (sf *StrategyFactory) SetRateLimiter(limiter ratelimit.RateLimiter) {
-	sf.rateLimiter = limiter
-}
-```
-
----
-
-## Testing
-
-### Unit Tests
-
-**New File:** `internal/ratelimit/rate_limiter_test.go`
-
-```go
-package ratelimit
-
-import (
-	"context"
-	"testing"
-	"time"
-	"github.com/stretchr/testify/assert"
-)
-
-func TestTokenRateLimiter_Allow(t *testing.T) {
-	limiter := NewTokenRateLimiter(nil, nil, DefaultRateLimitConfig())
-	
-	// First request should be allowed
-	allowed, retryAfter, err := limiter.Allow(context.Background(), "token1")
-	assert.NoError(t, err)
-	assert.True(t, allowed)
-	assert.Equal(t, time.Duration(0), retryAfter)
-	
-	// Second request should be allowed
-	allowed, retryAfter, err = limiter.Allow(context.Background(), "token1")
-	assert.NoError(t, err)
-	assert.True(t, allowed)
-}
-
-func TestTokenRateLimiter_ExceedsLimit(t *testing.T) {
-	limiter := NewTokenRateLimiter(nil, nil, RateLimitConfig{
-		RequestsPerMinute: 2,
-		TokensPerMinute:  100,
-		BurstSize:        10,
-		WindowSize:        1,
-	})
-	
-	// Allow 2 requests (limit is 2)
-	limiter.Allow(context.Background(), "token1")
-	limiter.Allow(context.Background(), "token1")
-	
-	// Third request should be denied
-	allowed, retryAfter, err := limiter.Allow(context.Background(), "token1")
-	assert.NoError(t, err)
-	assert.False(t, allowed)
-	assert.Greater(t, retryAfter, time.Duration(0))
-}
-
-func TestTokenRateLimiter_RecordUsage(t *testing.T) {
-	limiter := NewTokenRateLimiter(nil, nil, DefaultRateLimitConfig())
-	
-	// Record usage
-	err := limiter.RecordUsage(context.Background(), "token1", 100)
-	assert.NoError(t, err)
-	
-	// Check remaining
-	remaining, err := limiter.GetRemaining(context.Background(), "token1")
-	assert.NoError(t, err)
-	assert.Equal(t, 90000-100, remaining) // Default is 90000
-}
-```
-
-### Integration Tests
-
-**New File:** `internal/ratelimit/middleware_test.go`
-
-```go
-package ratelimit
-
-import (
-	"net/http"
-	"net/http/httptest"
-	"testing"
-	"github.com/stretchr/testify/assert"
-)
-
-func TestRateLimitMiddleware_AllowsRequests(t *testing.T) {
-	limiter := NewTokenRateLimiter(nil, nil, DefaultRateLimitConfig())
-	middleware := RateLimitMiddleware(limiter, nil)
-	
-	handler := middleware(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
-		w.WriteHeader(http.StatusOK)
-		w.Write([]byte("OK"))
-	}))
-	
-	req := httptest.NewRequest("GET", "/test", nil)
-	req = req.WithContext(context.WithValue(req.Context(), "token_id", "token1"))
-	
-	rr := httptest.NewRecorder()
-	handler.ServeHTTP(rr, req)
-	
-	assert.Equal(t, http.StatusOK, rr.Code)
-	assert.Equal(t, "OK", rr.Body.String())
-}
-
-func TestRateLimitMiddleware_BlocksRateLimited(t *testing.T) {
-	limiter := NewTokenRateLimiter(nil, nil, RateLimitConfig{
-		RequestsPerMinute: 1,
-		TokensPerMinute:  100,
-		BurstSize:        10,
-		WindowSize:        1,
-	})
-	middleware := RateLimitMiddleware(limiter, nil)
-	
-	handler := middleware(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
-		w.WriteHeader(http.StatusOK)
-	}))
-	
-	// First request should succeed
-	req1 := httptest.NewRequest("GET", "/test", nil)
-	req1 = req1.WithContext(context.WithValue(req1.Context(), "token_id", "token1"))
-	rr1 := httptest.NewRecorder()
-	handler.ServeHTTP(rr1, req1)
-	assert.Equal(t, http.StatusOK, rr1.Code)
-	
-	// Second request should be rate limited
-	req2 := httptest.NewRequest("GET", "/test", nil)
-	req2 = req2.WithContext(context.WithValue(req2.Context(), "token_id", "token1"))
-	rr2 := httptest.NewRecorder()
-	handler.ServeHTTP(rr2, req2)
-	assert.Equal(t, http.StatusTooManyRequests, rr2.Code)
-	assert.Contains(t, rr2.Body.String(), "rate_limit_exceeded")
-}
-```
-
----
-
-## Configuration
-
-### Environment Variables
-
-Add to `.env` or environment:
-
-```bash
-# Rate limiting configuration
-RATE_LIMIT_REQUESTS_PER_MINUTE=60
-RATE_LIMIT_TOKENS_PER_MINUTE=90000
-RATE_LIMIT_BURST_SIZE=10
-RATE_LIMIT_WINDOW_SIZE=1
-RATE_LIMIT_STRATEGY=token_based  # token_based, request_based, hybrid
-```
-
-### Configuration File
-
-**Modify File:** `internal/config/config.go`
-
-```go
-// Add to Config struct
-type Config struct {
-	// ... existing fields ...
-	
-	// Rate limiting configuration
-	RateLimit RateLimitConfig `mapstructure:"rate_limit"`
-}
-
-// Add to RateLimitConfig struct
-type RateLimitConfig struct {
-	RequestsPerMinute int    `mapstructure:"requests_per_minute"`
-	TokensPerMinute  int    `mapstructure:"tokens_per_minute"`
-	BurstSize        int    `mapstructure:"burst_size"`
-	WindowSize        int    `mapstructure:"window_size"`
-	Strategy         string `mapstructure:"strategy"`
-}
-
-// Add default values to DefaultConfig()
-func DefaultConfig() *Config {
-	return &Config{
-		// ... existing defaults ...
-		RateLimit: RateLimitConfig{
-			RequestsPerMinute: 60,
-			TokensPerMinute:  90000,
-			BurstSize:        10,
-			WindowSize:        1,
-			Strategy:         "token_based",
-		},
+// NewConfigurationError creates a new configuration error
+func NewConfigurationError(message string) *RateLimitError {
+	return &RateLimitError{
+		Code:       ErrCodeConfigurationError,
+		Message:    message,
+		ProviderID: "",
+		TokenID:    "",
+		Reasons:    []string{},
 	}
 }
 ```
 
 ---
 
-## Verification Checklist
+## Summary
 
-### Phase 1: Package Creation
-- [ ] `internal/ratelimit/rate_limiter.go` created with RateLimiter interface
-- [ ] `internal/ratelimit/middleware.go` created with HTTP middleware
-- [ ] `internal/ratelimit/strategies.go` created with rate limit strategies
-- [ ] `internal/ratelimit/errors.go` created with error types
-- [ ] Unit tests for rate limiter pass
-- [ ] Unit tests for middleware pass
+This comprehensive implementation plan provides a complete architecture for provider-aware rate limiting in the qwencoder-proxy. The key features include:
 
-### Phase 2: Database Updates
-- [ ] Token usage table added to SQLite schema
-- [ ] Token usage indexes created
-- [ ] `RecordTokenUsage()` method implemented
-- [ ] `GetTokenUsage()` method implemented
-- [ ] `ResetTokenUsage()` method implemented
-- [ ] Database migration tests pass
+1. **Internal Enforcement Only:** No rate limit headers exposed to clients, preventing information leakage
+2. **Provider-Specific Quotas:** Independent configuration for each provider (gemini-cli, qwen, kiro, antigravity, iflow)
+3. **Multi-Metric Tracking:** Support for requests per day, requests per minute, and tokens per minute
+4. **Real-Time Token Tracking:** Accurate estimation of input tokens and counting of output tokens
+5. **Usage-Aware Selection:** Intelligent token selection that prioritizes endpoints with least usage
+6. **Management API:** Complete REST API for dashboard integration and configuration
 
-### Phase 3: Middleware Integration
-- [ ] Token ID added to request context
-- [ ] Rate limiting middleware applied in main.go
-- [ ] Usage recording added after successful requests
-- [ ] Rate limit headers added to responses
-- [ ] Integration tests pass
-
-### Phase 4: Token Selection Integration
-- [ ] Rate limit filtering added to token selection
-- [ ] Rate limiter added to strategy factory
-- [ ] `ErrAllTokensRateLimited` error defined
-- [ ] Token selection tests with rate limiting pass
-
-### Phase 5: Configuration
-- [ ] Environment variables documented
-- [ ] Configuration struct updated
-- [ ] Default values set
-- [ ] Configuration loading tested
-
----
-
-## Impact
-
-**Positive:**
-- Prevents token abuse and quota exhaustion
-- Provides fair usage across multiple tokens
-- Enforces provider-specific rate limits
-- Improves system stability and predictability
-- Better user experience with clear rate limit feedback
-
-**Risk:**
-- Medium complexity - requires careful testing
-- Performance impact from rate limit checks (minimal)
-- Database schema changes require migration
-
-**Side Effects:**
-- All requests will be rate-limited by default
-- Rate limit headers will be added to all responses
-- Token selection will prefer non-rate-limited tokens
-- New database table for usage tracking
-
-**Performance Considerations:**
-- Rate limit check: O(1) - constant time
-- Token state management: O(n) where n is number of active tokens
-- Database queries: Indexed for efficient lookups
-- Memory: ~100 bytes per token state
-
----
-
-## Rollback Plan
-
-If issues arise after deployment:
-
-1. **Disable Rate Limiting:**
-   - Set `RATE_LIMIT_STRATEGY=disabled` in environment
-   - Or remove middleware from `cmd/main.go`
-
-2. **Revert Database:**
-   - Drop `token_usage` table: `DROP TABLE IF EXISTS token_usage;`
-   - Remove indexes: `DROP INDEX IF EXISTS idx_token_usage_token_id;`
-
-3. **Restore Previous Code:**
-   - Revert `internal/proxy/openai_handler.go` changes
-   - Revert `internal/token/token_selection.go` changes
-   - Remove `internal/ratelimit` package
-
-4. **Monitor:**
-   - Check logs for rate limit errors
-   - Monitor token usage patterns
-   - Verify provider API responses
-
----
-
-## Future Enhancements
-
-1. **Per-Provider Rate Limits:**
-   - Different limits for Qwen vs Gemini vs iFlow
-   - Provider-specific configuration
-
-2. **Dynamic Rate Limits:**
-   - Adjust limits based on provider feedback
-   - Learn optimal limits from usage patterns
-
-3. **Quota Management:**
-   - Daily/monthly quotas per token
-   - Quota reset scheduling
-   - Quota exceeded notifications
-
-4. **Rate Limit Analytics:**
-   - Track rate limit violations
-   - Identify abuse patterns
-   - Optimize limit values
-
-5. **Graceful Degradation:**
-   - Queue requests when rate limited
-   - Prioritize important requests
-   - Provide estimated wait times
+The implementation is designed to be secure, performant, scalable, and fully observable through comprehensive logging and metrics.

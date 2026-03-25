@@ -1,6 +1,7 @@
 package token
 
 import (
+	"database/sql"
 	"fmt"
 	"os"
 	"path/filepath"
@@ -13,6 +14,7 @@ type StoreConfig struct {
 	DBPath     string // Path to SQLite database
 	ProviderID string // Provider identifier
 	Logger     logging.Logger
+	DB         *sql.DB // Optional shared database connection (for sharing with rate limiting)
 }
 
 // NewTokenStore creates a SQLite-backed token store
@@ -28,8 +30,17 @@ func newSQLiteStore(config StoreConfig) (TokenStore, error) {
 		return nil, fmt.Errorf("failed to create database directory %s: %w", dbDir, err)
 	}
 
-	// Create SQLite store
-	store, err := NewSQLiteStore(config.DBPath, config.ProviderID, config.Logger)
+	// Create SQLite store with shared database connection if provided
+	var store TokenStore
+	var err error
+	if config.DB != nil {
+		// Use shared database connection (for rate limiting)
+		store, err = NewSQLiteStoreWithDB(config.DBPath, config.ProviderID, config.Logger, config.DB)
+	} else {
+		// Create new database connection (backward compatibility)
+		store, err = NewSQLiteStore(config.DBPath, config.ProviderID, config.Logger)
+	}
+
 	if err != nil {
 		return nil, fmt.Errorf("failed to create SQLite store: %w", err)
 	}

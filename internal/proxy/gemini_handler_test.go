@@ -11,9 +11,9 @@ import (
 	"testing"
 	"time"
 
-	"github.com/sunbankio/qwencoder-proxy/internal/token"
 	"github.com/sunbankio/qwencoder-proxy/internal/logging"
 	"github.com/sunbankio/qwencoder-proxy/internal/provider/gemini"
+	"github.com/sunbankio/qwencoder-proxy/internal/token"
 )
 
 // TestNewGeminiHandler tests constructor

@@ -6,10 +6,10 @@ import (
 	"net/http"
 	"strings"
 
-	auth "github.com/sunbankio/qwencoder-proxy/internal/token"
 	"github.com/sunbankio/qwencoder-proxy/internal/logging"
 	"github.com/sunbankio/qwencoder-proxy/internal/provider"
 	"github.com/sunbankio/qwencoder-proxy/internal/provider/kiro"
+	auth "github.com/sunbankio/qwencoder-proxy/internal/token"
 )
 
 // AnthropicHandler handles requests to /anthropic/* routes

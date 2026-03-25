@@ -32,6 +32,11 @@ type QwenEmailExtractor struct {
 	logger      logging.Logger
 }
 
+// ProviderID returns the provider identifier for Qwen
+func (qe *QwenEmailExtractor) ProviderID() string {
+	return "qwen"
+}
+
 // NewQwenEmailExtractor creates a new QwenEmailExtractor
 func NewQwenEmailExtractor(httpClient *http.Client, logger logging.Logger) *QwenEmailExtractor {
 	if httpClient == nil {
@@ -62,9 +67,20 @@ func (qe *QwenEmailExtractor) ExtractEmail(ctx context.Context, tokenResponse ma
 	return normalizeEmail(email), nil
 }
 
-// ProviderID returns the provider identifier for Qwen
-func (qe *QwenEmailExtractor) ProviderID() string {
-	return "qwen"
+// GetRegisteredProviders returns the list of registered providers (for initialization)
+// This method is called by MultiTokenManager during initialization
+func (eem *EmailExtractionManager) GetRegisteredProviders() []string {
+	eem.mu.RLock()
+	defer eem.mu.RUnlock()
+
+	var providers []string
+	for _, extractor := range eem.extractors {
+		// Get provider ID from extractor (all extractors implement EmailExtractor)
+		providers = append(providers, extractor.ProviderID())
+	}
+
+	eem.logger.DebugLog("[EmailExtractionManager] GetRegisteredProviders: %v", providers)
+	return providers
 }
 
 // UserInfoURL returns the user info endpoint URL for Qwen
@@ -493,5 +509,33 @@ func normalizeEmail(email string) string {
 	if email == "" {
 		return ""
 	}
-	return strings.TrimSpace(strings.ToLower(email))
+	email = strings.TrimSpace(strings.ToLower(email))
+
+	// Basic validation - should not be empty after trim
+	if email == "" {
+		return ""
+	}
+
+	// Basic email format validation - should contain @
+	// Note: We allow aliases (user@local format) for providers like Qwen
+	// This is intentionally permissive to allow various identifier formats
+	if !strings.Contains(email, "@") {
+		return "" // Invalid format
+	}
+
+	// Split email into local and domain parts
+	parts := strings.Split(email, "@")
+	if len(parts) != 2 {
+		return "" // Invalid format
+	}
+
+	localPart := strings.TrimSpace(parts[0])
+	domainPart := strings.TrimSpace(parts[1])
+
+	// Both parts should be non-empty
+	if localPart == "" || domainPart == "" {
+		return ""
+	}
+
+	return email
 }

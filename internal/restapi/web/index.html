@@ -1,0 +1,101 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>QWEncoder Proxy Dashboard</title>
+    <link rel="stylesheet" href="/css/dashboard.css">
+</head>
+<body>
+    <div class="container">
+        <nav class="main-nav">
+            <div class="nav-brand">
+                <h1>QWEncoder Proxy</h1>
+            </div>
+            <ul class="nav-links">
+                <li><a href="/" class="nav-link active">Providers</a></li>
+                <li><a href="/tokens" class="nav-link">Tokens</a></li>
+                <li><a href="/proxies" class="nav-link">Proxies</a></li>
+            </ul>
+        </nav>
+
+        <header>
+            <h1>Dashboard</h1>
+            <p class="subtitle">Manage OAuth tokens for your LLM providers</p>
+        </header>
+
+        <main>
+            <section id="loading" class="loading">
+                <div class="spinner"></div>
+                <p>Loading providers...</p>
+            </section>
+
+            <section id="error" class="error hidden">
+                <div class="error-icon">⚠️</div>
+                <h2>Error Loading Dashboard</h2>
+                <p id="error-message">Unable to load providers. Please try again.</p>
+                <button id="retry-button" class="btn btn-primary">Retry</button>
+            </section>
+
+            <section id="providers" class="providers hidden">
+                <h2>OAuth Providers</h2>
+                <div id="provider-list" class="provider-list">
+                    <!-- Providers will be loaded here -->
+                </div>
+            </section>
+
+            <section id="auth-flow" class="auth-flow hidden">
+                <div class="auth-flow-content">
+                    <h2 id="auth-provider-name">Authenticating...</h2>
+                    <p id="auth-status">Please complete the authentication in the popup window.</p>
+                    <div id="auth-loading" class="spinner"></div>
+                    <button id="auth-cancel" class="btn btn-secondary">Cancel</button>
+                </div>
+            </section>
+
+            <section id="device-flow" class="device-flow hidden">
+                <div class="device-flow-content">
+                    <h2 id="device-provider-name">Device Authentication</h2>
+                    <p class="device-instructions">
+                        Follow these steps to authenticate:
+                    </p>
+                    <ol class="device-steps">
+                        <li>Click the button below to open the verification page</li>
+                        <li>Enter the code shown below on the verification page</li>
+                        <li>Wait for authentication to complete</li>
+                    </ol>
+                    <div class="device-code-container">
+                        <div class="device-code-label">Your Code:</div>
+                        <div id="device-code" class="device-code">Loading...</div>
+                        <button id="copy-code-btn" class="btn btn-secondary btn-sm">Copy Code</button>
+                    </div>
+                    <div class="verification-uri-container">
+                        <a id="verification-uri-link" href="#" target="_blank" class="btn btn-primary btn-block">
+                            Open Verification Page
+                        </a>
+                    </div>
+                    <div id="device-status" class="device-status">
+                        <div class="spinner"></div>
+                        <p>Waiting for authentication...</p>
+                    </div>
+                    <button id="device-cancel" class="btn btn-secondary">Cancel</button>
+                </div>
+            </section>
+
+            <section id="success" class="success hidden">
+                <div class="success-icon">✓</div>
+                <h2>Authentication Successful</h2>
+                <p id="success-message">Your token has been added successfully.</p>
+                <button id="back-button" class="btn btn-primary">Back to Dashboard</button>
+            </section>
+        </main>
+
+        <footer>
+            <p>QWEncoder Proxy &copy; 2024</p>
+        </footer>
+        </div>
+    
+        <script src="/js/shared.js"></script>
+        <script src="/js/dashboard.js"></script>
+</body>
+</html>

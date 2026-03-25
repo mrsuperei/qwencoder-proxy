@@ -11,9 +11,9 @@ import (
 	"testing"
 	"time"
 
-	"github.com/sunbankio/qwencoder-proxy/internal/token"
 	"github.com/sunbankio/qwencoder-proxy/internal/logging"
 	"github.com/sunbankio/qwencoder-proxy/internal/provider/kiro"
+	"github.com/sunbankio/qwencoder-proxy/internal/token"
 )
 
 // TestNewAnthropicHandler tests constructor

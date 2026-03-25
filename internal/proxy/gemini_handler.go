@@ -6,10 +6,10 @@ import (
 	"net/http"
 	"strings"
 
-	auth "github.com/sunbankio/qwencoder-proxy/internal/token"
 	"github.com/sunbankio/qwencoder-proxy/internal/logging"
 	"github.com/sunbankio/qwencoder-proxy/internal/provider"
 	"github.com/sunbankio/qwencoder-proxy/internal/provider/gemini"
+	auth "github.com/sunbankio/qwencoder-proxy/internal/token"
 )
 
 // GeminiHandler handles requests to /gemini/* routes

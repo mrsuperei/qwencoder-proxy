@@ -12,7 +12,6 @@ import (
 	"net/http"
 	"net/url"
 	"os"
-	"path/filepath"
 	"strings"
 	"time"
 
@@ -25,6 +24,7 @@ import (
 	"github.com/sunbankio/qwencoder-proxy/internal/provider/iflow"
 	"github.com/sunbankio/qwencoder-proxy/internal/provider/qwen"
 	"github.com/sunbankio/qwencoder-proxy/internal/proxy"
+	"github.com/sunbankio/qwencoder-proxy/internal/ratelimit"
 	tokpkg "github.com/sunbankio/qwencoder-proxy/internal/token"
 	"golang.org/x/oauth2"
 )
@@ -37,7 +37,6 @@ type Config struct {
 	DeviceCodeTTL   time.Duration // Device code TTL
 	EnableCORS      bool          // Enable CORS
 	AllowedOrigins  []string      // CORS allowed origins
-	DashboardDir    string        // Dashboard directory path (empty = auto-detect)
 }
 
 // DefaultConfig returns the default configuration
@@ -62,6 +61,8 @@ type Server struct {
 	tokenStores       map[string]tokpkg.TokenStore    // providerID -> TokenStore interface
 	tokenManagers     map[string]*tokpkg.TokenManager // providerID -> TokenManager
 	multiTokenManager *tokpkg.MultiTokenManager       // Multi-token manager for all providers
+	rateLimitManager  *ratelimit.QuotaManager         // Rate limit manager for quota enforcement
+	cacheInvalidator  *ratelimit.CacheInvalidator     // Cache invalidator for cache management
 }
 
 // NewServer creates a new OAuth REST API server
@@ -196,61 +197,6 @@ func (s *Server) RegisterRoutes(mux *http.ServeMux) {
 
 // registerRoutes registers all API routes
 func (s *Server) registerRoutes(mux *http.ServeMux) {
-	// Resolve dashboard directory relative to executable location
-	// This ensures the dashboard can be served regardless of working directory
-	dashboardDir, err := s.resolveDashboardDir()
-	if err != nil {
-		s.logger.ErrorLog("Failed to resolve dashboard directory: %v", err)
-		dashboardDir = "web/dashboard" // Fallback to relative path
-	} else {
-		s.logger.InfoLog("Dashboard directory: %s", dashboardDir)
-	}
-
-	// Handle root path - serve index.html
-	mux.HandleFunc("/", func(w http.ResponseWriter, r *http.Request) {
-		// If the path is exactly "/", serve index.html
-		if r.URL.Path == "/" {
-			filePath := filepath.Join(dashboardDir, "index.html")
-			absPath, err := filepath.Abs(filePath)
-			if err != nil {
-				s.logger.ErrorLog("Failed to get absolute path for %s: %v", filePath, err)
-			} else {
-				s.logger.InfoLog("Attempting to serve file: %s (absolute: %s)", filePath, absPath)
-			}
-
-			// Check if file exists
-			if _, err := os.Stat(filePath); os.IsNotExist(err) {
-				s.logger.ErrorLog("File does not exist: %s", filePath)
-				http.Error(w, "File not found", http.StatusNotFound)
-				return
-			}
-
-			// Set proper Content-Type header for HTML
-			w.Header().Set("Content-Type", "text/html; charset=utf-8")
-			http.ServeFile(w, r, filePath)
-			return
-		}
-		// For other paths, serve from the dashboard directory
-		filePath := filepath.Join(dashboardDir, r.URL.Path)
-		s.logger.InfoLog("Attempting to serve file: %s", filePath)
-		http.ServeFile(w, r, filePath)
-	})
-
-	// Serve CSS files from /css/ path with proper MIME type and cache headers
-	// Uses http.FileServer with http.StripPrefix for efficient static file serving
-	cssDir := filepath.Join(dashboardDir, "css")
-	mux.Handle("/css/", http.StripPrefix("/css/", s.createStaticFileHandler(cssDir, "text/css; charset=utf-8", 3600)))
-
-	// Serve JavaScript files from /js/ path with proper MIME type and cache headers
-	// Uses http.FileServer with http.StripPrefix for efficient static file serving
-	jsDir := filepath.Join(dashboardDir, "js")
-	mux.Handle("/js/", http.StripPrefix("/js/", s.createStaticFileHandler(jsDir, "application/javascript; charset=utf-8", 3600)))
-
-	// Serve template files from /templates/ path with proper MIME type and cache headers
-	// Uses http.FileServer with http.StripPrefix for efficient static file serving
-	templatesDir := filepath.Join(dashboardDir, "templates")
-	mux.Handle("/templates/", http.StripPrefix("/templates/", s.createStaticFileHandler(templatesDir, "text/html; charset=utf-8", 1800)))
-
 	// Provider discovery
 	mux.HandleFunc("/api/providers", s.handleProviders)
 	mux.HandleFunc("/api/providers/", s.handleProviderConfig)
@@ -270,30 +216,35 @@ func (s *Server) registerRoutes(mux *http.ServeMux) {
 	mux.HandleFunc("/api/credentials", s.handleCredentials)
 	mux.HandleFunc("/api/credentials/", s.handleProviderCredentials)
 
+	// Proxy management
+	mux.HandleFunc("/api/proxies", func(w http.ResponseWriter, r *http.Request) {
+		switch r.Method {
+		case http.MethodGet:
+			s.handleListProxies(w, r)
+		case http.MethodPost:
+			s.handleAddProxy(w, r)
+		default:
+			WriteError(w, http.StatusMethodNotAllowed, "method_not_allowed", "Method not allowed")
+		}
+	})
+	mux.HandleFunc("/api/proxies/", s.handleProxy)
+
+	// Rate limit management
+	if s.rateLimitManager != nil {
+		rateLimitAPI := NewRateLimitAPI(s.rateLimitManager, s.logger, s.cacheInvalidator)
+		rateLimitAPI.RegisterRoutes(mux)
+		s.logger.InfoLog("[registerRoutes] Rate limit API routes registered")
+	}
+
+	// Cache management API
+	if s.cacheInvalidator != nil {
+		cacheAPI := NewCacheAPI(s.cacheInvalidator, s.logger)
+		cacheAPI.RegisterRoutes(mux)
+		s.logger.InfoLog("[registerRoutes] Cache management API routes registered")
+	}
+
 	// Proxy connection test
 	mux.HandleFunc("/api/proxy/test", s.handleProxyTest)
-}
-
-// createStaticFileHandler creates a handler for serving static files with proper MIME types and cache headers
-// This wrapper ensures proper Content-Type headers and cache-control for static assets
-func (s *Server) createStaticFileHandler(dir, contentType string, maxAge int) http.Handler {
-	// Create a file server for the directory
-	fileServer := http.FileServer(http.Dir(dir))
-
-	// Wrap the file server to add custom headers
-	return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
-		// Set the Content-Type header
-		w.Header().Set("Content-Type", contentType)
-
-		// Set cache-control headers for static assets
-		w.Header().Set("Cache-Control", fmt.Sprintf("public, max-age=%d", maxAge))
-
-		// Log the request for debugging
-		s.logger.InfoLog("Serving static asset: %s (type: %s)", r.URL.Path, contentType)
-
-		// Serve the file
-		fileServer.ServeHTTP(w, r)
-	})
 }
 
 // getTokenStore gets or creates a token store for a provider
@@ -413,6 +364,7 @@ func (s *Server) handleDeviceStart(w http.ResponseWriter, r *http.Request) {
 
 	var req struct {
 		Provider string `json:"provider"`
+		Email    string `json:"email,omitempty"`
 	}
 	if err := ParseJSON(r, &req); err != nil {
 		s.logger.ErrorLog("[handleDeviceStart] Failed to parse request: %v", err)
@@ -441,6 +393,13 @@ func (s *Server) handleDeviceStart(w http.ResponseWriter, r *http.Request) {
 	if config.Flow != "device_code" {
 		s.logger.ErrorLog("[handleDeviceStart] Provider %s has flow %s, not device_code", req.Provider, config.Flow)
 		WriteError(w, http.StatusBadRequest, "invalid_flow", fmt.Sprintf("Provider %s does not support device code flow", req.Provider))
+		return
+	}
+
+	// For Qwen, email is required
+	if req.Provider == "qwen" && req.Email == "" {
+		s.logger.ErrorLog("[handleDeviceStart] Email is required for Qwen provider")
+		WriteError(w, http.StatusBadRequest, "email_required", "Email or alias is required for Qwen provider")
 		return
 	}
 
@@ -495,6 +454,7 @@ func (s *Server) handleDeviceStart(w http.ResponseWriter, r *http.Request) {
 	pollID, err := s.stateManager.CreatePoll(
 		req.Provider,
 		deviceAuthResp.DeviceCode,
+		req.Email,
 		time.Duration(deviceAuthResp.Interval)*time.Second,
 		s.config.DeviceCodeTTL,
 	)
@@ -519,7 +479,7 @@ func (s *Server) handleDeviceStart(w http.ResponseWriter, r *http.Request) {
 		// Create a new context for polling with the device code TTL
 		pollCtx, pollCancel := context.WithTimeout(context.Background(), s.config.DeviceCodeTTL)
 		defer pollCancel()
-		s.pollForToken(pollCtx, pollID, req.Provider, config, codeVerifier, deviceAuthResp)
+		s.pollForToken(pollCtx, pollID, req.Provider, req.Email, config, codeVerifier, deviceAuthResp)
 	}()
 
 	response := map[string]interface{}{
@@ -537,7 +497,7 @@ func (s *Server) handleDeviceStart(w http.ResponseWriter, r *http.Request) {
 }
 
 // pollForToken polls for token completion in the background
-func (s *Server) pollForToken(ctx context.Context, pollID, providerID string, config *ProviderConfig, codeVerifier string, deviceAuthResp *oauth2.DeviceAuthResponse) {
+func (s *Server) pollForToken(ctx context.Context, pollID, providerID, email string, config *ProviderConfig, codeVerifier string, deviceAuthResp *oauth2.DeviceAuthResponse) {
 	s.logger.InfoLog("[pollForToken] Starting poll for token - pollID: %s, provider: %s", pollID, providerID)
 
 	// Check if deviceAuthResp is nil
@@ -618,7 +578,7 @@ func (s *Server) pollForToken(ctx context.Context, pollID, providerID string, co
 				ExpiryDate:   token.Expiry.UnixMilli(),
 			}
 
-			if err := s.saveCredentials(providerID, creds, tokenResponse); err != nil {
+			if err := s.saveCredentials(providerID, creds, tokenResponse, email); err != nil {
 				s.logger.ErrorLog("Failed to save credentials for %s: %v", providerID, err)
 				s.stateManager.UpdatePollError(pollID, "save_failed", err.Error())
 				return
@@ -692,6 +652,7 @@ func (s *Server) handleAuthStart(w http.ResponseWriter, r *http.Request) {
 	var req struct {
 		Provider    string `json:"provider"`
 		RedirectURI string `json:"redirect_uri,omitempty"`
+		Email       string `json:"email,omitempty"`
 	}
 	if err := ParseJSON(r, &req); err != nil {
 		s.logger.ErrorLog("[handleAuthStart] Failed to parse request: %v", err)
@@ -751,8 +712,15 @@ func (s *Server) handleAuthStart(w http.ResponseWriter, r *http.Request) {
 
 	s.logger.InfoLog("[handleAuthStart] Redirect URI: %s", redirectURI)
 
+	// For Qwen, email is required
+	if req.Provider == "qwen" && req.Email == "" {
+		s.logger.ErrorLog("[handleAuthStart] Email is required for Qwen provider")
+		WriteError(w, http.StatusBadRequest, "email_required", "Email or alias is required for Qwen provider")
+		return
+	}
+
 	// Create OAuth state
-	state, err = s.stateManager.CreateState(req.Provider, codeVerifier, redirectURI, s.config.StateTTL)
+	state, err = s.stateManager.CreateState(req.Provider, codeVerifier, redirectURI, req.Email, s.config.StateTTL)
 	if err != nil {
 		s.logger.ErrorLog("[handleAuthStart] Failed to create state: %v", err)
 		WriteError(w, http.StatusInternalServerError, "internal_error", "Failed to create state")
@@ -799,6 +767,7 @@ func (s *Server) handleCallback(w http.ResponseWriter, r *http.Request) {
 	state := r.URL.Query().Get("state")
 	errorCode := r.URL.Query().Get("error")
 	errorDesc := r.URL.Query().Get("error_description")
+	email := r.URL.Query().Get("email")
 
 	s.logger.InfoLog("[Callback] Received callback with state: %s, code: %s, error: %s",
 		state, code, errorCode)
@@ -866,8 +835,14 @@ func (s *Server) handleCallback(w http.ResponseWriter, r *http.Request) {
 
 	s.logger.InfoLog("[Callback] Token exchange successful for provider: %s", oauthState.Provider)
 
-	// Save credentials with email extraction
-	if err := s.saveCredentials(oauthState.Provider, creds, tokenResponseMap); err != nil {
+	// Use email from state (if available) or from query parameter
+	emailToUse := oauthState.Email
+	if emailToUse == "" && email != "" {
+		emailToUse = email
+	}
+
+	// Save credentials with email
+	if err := s.saveCredentials(oauthState.Provider, creds, tokenResponseMap, emailToUse); err != nil {
 		s.logger.ErrorLog("[Callback] Failed to save credentials: %v", err)
 		s.writeCallbackHTML(w, false, "save_failed", err.Error())
 		return
@@ -884,30 +859,139 @@ func (s *Server) writeCallbackHTML(w http.ResponseWriter, success bool, errorCod
 	if success {
 		html := `<!DOCTYPE html>
 <html>
-<head><title>Authorization Successful</title></head>
+<head>
+	   <title>Authorization Successful</title>
+	   <style>
+	       body {
+	           font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, 'Helvetica Neue', Arial, sans-serif;
+	           display: flex;
+	           justify-content: center;
+	           align-items: center;
+	           min-height: 100vh;
+	           margin: 0;
+	           background: #f9fafb;
+	       }
+	       .container {
+	           text-align: center;
+	           padding: 2rem;
+	           background: white;
+	           border-radius: 8px;
+	           box-shadow: 0 4px 6px -1px rgba(0, 0, 0, 0.1);
+	           max-width: 400px;
+	       }
+	       h1 {
+	           color: #10b981;
+	           margin-bottom: 1rem;
+	       }
+	       p {
+	           color: #6b7280;
+	           margin-bottom: 1.5rem;
+	       }
+	       .spinner {
+	           border: 4px solid #e5e7eb;
+	           border-top-color: #10b981;
+	           border-radius: 50%;
+	           width: 40px;
+	           height: 40px;
+	           animation: spin 1s linear infinite;
+	           margin: 0 auto 1rem;
+	       }
+	       @keyframes spin {
+	           to { transform: rotate(360deg); }
+	       }
+	       .success {
+	           display: none;
+	       }
+	   </style>
+</head>
 <body>
-   <h1>Authorization Successful!</h1>
-   <p>You can close this window and return to your application.</p>
-   <script>
-     if (window.opener) {
-       window.opener.postMessage({type: 'oauth_success'}, '*');
-     }
-     setTimeout(() => window.close(), 2000);
-   </script>
+	  <div class="container">
+	      <div id="loading">
+	          <div class="spinner"></div>
+	          <p>Completing authentication...</p>
+	      </div>
+	      <div id="success" class="success">
+	          <h1>Authorization Successful!</h1>
+	          <p>Redirecting to dashboard...</p>
+	      </div>
+	  </div>
+	  <script>
+	    // Notify the parent window that authentication was successful
+	    if (window.opener) {
+	      window.opener.postMessage({type: 'oauth_success'}, '*');
+	    }
+	    
+	    // Wait a bit before showing success message and redirecting
+	    setTimeout(() => {
+	        document.getElementById('loading').style.display = 'none';
+	        document.getElementById('success').style.display = 'block';
+	        
+	        // Redirect to dashboard after showing success message
+	        setTimeout(() => {
+	            window.location.href = '/';
+	        }, 1500);
+	    }, 500);
+	  </script>
 </body>
 </html>`
 		w.Write([]byte(html))
 	} else {
 		html := fmt.Sprintf(`<!DOCTYPE html>
 <html>
-<head><title>Authorization Failed</title></head>
+<head>
+	   <title>Authorization Failed</title>
+	   <style>
+	       body {
+	           font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, 'Helvetica Neue', Arial, sans-serif;
+	           display: flex;
+	           justify-content: center;
+	           align-items: center;
+	           min-height: 100vh;
+	           margin: 0;
+	           background: #f9fafb;
+	       }
+	       .container {
+	           text-align: center;
+	           padding: 2rem;
+	           background: white;
+	           border-radius: 8px;
+	           box-shadow: 0 4px 6px -1px rgba(0, 0, 0, 0.1);
+	           max-width: 400px;
+	       }
+	       h1 {
+	           color: #ef4444;
+	           margin-bottom: 1rem;
+	       }
+	       p {
+	           color: #6b7280;
+	           margin-bottom: 0.75rem;
+	       }
+	       .error-code {
+	           color: #ef4444;
+	           font-weight: 600;
+	       }
+	   </style>
+</head>
 <body>
-   <h1>Authorization Failed</h1>
-   <p>Error: %s</p>
-   <p>%s</p>
-   <p>Please try again.</p>
+	  <div class="container">
+	      <h1>Authorization Failed</h1>
+	      <p class="error-code">Error: %s</p>
+	      <p>%s</p>
+	      <p>Redirecting to dashboard...</p>
+	  </div>
+	  <script>
+	    // Notify the parent window that authentication failed
+	    if (window.opener) {
+	      window.opener.postMessage({type: 'oauth_error', error: '%s'}, '*');
+	    }
+	    
+	    // Redirect to dashboard after showing error message
+	    setTimeout(() => {
+	        window.location.href = '/';
+	    }, 3000);
+	  </script>
 </body>
-</html>`, errorCode, errorDesc)
+</html>`, errorCode, errorDesc, errorCode)
 		w.Write([]byte(html))
 	}
 }
@@ -1023,94 +1107,84 @@ func (s *Server) SetMultiTokenManager(multiTokenMgr *tokpkg.MultiTokenManager) {
 	}
 }
 
+// SetRateLimitManager sets the rate limit manager for rate limiting enforcement
+func (s *Server) SetRateLimitManager(rateLimitMgr *ratelimit.QuotaManager) {
+	s.rateLimitManager = rateLimitMgr
+	s.logger.InfoLog("[Server] Rate limit manager set")
+}
+
+// SetCacheInvalidator sets the cache invalidator for cache management
+func (s *Server) SetCacheInvalidator(invalidator *ratelimit.CacheInvalidator) {
+	s.cacheInvalidator = invalidator
+	s.logger.InfoLog("[Server] Cache invalidator set")
+}
+
 // GetMultiTokenManager returns multi-token manager (for use by other packages)
 func (s *Server) GetMultiTokenManager() *tokpkg.MultiTokenManager {
 	return s.multiTokenManager
 }
 
-// RegisterProxyRoutes registers OpenAI-compatible proxy routes with token manager integration
-// This method retrieves token managers from MultiTokenManager and registers routes
-// with appropriate token managers for proxy-aware token selection
+// RegisterProxyRoutes registers OpenAI-compatible proxy routes with sequential handler
+// This method creates a SequentialHandler that implements the sequential flow:
+// Model → Provider → Token Selection → API Request → Usage Tracking
 func (s *Server) RegisterProxyRoutes(mux *http.ServeMux, factory *provider.Factory, convFactory *converter.Factory) {
-	// Build a map of provider types to their token managers
-	tokenManagers := make(map[provider.ProviderType]*tokpkg.TokenManager)
+	// Create sequential handler if rate limit manager is available
+	if s.rateLimitManager != nil {
+		// Get token selector from quota manager
+		tokenSelector := s.rateLimitManager.GetTokenSelector()
 
-	// Provider type to provider ID mapping for token manager lookup
-	providerToID := map[provider.ProviderType]string{
-		provider.ProviderQwen:        "qwen",
-		provider.ProviderGeminiCLI:   "gemini-cli",
-		provider.ProviderKiro:        "kiro",
-		provider.ProviderAntigravity: "antigravity",
-		provider.ProviderIFlow:       "iflow",
+		// Create sequential handler
+		sequentialHandler := proxy.NewSequentialHandler(
+			factory,
+			convFactory,
+			tokenSelector,
+			s.rateLimitManager,
+			s.logger,
+		)
+
+		// Register general /v1/ route with sequential handler
+		mux.Handle("/v1/", sequentialHandler)
+		s.logger.InfoLog("[RegisterProxyRoutes] Sequential handler registered for /v1/ route")
+
+		// Register provider-specific routes with sequential handler
+		// These routes use the same sequential handler but with fixed provider path
+		mux.Handle("/qwen/v1/", sequentialHandler)
+		mux.Handle("/gemini/v1/", sequentialHandler)
+		mux.Handle("/kiro/v1/", sequentialHandler)
+		mux.Handle("/antigravity/v1/", sequentialHandler)
+		mux.Handle("/iflow/v1/", sequentialHandler)
+
+		s.logger.InfoLog("[RegisterProxyRoutes] Sequential handler registered for all provider routes")
+	} else {
+		// Fallback to original handlers if rate limit manager is not available
+		s.logger.WarnLog("[RegisterProxyRoutes] Rate limit manager not available, using fallback handlers")
+		proxy.RegisterOpenAIRoutesWithTokenManager(mux, factory, convFactory, nil)
+		proxy.RegisterProviderSpecificRoutesWithTokenManager(mux, factory, convFactory, nil)
 	}
 
-	// Retrieve token managers for each provider
-	for providerType, providerID := range providerToID {
-		if s.multiTokenManager != nil {
-			if tm, err := s.multiTokenManager.GetTokenManager(providerID); err == nil && tm != nil {
-				tokenManagers[providerType] = tm
-				s.logger.InfoLog("[RegisterProxyRoutes] Token manager found for provider %s", providerID)
-			} else {
-				s.logger.WarnLog("[RegisterProxyRoutes] No token manager available for provider %s: %v", providerID, err)
-			}
-		} else {
-			s.logger.WarnLog("[RegisterProxyRoutes] MultiTokenManager not initialized, provider %s will not have token manager", providerID)
-		}
-	}
-
-	// Register general /v1/ route with nil token manager
-	// Providers have their own token managers, so general route doesn't need one
-	proxy.RegisterOpenAIRoutesWithTokenManager(mux, factory, convFactory, nil)
-
-	// Register provider-specific routes with their respective token managers
-	proxy.RegisterProviderSpecificRoutesWithTokenManager(mux, factory, convFactory, tokenManagers)
-
-	s.logger.InfoLog("[RegisterProxyRoutes] Proxy routes registered with token manager integration")
+	s.logger.InfoLog("[RegisterProxyRoutes] Proxy routes registered")
 }
 
-// resolveDashboardDir resolves dashboard directory path relative to executable location
-// This ensures dashboard can be served regardless of current working directory
-func (s *Server) resolveDashboardDir() (string, error) {
-	// Get executable path
-	execPath, err := os.Executable()
-	if err != nil {
-		return "", fmt.Errorf("failed to get executable path: %w", err)
-	}
+// saveCredentials saves credentials for a provider with email
+func (s *Server) saveCredentials(providerID string, creds tokpkg.OAuthCreds, tokenResponse map[string]interface{}, providedEmail string) error {
+	var email string
 
-	// Get directory containing executable
-	execDir := filepath.Dir(execPath)
-
-	// Resolve dashboard directory relative to executable
-	dashboardDir := filepath.Join(execDir, "web", "dashboard")
-
-	// Check if dashboard directory exists
-	if _, err := os.Stat(dashboardDir); os.IsNotExist(err) {
-		// If not found relative to executable, try relative to current working directory
-		// This handles development scenarios where binary is run from project root
-		wd, err := os.Getwd()
+	// For Qwen, use provided email (required)
+	if providerID == "qwen" {
+		email = strings.TrimSpace(strings.ToLower(providedEmail))
+		if email == "" {
+			return fmt.Errorf("email is required for Qwen provider")
+		}
+		s.logger.InfoLog("[saveCredentials] Using provided email for Qwen: %s", email)
+	} else {
+		// For other providers, try to extract email from token
+		extractedEmail, err := s.extractEmailFromToken(providerID, creds.AccessToken, tokenResponse)
 		if err != nil {
-			return "", fmt.Errorf("failed to get working directory: %w", err)
+			s.logger.WarnLog("Failed to extract email for %s: %v", providerID, err)
+			email = "unknown@example.com"
+		} else {
+			email = extractedEmail
 		}
-		dashboardDir = filepath.Join(wd, "web", "dashboard")
-
-		// Check again
-		if _, err := os.Stat(dashboardDir); os.IsNotExist(err) {
-			return "", fmt.Errorf("dashboard directory not found (tried: %s and %s)",
-				filepath.Join(execDir, "web", "dashboard"),
-				filepath.Join(wd, "web", "dashboard"))
-		}
-	}
-
-	return dashboardDir, nil
-}
-
-// saveCredentials saves credentials for a provider with email extraction
-func (s *Server) saveCredentials(providerID string, creds tokpkg.OAuthCreds, tokenResponse map[string]interface{}) error {
-	// Extract email from token
-	email, err := s.extractEmailFromToken(providerID, creds.AccessToken, tokenResponse)
-	if err != nil {
-		s.logger.WarnLog("Failed to extract email for %s: %v", providerID, err)
-		email = "unknown@example.com"
 	}
 
 	// Save credentials to database

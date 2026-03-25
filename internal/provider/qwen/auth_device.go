@@ -109,11 +109,56 @@ func AuthenticateWithDeviceFlow(ctx context.Context, logger logging.Logger, mult
 	tokenResponse["token_type"] = oauth2Token.TokenType
 	tokenResponse["expires_in"] = int64(oauth2Token.Expiry.Sub(time.Now()).Seconds())
 
-	email, err := multiTokenMgr.ExtractEmail(ctx, "qwen", tokenResponse, oauth2Token.AccessToken)
-	if err != nil {
-		logger.WarnLog("[Qwen OAuth] Failed to extract email: %v", err)
-		email = ""
+	// Try to extract common OAuth fields from the token response
+	// The Extra() method provides access to additional fields in the token response
+	emailFields := []string{"email", "user_email", "userEmail", "user.email", "sub", "preferred_username"}
+	for _, field := range emailFields {
+		if value := oauth2Token.Extra(field); value != nil {
+			tokenResponse[field] = value
+			logger.DebugLog("[Qwen OAuth] Found field in token response: %s = %v", field, value)
+		}
 	}
+
+	// Also try to get resource_url (already being used later)
+	if resourceURL := oauth2Token.Extra("resource_url"); resourceURL != nil {
+		tokenResponse["resource_url"] = resourceURL
+	}
+
+	// Log token response keys for debugging
+	keys := make([]string, 0, len(tokenResponse))
+	for k := range tokenResponse {
+		keys = append(keys, k)
+	}
+	logger.DebugLog("[Qwen OAuth] Token response keys: %v", keys)
+
+	// Qwen does not provide email in OAuth token response
+	// Prompt user for email/alias (required)
+	fmt.Println("\n=== Qwen Email/Alias Required ===")
+	fmt.Println("Qwen's OAuth does not provide email information.")
+	fmt.Println("Please provide your email or alias to track this token.")
+	fmt.Println()
+
+	var email string
+	for {
+		fmt.Print("Enter your email or alias: ")
+		_, err := fmt.Scanln(&email)
+		if err != nil {
+			fmt.Printf("Error reading input: %v\n", err)
+			continue
+		}
+		email = strings.TrimSpace(email)
+		if email == "" {
+			fmt.Println("Email/alias is required. Please try again.")
+			continue
+		}
+		// Basic validation - should not be empty after trim
+		if len(email) < 1 {
+			fmt.Println("Email/alias is too short. Please try again.")
+			continue
+		}
+		break
+	}
+	fmt.Printf("Using email/alias: %s\n\n", email)
 
 	// Create ProviderToken with email
 	now := time.Now()

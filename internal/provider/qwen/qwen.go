@@ -126,7 +126,18 @@ func (a *QwenAuthenticator) ClearCredentials() error {
 
 // GetTokenWithClient returns a valid access token and an HTTP client.
 // The HTTP client is configured with the proxy settings from the selected token.
+// If a token is already selected in the context (by rate limiting middleware),
+// it will be used instead of selecting a new token.
 func (a *QwenAuthenticator) GetTokenWithClient(ctx context.Context) (string, *http.Client, error) {
+	// Check if token is already selected in context (by rate limiting middleware)
+	if selectedToken, ok := ctx.Value("selected_token").(*tokenpkg.ProviderToken); ok {
+		a.logger.DebugLog("[QwenAuth] Using pre-selected token from context: ID=%s, Email=%s", selectedToken.ID, selectedToken.Email)
+		// Use default HTTP client for now
+		// Note: Proxy-aware client creation would require access to client factory
+		return selectedToken.AccessToken, &http.Client{Timeout: 30 * time.Second}, nil
+	}
+
+	// Fallback to original selection logic
 	if a.tokenManager == nil {
 		return "", nil, errors.New("token manager not initialized")
 	}

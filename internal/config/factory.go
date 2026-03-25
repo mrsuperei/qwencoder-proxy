@@ -5,8 +5,8 @@ import (
 	"net/http"
 	"time"
 
-	auth "github.com/sunbankio/qwencoder-proxy/internal/token"
 	"github.com/sunbankio/qwencoder-proxy/internal/logging"
+	auth "github.com/sunbankio/qwencoder-proxy/internal/token"
 )
 
 // HTTPClientFactory defines the interface for creating HTTP clients

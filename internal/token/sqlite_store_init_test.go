@@ -192,7 +192,7 @@ func TestSQLiteStore_ReopenExistingDatabase(t *testing.T) {
 	var version int
 	err = store2.db.QueryRow("SELECT MAX(version) FROM schema_migrations").Scan(&version)
 	require.NoError(t, err)
-	assert.Equal(t, 1, version)
+	assert.Equal(t, 3, version) // Updated to expect version 3 (includes V3 migration for type column)
 }
 
 func TestSQLiteStore_Persistence(t *testing.T) {

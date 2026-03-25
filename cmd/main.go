@@ -3,6 +3,7 @@ package main
 
 import (
 	"context"
+	"database/sql"
 	"flag"
 	"fmt"
 	"net/http"
@@ -13,7 +14,6 @@ import (
 
 	"github.com/sunbankio/qwencoder-proxy/internal/config"
 	"github.com/sunbankio/qwencoder-proxy/internal/converter"
-	"github.com/sunbankio/qwencoder-proxy/internal/token"
 	"github.com/sunbankio/qwencoder-proxy/internal/logging"
 	"github.com/sunbankio/qwencoder-proxy/internal/provider"
 	"github.com/sunbankio/qwencoder-proxy/internal/provider/antigravity"
@@ -21,13 +21,18 @@ import (
 	"github.com/sunbankio/qwencoder-proxy/internal/provider/iflow"
 	"github.com/sunbankio/qwencoder-proxy/internal/provider/kiro"
 	"github.com/sunbankio/qwencoder-proxy/internal/provider/qwen"
+	"github.com/sunbankio/qwencoder-proxy/internal/ratelimit"
 	"github.com/sunbankio/qwencoder-proxy/internal/restapi"
+	"github.com/sunbankio/qwencoder-proxy/internal/token"
+
+	_ "modernc.org/sqlite"
 )
 
 func main() {
 	// Parse command-line flags
 	port := flag.String("port", "", "Server port (default: 8143)")
 	debug := flag.Bool("debug", false, "Enable debug logging")
+	migrateCmd := flag.Bool("migrate-ratelimit", false, "Migrate rate limiting data to main database")
 	flag.Parse()
 
 	// Load configuration from environment
@@ -46,6 +51,29 @@ func main() {
 	logger := logging.NewLogger()
 	if cfg.Logging.IsDebugMode {
 		logger.DebugLog("Debug mode enabled")
+	}
+
+	// Handle migration command
+	if *migrateCmd {
+		logger.InfoLog("Starting rate limiting data migration...")
+
+		// Create backup
+		backupPath, err := ratelimit.BackupDatabase(cfg.Storage.DBPath)
+		if err != nil {
+			logger.ErrorLog("Failed to create backup: %v", err)
+			os.Exit(1)
+		}
+		logger.InfoLog("Backup created successfully: %s", backupPath)
+
+		// Migrate data
+		if err := ratelimit.MigrateRateLimitingToTokensDB(cfg.Storage.DBPath+".ratelimit", cfg.Storage.DBPath); err != nil {
+			logger.ErrorLog("Migration failed: %v", err)
+			os.Exit(1)
+		}
+
+		logger.InfoLog("Migration completed successfully")
+		logger.InfoLog("You can now safely delete the old rate limiting database: %s", cfg.Storage.DBPath+".ratelimit")
+		return
 	}
 
 	logger.InfoLog("Starting qwencoder-proxy server on port %s", cfg.Server.Port)
@@ -83,6 +111,74 @@ func main() {
 	// Set client factory on multi-token manager
 	multiTokenMgr.SetClientFactory(proxyClientFactory)
 
+	// Open SHARED database connection for both token storage AND rate limiting
+	db, err := sql.Open("sqlite", cfg.Storage.DBPath)
+	if err != nil {
+		logger.ErrorLog("Failed to open database: %v", err)
+		os.Exit(1)
+	}
+	// Configure connection pool for SQLite (single connection to prevent locks)
+	db.SetMaxOpenConns(1) // Only one connection for SQLite
+	db.SetMaxIdleConns(1)
+	db.SetConnMaxLifetime(5 * time.Minute)
+	db.SetConnMaxIdleTime(1 * time.Minute)
+	logger.InfoLog("Configured database connection pool for SQLite")
+
+	// NOTE: Database connection is shared between rate limiting and token storage.
+	// It will be closed during graceful shutdown.
+
+	// Verify database has required tables
+	logger.InfoLog("Verifying rate limiting database tables...")
+	if err := verifyRateLimitTables(db, logger); err != nil {
+		logger.ErrorLog("Database verification failed: %v", err)
+		os.Exit(1)
+	}
+	logger.InfoLog("Rate limiting database tables verified")
+
+	// Initialize integrated rate limit system with SHARED database connection
+	logger.InfoLog("Initializing integrated rate limit system with database: %s", cfg.Storage.DBPath)
+
+	// Create system configuration from app config
+	rateLimitConfig := &ratelimit.SystemConfig{
+		AsyncRecording: &ratelimit.AsyncUsageRecorderConfig{
+			Enabled:     cfg.RateLimit.AsyncEnabled,
+			WorkerCount: cfg.RateLimit.AsyncWorkerCount,
+			QueueSize:   cfg.RateLimit.AsyncQueueSize,
+			RetryLimit:  cfg.RateLimit.AsyncRetryLimit,
+			RetryDelay:  cfg.RateLimit.AsyncRetryDelay,
+		},
+		Caching: &ratelimit.CacheConfig{
+			ProviderMetricsTTL:  cfg.RateLimit.CacheProviderTTL,
+			TokenMetricsTTL:     cfg.RateLimit.CacheTokenTTL,
+			MaxProviderEntries:  cfg.RateLimit.CacheMaxProviders,
+			MaxTokenEntries:     cfg.RateLimit.CacheMaxTokens,
+			RefreshBeforeExpiry: cfg.RateLimit.CacheRefreshBeforeTTL,
+		},
+		DBNotification: &ratelimit.DBNotificationConfig{
+			Enabled:         cfg.RateLimit.EnableDBNotification,
+			PollingInterval: cfg.RateLimit.DBPollingInterval,
+		},
+	}
+
+	rateLimitSystem, err := ratelimit.NewIntegratedRateLimitSystem(db, logger, rateLimitConfig)
+	if err != nil {
+		logger.ErrorLog("Failed to initialize integrated rate limit system: %v", err)
+		os.Exit(1)
+	}
+	logger.InfoLog("Integrated rate limit system initialized successfully")
+
+	// Start the rate limit system
+	if err := rateLimitSystem.Start(); err != nil {
+		logger.ErrorLog("Failed to start rate limit system: %v", err)
+		os.Exit(1)
+	}
+	logger.InfoLog("Rate limit system started")
+
+	// Get components from integrated system
+	quotaManager := rateLimitSystem.GetQuotaManager()
+	cacheInvalidator := rateLimitSystem.GetCacheInvalidator()
+	logger.InfoLog("Rate limiting components ready")
+
 	// Create provider factory
 	providerFactory := provider.NewFactory(logger)
 
@@ -98,7 +194,15 @@ func main() {
 	// Create HTTP mux and register routes
 	mux := http.NewServeMux()
 
-	// Create REST API server for dashboard and OAuth flows
+	// Initialize token stores with SHARED database connection
+	// This prevents database locking issues with rate limiting system
+	if err := multiTokenMgr.InitializeStoresWithDB(db, logger); err != nil {
+		logger.ErrorLog("Failed to initialize token stores with shared DB: %v", err)
+		os.Exit(1)
+	}
+	logger.InfoLog("Initialized token stores with shared database connection")
+
+	// Create REST API server for OAuth flows
 	apiConfig := &restapi.Config{
 		Port:            cfg.Server.Port,
 		CallbackBaseURL: "http://localhost:" + cfg.Server.Port,
@@ -113,7 +217,27 @@ func main() {
 	// This ensures both the proxy server and REST API server share the same token state
 	restAPIServer.SetMultiTokenManager(multiTokenMgr)
 
-	// Register REST API routes (dashboard, providers, credentials, etc.)
+	// Inject rate limit manager into REST API server
+	restAPIServer.SetRateLimitManager(quotaManager)
+
+	// Inject cache invalidator into REST API server
+	restAPIServer.SetCacheInvalidator(cacheInvalidator)
+
+	// Create dashboard handler
+	dashboardHandler, err := restapi.NewDashboardHandler(logger)
+	if err != nil {
+		logger.ErrorLog("Failed to create dashboard handler: %v", err)
+	} else {
+		// Register dashboard routes
+		mux.HandleFunc("/", dashboardHandler.ServeIndex)
+		mux.HandleFunc("/tokens", dashboardHandler.ServeTokens)
+		mux.HandleFunc("/proxies", dashboardHandler.ServeProxies)
+		mux.HandleFunc("/css/", dashboardHandler.ServeCSS)
+		mux.HandleFunc("/js/", dashboardHandler.ServeJS)
+		logger.InfoLog("Dashboard routes registered")
+	}
+
+	// Register REST API routes (providers, credentials, etc.)
 	restAPIServer.RegisterRoutes(mux)
 
 	// Register OpenAI-compatible routes with token manager integration
@@ -146,11 +270,20 @@ func main() {
 	case err := <-errChan:
 		logger.ErrorLog("Server error: %v", err)
 		multiTokenMgr.Stop()
+		quotaManager.Close()
 		os.Exit(1)
 	case sig := <-sigChan:
 		logger.InfoLog("Received signal %v, shutting down...", sig)
-		// Stop multi-token manager
+		// Stop rate limit system first (includes all rate limiting components)
+		if err := rateLimitSystem.Stop(); err != nil {
+			logger.ErrorLog("Failed to stop rate limit system: %v", err)
+		}
+		// Stop multi-token manager (closes token stores)
 		multiTokenMgr.Stop()
+		// Close shared database connection
+		if err := db.Close(); err != nil {
+			logger.ErrorLog("Failed to close database: %v", err)
+		}
 		// Stop REST API server
 		restAPIServer.Stop()
 		logger.InfoLog("Server stopped gracefully")
@@ -318,6 +451,58 @@ func registerProviderConfigs(multiTokenMgr *token.MultiTokenManager) error {
 		},
 	})
 
+	return nil
+}
+
+// verifyRateLimitTables verifies that all required rate limiting tables exist
+func verifyRateLimitTables(db *sql.DB, logger logging.Logger) error {
+	requiredTables := []string{
+		"provider_usage",
+		"token_usage",
+		"request_history",
+	}
+
+	// Query SQLite master table to get all tables
+	rows, err := db.Query(`
+		SELECT name FROM sqlite_master
+		WHERE type='table'
+		AND name IN (?, ?, ?)
+		ORDER BY name
+	`, requiredTables[0], requiredTables[1], requiredTables[2])
+	if err != nil {
+		return fmt.Errorf("failed to query database tables: %w", err)
+	}
+	defer rows.Close()
+
+	var existingTables []string
+	for rows.Next() {
+		var tableName string
+		if err := rows.Scan(&tableName); err != nil {
+			return fmt.Errorf("failed to scan table name: %w", err)
+		}
+		existingTables = append(existingTables, tableName)
+	}
+
+	// Check for missing tables
+	missingTables := []string{}
+	for _, required := range requiredTables {
+		found := false
+		for _, existing := range existingTables {
+			if required == existing {
+				found = true
+				break
+			}
+		}
+		if !found {
+			missingTables = append(missingTables, required)
+		}
+	}
+
+	if len(missingTables) > 0 {
+		return fmt.Errorf("missing required tables: %v", missingTables)
+	}
+
+	logger.InfoLog("All required rate limiting tables exist: %v", existingTables)
 	return nil
 }
 

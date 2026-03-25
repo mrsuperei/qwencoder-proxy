@@ -63,10 +63,69 @@ type StorageConfig struct {
 	DBPath string // Path to SQLite database
 }
 
+// SQLiteRetryConfig holds SQLite retry configuration
+type SQLiteRetryConfig struct {
+	Enabled     bool // Enable retry logic (default: true)
+	MaxRetries  int  // Maximum number of retry attempts (default: 10)
+	BaseDelayMs int  // Base delay in milliseconds (default: 50)
+	MaxDelayMs  int  // Maximum delay in milliseconds (default: 2000)
+}
+
+// DefaultSQLiteRetryConfig returns default SQLite retry configuration
+func DefaultSQLiteRetryConfig() *SQLiteRetryConfig {
+	return &SQLiteRetryConfig{
+		Enabled:     true,
+		MaxRetries:  10,
+		BaseDelayMs: 50,
+		MaxDelayMs:  2000,
+	}
+}
+
 // Default storage configuration constants
 const (
 	DefaultStoragePath = ".credentials/tokens.db"
 )
+
+// RateLimitConfig holds rate limiting configuration
+type RateLimitConfig struct {
+	// Async usage recording configuration
+	AsyncEnabled     bool          // Enable async recording (default: false)
+	AsyncWorkerCount int           // Number of worker goroutines (default: 5)
+	AsyncQueueSize   int           // Channel buffer size (default: 1000)
+	AsyncRetryLimit  int           // Max retries per job (default: 3)
+	AsyncRetryDelay  time.Duration // Delay between retries (default: 100ms)
+
+	// Cache configuration
+	EnableCache           bool          // Enable in-memory caching (default: true)
+	CacheProviderTTL      time.Duration // Provider metrics TTL (default: 5s)
+	CacheTokenTTL         time.Duration // Token metrics TTL (default: 5s)
+	CacheMaxProviders     int           // Max provider entries (default: 100)
+	CacheMaxTokens        int           // Max token entries (default: 1000)
+	CacheRefreshBeforeTTL time.Duration // Refresh before expiry (default: 1s)
+
+	// Database notification configuration
+	EnableDBNotification bool          // Enable database change monitoring (default: false)
+	DBPollingInterval    time.Duration // Interval between database checks (default: 5s)
+}
+
+// DefaultRateLimitConfig returns default rate limit configuration
+func DefaultRateLimitConfig() *RateLimitConfig {
+	return &RateLimitConfig{
+		AsyncEnabled:          false,
+		AsyncWorkerCount:      5,
+		AsyncQueueSize:        1000,
+		AsyncRetryLimit:       3,
+		AsyncRetryDelay:       100 * time.Millisecond,
+		EnableCache:           true,
+		CacheProviderTTL:      5 * time.Second,
+		CacheTokenTTL:         5 * time.Second,
+		CacheMaxProviders:     100,
+		CacheMaxTokens:        1000,
+		CacheRefreshBeforeTTL: 1 * time.Second,
+		EnableDBNotification:  false,
+		DBPollingInterval:     5 * time.Second,
+	}
+}
 
 // Config holds all configuration for application
 type Config struct {
@@ -75,6 +134,8 @@ type Config struct {
 	Logging     LoggingConfig
 	OAuthServer OAuthServerConfig
 	Storage     StorageConfig
+	SQLiteRetry SQLiteRetryConfig
+	RateLimit   RateLimitConfig
 }
 
 // DefaultConfig returns the default configuration
@@ -105,6 +166,8 @@ func DefaultConfig() *Config {
 		Storage: StorageConfig{
 			DBPath: DefaultStoragePath,
 		},
+		SQLiteRetry: *DefaultSQLiteRetryConfig(),
+		RateLimit:   *DefaultRateLimitConfig(),
 	}
 }
 

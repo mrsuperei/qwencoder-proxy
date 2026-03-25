@@ -38,6 +38,7 @@ func (pt ProxyType) String() string {
 
 // ProxyConfig represents a configuration for a proxy server.
 type ProxyConfig struct {
+	ID       string    `json:"id"`                 // Unique proxy ID (UUID)
 	Type     ProxyType `json:"type"`               // Type of proxy (none, http, https, socks5)
 	Host     string    `json:"host"`               // Proxy server hostname or IP address
 	Port     int       `json:"port"`               // Proxy server port number

@@ -19,7 +19,9 @@ const (
 	CredentialsDirMode       = 0700 // Owner read/write/execute only
 
 	// User Info URLs for email extraction
-	QwenUserInfoURL         = "https://qwen-api.aliyuncs.com/v1/user/info"
+	// Note: Qwen's OAuth token response with openid profile email scopes should include email directly
+	// If email is not in token response, this endpoint is used as fallback
+	QwenUserInfoURL         = "https://chat.qwen.ai/api/v1/user/info"
 	GeminiUserInfoURL       = "https://www.googleapis.com/oauth2/v3/userinfo"
 	KiroSocialUserInfoURL   = "https://kiro-api.com/api/user/info"
 	KiroIdentityUserInfoURL = "https://identity.kiro-api.com/userinfo"

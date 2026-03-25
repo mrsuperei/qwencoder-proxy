@@ -3,6 +3,7 @@ package token
 
 import (
 	"context"
+	"database/sql"
 	"fmt"
 	"net/http"
 	"os"
@@ -117,6 +118,31 @@ func (mtm *MultiTokenManager) Initialize() error {
 
 	mtm.initialized = true
 	mtm.logger.InfoLog("[MultiTokenManager] Initialization complete")
+	return nil
+}
+
+// InitializeStoresWithDB initializes all token stores with a shared database connection
+// This prevents database locking issues with rate limiting system
+func (mtm *MultiTokenManager) InitializeStoresWithDB(sharedDB *sql.DB, logger logging.Logger) error {
+	mtm.mu.Lock()
+	defer mtm.mu.Unlock()
+
+	// Get all registered providers
+	providers := mtm.emailManager.GetRegisteredProviders()
+
+	// Initialize each provider's store with the shared database connection
+	for _, providerID := range providers {
+		// Use NewSQLiteStoreWithDB to share the database connection
+		store, err := NewSQLiteStoreWithDB(mtm.dbPath, providerID, logger, sharedDB)
+		if err != nil {
+			return fmt.Errorf("failed to create SQLite store for provider %s: %w", providerID, err)
+		}
+		mtm.stores[providerID] = store
+		mtm.healthTrackers[providerID] = NewHealthTracker(store, mtm.logger)
+	}
+
+	mtm.initialized = true
+	mtm.logger.InfoLog("[MultiTokenManager] Initialized %d token stores with shared database connection", len(providers))
 	return nil
 }
 

@@ -13,8 +13,8 @@ import (
 
 	"golang.org/x/net/proxy"
 
-	"github.com/sunbankio/qwencoder-proxy/internal/token"
 	"github.com/sunbankio/qwencoder-proxy/internal/logging"
+	"github.com/sunbankio/qwencoder-proxy/internal/token"
 )
 
 // ProxyAwareHTTPClientFactory creates and caches HTTP clients configured with proxy settings.

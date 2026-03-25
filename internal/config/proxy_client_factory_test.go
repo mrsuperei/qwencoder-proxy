@@ -6,8 +6,8 @@ import (
 	"testing"
 	"time"
 
-	auth "github.com/sunbankio/qwencoder-proxy/internal/token"
 	"github.com/sunbankio/qwencoder-proxy/internal/logging"
+	auth "github.com/sunbankio/qwencoder-proxy/internal/token"
 )
 
 // TestNewProxyAwareHTTPClientFactory verifies factory creation with default and custom values.

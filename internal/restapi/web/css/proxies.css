@@ -1,0 +1,334 @@
+/* Proxy Management Page Styles */
+
+/* Proxy List Container */
+.proxies-container {
+    max-width: 1200px;
+    margin: 0 auto;
+    padding: 20px;
+}
+
+.proxies-header {
+    display: flex;
+    justify-content: space-between;
+    align-items: center;
+    margin-bottom: 24px;
+}
+
+.proxies-header h2 {
+    margin: 0;
+    font-size: 24px;
+    font-weight: 600;
+}
+
+/* Proxy List Grid */
+.proxy-list {
+    display: grid;
+    grid-template-columns: repeat(auto-fill, minmax(350px, 1fr));
+    gap: 20px;
+}
+
+/* Proxy Card */
+.proxy-card {
+    background: white;
+    border: 1px solid #e0e0e0;
+    border-radius: 8px;
+    padding: 20px;
+    transition: box-shadow 0.2s ease;
+}
+
+.proxy-card:hover {
+    box-shadow: 0 4px 12px rgba(0, 0, 0, 0.1);
+}
+
+.proxy-card-header {
+    display: flex;
+    justify-content: space-between;
+    align-items: flex-start;
+    margin-bottom: 16px;
+}
+
+.proxy-card-title {
+    display: flex;
+    align-items: center;
+    gap: 8px;
+    margin: 0;
+    font-size: 18px;
+    font-weight: 600;
+}
+
+/* Proxy Type Badge */
+.proxy-type-badge {
+    display: inline-block;
+    padding: 4px 8px;
+    border-radius: 4px;
+    font-size: 12px;
+    font-weight: 600;
+    text-transform: uppercase;
+}
+
+.proxy-type-badge.http {
+    background: #e3f2fd;
+    color: #1976d2;
+}
+
+.proxy-type-badge.https {
+    background: #e8f5e9;
+    color: #388e3c;
+}
+
+.proxy-type-badge.socks5 {
+    background: #fff3e0;
+    color: #f57c00;
+}
+
+/* Proxy Actions */
+.proxy-card-actions {
+    display: flex;
+    gap: 8px;
+}
+
+.proxy-card-actions button {
+    padding: 6px 12px;
+    font-size: 14px;
+}
+
+/* Proxy Details */
+.proxy-details {
+    margin-bottom: 16px;
+}
+
+.proxy-detail-row {
+    display: flex;
+    justify-content: space-between;
+    padding: 8px 0;
+    border-bottom: 1px solid #f0f0f0;
+}
+
+.proxy-detail-row:last-child {
+    border-bottom: none;
+}
+
+.proxy-detail-label {
+    color: #666;
+    font-size: 14px;
+}
+
+.proxy-detail-value {
+    font-weight: 500;
+    font-size: 14px;
+}
+
+/* Token Count Section */
+.proxy-token-count {
+    display: flex;
+    align-items: center;
+    justify-content: space-between;
+    padding: 12px;
+    background: #f5f5f5;
+    border-radius: 6px;
+    margin-top: 16px;
+}
+
+.proxy-token-count-info {
+    display: flex;
+    align-items: center;
+    gap: 8px;
+}
+
+.proxy-token-count-icon {
+    font-size: 18px;
+}
+
+.proxy-token-count-value {
+    font-weight: 600;
+    color: #1976d2;
+}
+
+.view-tokens-btn {
+    background: white;
+    border: 1px solid #d0d0d0;
+    padding: 6px 12px;
+    border-radius: 4px;
+    cursor: pointer;
+    font-size: 14px;
+    transition: all 0.2s ease;
+}
+
+.view-tokens-btn:hover {
+    background: #f0f0f0;
+    border-color: #b0b0b0;
+}
+
+/* Empty State */
+.empty-icon {
+    font-size: 64px;
+    margin-bottom: 16px;
+}
+
+/* Delete Info */
+.delete-info {
+    background: #f5f5f5;
+    padding: 12px;
+    border-radius: 6px;
+    margin: 16px 0;
+}
+
+.delete-info-item {
+    display: flex;
+    justify-content: space-between;
+    padding: 4px 0;
+}
+
+.delete-info-label {
+    color: #666;
+}
+
+.delete-info-value {
+    font-weight: 500;
+}
+
+/* Warning */
+.warning {
+    background: #fff3cd;
+    border: 1px solid #ffc107;
+    border-radius: 6px;
+    padding: 12px;
+    margin: 16px 0;
+}
+
+.warning p {
+    margin: 4px 0;
+}
+
+/* Linked Tokens Modal */
+.proxy-info {
+    background: #f5f5f5;
+    padding: 16px;
+    border-radius: 6px;
+    margin-bottom: 20px;
+}
+
+.proxy-info-title {
+    font-weight: 600;
+    margin-bottom: 12px;
+    color: #333;
+}
+
+.proxy-info-row {
+    display: flex;
+    justify-content: space-between;
+    padding: 4px 0;
+}
+
+.proxy-info-label {
+    color: #666;
+}
+
+.proxy-info-value {
+    font-weight: 500;
+}
+
+/* Linked Tokens List */
+.linked-tokens-list {
+    max-height: 400px;
+    overflow-y: auto;
+}
+
+.linked-token-item {
+    display: flex;
+    justify-content: space-between;
+    align-items: center;
+    padding: 12px;
+    background: white;
+    border: 1px solid #e0e0e0;
+    border-radius: 6px;
+    margin-bottom: 8px;
+}
+
+.linked-token-info {
+    flex: 1;
+}
+
+.linked-token-email {
+    font-weight: 600;
+    margin-bottom: 4px;
+}
+
+.linked-token-provider {
+    font-size: 14px;
+    color: #666;
+}
+
+.linked-token-status {
+    display: flex;
+    align-items: center;
+    gap: 8px;
+}
+
+.status-badge {
+    padding: 4px 8px;
+    border-radius: 4px;
+    font-size: 12px;
+    font-weight: 600;
+}
+
+.status-badge.healthy {
+    background: #e8f5e9;
+    color: #388e3c;
+}
+
+.status-badge.unhealthy {
+    background: #ffebee;
+    color: #d32f2f;
+}
+
+.no-linked-tokens {
+    text-align: center;
+    padding: 40px 20px;
+    color: #666;
+}
+
+/* Test Result */
+.test-result {
+    margin-top: 16px;
+    padding: 12px;
+    border-radius: 6px;
+    display: flex;
+    align-items: center;
+    gap: 12px;
+}
+
+.test-result.success {
+    background: #e8f5e9;
+    border: 1px solid #388e3c;
+}
+
+.test-result.error {
+    background: #ffebee;
+    border: 1px solid #d32f2f;
+}
+
+.test-result-icon {
+    font-size: 24px;
+}
+
+.test-result-message {
+    flex: 1;
+}
+
+/* Responsive Design */
+@media (max-width: 768px) {
+    .proxy-list {
+        grid-template-columns: 1fr;
+    }
+
+    .proxies-header {
+        flex-direction: column;
+        gap: 16px;
+        align-items: stretch;
+    }
+
+    .proxies-header button {
+        width: 100%;
+    }
+}

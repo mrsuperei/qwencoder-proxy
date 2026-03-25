@@ -147,12 +147,13 @@ func (s *Server) refreshToken(config *ProviderConfig, creds tokpkg.OAuthCreds) (
 
 // providerTokenToInfo converts ProviderToken to ProviderTokenInfo
 func (s *Server) providerTokenToInfo(token tokpkg.ProviderToken) ProviderTokenInfo {
+	s.logger.InfoLog("[providerTokenToInfo] Converting token with ID: %s", token.ID)
 	expiresIn := (token.ExpiryDate - time.Now().UnixMilli()) / 1000
 	if expiresIn < 0 {
 		expiresIn = 0
 	}
 
-	return ProviderTokenInfo{
+	info := ProviderTokenInfo{
 		ID:          token.ID,
 		Email:       token.Email,
 		ExpiryDate:  token.ExpiryDate,
@@ -164,6 +165,8 @@ func (s *Server) providerTokenToInfo(token tokpkg.ProviderToken) ProviderTokenIn
 		CreatedAt:   token.CreatedAt,
 		ErrorCount:  token.ErrorCount,
 	}
+	s.logger.InfoLog("[providerTokenToInfo] Conversion complete")
+	return info
 }
 
 // validateProvider validates that provider ID is valid
@@ -175,7 +178,9 @@ func (s *Server) validateProvider(providerID string) error {
 
 // refreshProviderToken refreshes a token using provider-specific logic
 func (s *Server) refreshProviderToken(config *ProviderConfig, token *tokpkg.ProviderToken) (tokpkg.ProviderToken, error) {
+	s.logger.InfoLog("[refreshProviderToken] Starting token refresh, tokenURL: %s", config.TokenURL)
 	if token.RefreshToken == "" {
+		s.logger.ErrorLog("[refreshProviderToken] No refresh token available")
 		return tokpkg.ProviderToken{}, fmt.Errorf("no refresh token available")
 	}
 
@@ -194,11 +199,14 @@ func (s *Server) refreshProviderToken(config *ProviderConfig, token *tokpkg.Prov
 		RefreshToken: token.RefreshToken,
 	}
 
+	s.logger.InfoLog("[refreshProviderToken] Creating token source and calling Token()...")
 	tokenSource := oauthConfig.TokenSource(ctx, oauthToken)
 	newToken, err := tokenSource.Token()
 	if err != nil {
+		s.logger.ErrorLog("[refreshProviderToken] Token refresh failed: %v", err)
 		return tokpkg.ProviderToken{}, fmt.Errorf("failed to refresh token: %w", err)
 	}
+	s.logger.InfoLog("[refreshProviderToken] Token refreshed successfully")
 
 	refreshed := tokpkg.ProviderToken{
 		AccessToken:  newToken.AccessToken,
@@ -258,21 +266,16 @@ func (s *Server) handleGetToken(w http.ResponseWriter, r *http.Request, provider
 		return
 	}
 
-	// Update LastUsed timestamp
+	// Update LastUsed timestamp using UpdateToken (more efficient than Save)
 	store, err := s.multiTokenManager.GetTokenStore(providerID)
 	if err != nil {
 		s.logger.WarnLog("Failed to get token store: %v", err)
 	} else {
-		// Load tokens, update LastUsed, and save
-		tokensMap, loadErr := store.Load()
-		if loadErr != nil {
-			s.logger.WarnLog("Failed to load tokens: %v", loadErr)
-		} else if existingToken, exists := tokensMap[token.ID]; exists {
-			existingToken.LastUsed = time.Now().UnixMilli()
-			tokensMap[token.ID] = existingToken
-			if saveErr := store.Save(tokensMap); saveErr != nil {
-				s.logger.WarnLog("Failed to update LastUsed timestamp: %v", saveErr)
-			}
+		// Update just the selected token's LastUsed timestamp
+		if updateErr := store.UpdateToken(token.ID, func(t *tokpkg.ProviderToken) {
+			t.LastUsed = time.Now().UnixMilli()
+		}); updateErr != nil {
+			s.logger.WarnLog("Failed to update LastUsed timestamp: %v", updateErr)
 		}
 	}
 
@@ -434,25 +437,27 @@ func (s *Server) handleClearCredentials(w http.ResponseWriter, r *http.Request) 
 func (s *Server) handleProviderCredentials(w http.ResponseWriter, r *http.Request) {
 	s.logger.InfoLog("[handleProviderCredentials] Path: %s, Method: %s", r.URL.Path, r.Method)
 	// Extract provider ID and action from path
-	// Path format: /api/credentials/{provider} or /api/credentials/{provider}/{action}
-	parts := strings.Split(strings.Trim(r.URL.Path, "/"), "/")
+	// Path format: /api/credentials/{provider} or /api/credentials/{provider}/{tokenID}/{action}
+	// Normalize path by removing duplicate slashes
+	normalizedPath := strings.Join(strings.Split(r.URL.Path, "/"), "/")
+	parts := strings.Split(normalizedPath, "/")
 	s.logger.InfoLog("[handleProviderCredentials] Parts: %v, Length: %d", parts, len(parts))
 	if len(parts) < 4 {
 		WriteError(w, http.StatusNotFound, "not_found", "Endpoint not found")
 		return
 	}
 
-	providerID := parts[2]
-	s.logger.InfoLog("[handleProviderCredentials] providerID: %s (from parts[2])", providerID)
+	providerID := parts[3]
+	s.logger.InfoLog("[handleProviderCredentials] providerID: %s (from parts[3])", providerID)
 
 	switch r.Method {
 	case http.MethodGet:
 		if len(parts) == 4 {
 			// GET /api/credentials/{provider} - List all tokens for a provider
 			s.handleGetProviderCredentials(w, r, providerID)
-		} else if len(parts) == 5 && parts[4] == "proxy" {
+		} else if len(parts) == 6 && parts[5] == "proxy" {
 			// GET /api/credentials/{provider}/{tokenID}/proxy - Get proxy config for a token
-			tokenID := parts[3]
+			tokenID := parts[4]
 			s.getProxyConfigHandler(w, r, providerID, tokenID)
 		} else {
 			WriteError(w, http.StatusNotFound, "not_found", "Endpoint not found")
@@ -461,21 +466,21 @@ func (s *Server) handleProviderCredentials(w http.ResponseWriter, r *http.Reques
 		if len(parts) == 4 {
 			// POST /api/credentials/{provider} - Add a new token
 			s.handleAddToken(w, r, providerID)
-		} else if len(parts) == 5 && parts[4] == "refresh" {
+		} else if len(parts) == 6 && parts[5] == "refresh" {
 			// POST /api/credentials/{provider}/{tokenID}/refresh - Refresh a specific token
-			tokenID := parts[3]
+			tokenID := parts[4]
 			s.handleRefreshTokenByID(w, r, providerID, tokenID)
 		} else {
 			WriteError(w, http.StatusNotFound, "not_found", "Endpoint not found")
 		}
 	case http.MethodDelete:
-		if len(parts) == 4 {
+		if len(parts) == 5 {
 			// DELETE /api/credentials/{provider}/{tokenID} - Delete a specific token
-			tokenID := parts[3]
+			tokenID := parts[4]
 			s.handleDeleteTokenByID(w, r, providerID, tokenID)
-		} else if len(parts) == 5 && parts[4] == "proxy" {
+		} else if len(parts) == 6 && parts[5] == "proxy" {
 			// DELETE /api/credentials/{provider}/{tokenID}/proxy - Remove proxy config for a token
-			tokenID := parts[3]
+			tokenID := parts[4]
 			s.deleteProxyConfigHandler(w, r, providerID, tokenID)
 		} else {
 			WriteError(w, http.StatusNotFound, "not_found", "Endpoint not found")
@@ -484,9 +489,9 @@ func (s *Server) handleProviderCredentials(w http.ResponseWriter, r *http.Reques
 		if len(parts) == 5 && parts[4] == "settings" {
 			// PUT /api/credentials/{provider}/settings - Update provider settings
 			s.handleUpdateProviderSettings(w, r, providerID)
-		} else if len(parts) == 5 && parts[4] == "proxy" {
+		} else if len(parts) == 6 && parts[5] == "proxy" {
 			// PUT /api/credentials/{provider}/{tokenID}/proxy - Update proxy config for a token
-			tokenID := parts[3]
+			tokenID := parts[4]
 			s.updateProxyConfigHandler(w, r, providerID, tokenID)
 		} else {
 			WriteError(w, http.StatusNotFound, "not_found", "Endpoint not found")
@@ -654,61 +659,80 @@ func (s *Server) handleDeleteTokenByID(w http.ResponseWriter, r *http.Request, p
 
 // handleRefreshTokenByID refreshes a specific token
 func (s *Server) handleRefreshTokenByID(w http.ResponseWriter, r *http.Request, providerID, tokenID string) {
+	defer func() {
+		if r := recover(); r != nil {
+			s.logger.ErrorLog("[handleRefreshTokenByID] PANIC recovered: %v", r)
+			WriteError(w, http.StatusInternalServerError, "internal_error", fmt.Sprintf("Internal error: %v", r))
+		}
+	}()
+	s.logger.InfoLog("[handleRefreshTokenByID] Starting refresh for provider: %s, tokenID: %s", providerID, tokenID)
 	store, err := s.multiTokenManager.GetTokenStore(providerID)
 	if err != nil {
+		s.logger.ErrorLog("[handleRefreshTokenByID] Failed to get token store: %v", err)
 		WriteError(w, http.StatusNotFound, "not_found", err.Error())
 		return
 	}
 
-	// Load existing tokens
-	var tokensMap map[string]tokpkg.TokenMetadata
-	tokensMap, err = store.Load()
+	// Load just the token being refreshed (not all tokens)
+	tokenMetadata, err := store.GetToken(tokenID)
 	if err != nil {
-		WriteError(w, http.StatusInternalServerError, "load_failed", err.Error())
-		return
-	}
-
-	// Get token from map
-	token, exists := tokensMap[tokenID]
-	if !exists {
+		s.logger.ErrorLog("[handleRefreshTokenByID] Failed to get token: %v", err)
 		WriteError(w, http.StatusNotFound, "token_not_found", fmt.Sprintf("Token not found: %s", tokenID))
 		return
 	}
+	s.logger.InfoLog("[handleRefreshTokenByID] Loaded token %s, has refresh token: %v", tokenID, tokenMetadata.RefreshToken != "")
 
 	// Get provider config for refresh
 	config, err := s.registry.GetConfig(providerID)
 	if err != nil {
+		s.logger.ErrorLog("[handleRefreshTokenByID] Failed to get provider config: %v", err)
 		WriteError(w, http.StatusBadRequest, "invalid_provider", err.Error())
 		return
 	}
+	s.logger.InfoLog("[handleRefreshTokenByID] Got provider config, tokenURL: %s", config.TokenURL)
 
 	// Refresh token using provider-specific logic
-	refreshed, err := s.refreshProviderToken(config, &token)
+	s.logger.InfoLog("[handleRefreshTokenByID] Calling refreshProviderToken...")
+	refreshed, err := s.refreshProviderToken(config, tokenMetadata)
 	if err != nil {
+		s.logger.ErrorLog("[handleRefreshTokenByID] Failed to refresh token: %v", err)
 		WriteError(w, http.StatusInternalServerError, "refresh_failed", err.Error())
 		return
 	}
+	s.logger.InfoLog("[handleRefreshTokenByID] Token refreshed successfully")
 
-	// Update token in store
-	refreshed.ID = tokenID
-	refreshed.Email = token.Email
-	refreshed.CreatedAt = token.CreatedAt
-	refreshed.LastUsed = time.Now().UnixMilli()
-	refreshed.Healthy = true
-	refreshed.HealthScore = 1.0
-	refreshed.ErrorCount = 0
+	// Preserve original metadata
+	originalEmail := tokenMetadata.Email
+	originalCreatedAt := tokenMetadata.CreatedAt
 
-	// Update in map and save
-	tokensMap[tokenID] = refreshed
-	if err := store.Save(tokensMap); err != nil {
+	// Update just this one token in the store using UpdateToken
+	s.logger.InfoLog("[handleRefreshTokenByID] Updating token in store...")
+	err = store.UpdateToken(tokenID, func(t *tokpkg.ProviderToken) {
+		t.AccessToken = refreshed.AccessToken
+		t.RefreshToken = refreshed.RefreshToken
+		t.TokenType = refreshed.TokenType
+		t.ExpiryDate = refreshed.ExpiryDate
+		t.Email = originalEmail
+		t.CreatedAt = originalCreatedAt
+		t.LastUsed = time.Now().UnixMilli()
+		t.Healthy = true
+		t.HealthScore = 1.0
+		t.ErrorCount = 0
+		t.LastError = ""
+	})
+	if err != nil {
+		s.logger.ErrorLog("[handleRefreshTokenByID] Failed to update token: %v", err)
 		WriteError(w, http.StatusInternalServerError, "save_failed", err.Error())
 		return
 	}
+	s.logger.InfoLog("[handleRefreshTokenByID] Token updated successfully")
 
+	s.logger.InfoLog("[handleRefreshTokenByID] Writing JSON response...")
 	WriteJSON(w, http.StatusOK, map[string]interface{}{
 		"success": true,
 		"token":   s.providerTokenToInfo(refreshed),
 	})
+	s.logger.InfoLog("[handleRefreshTokenByID] Response written successfully")
 }
 
 // handleUpdateProviderSettings updates provider settings
@@ -882,46 +906,16 @@ func (s *Server) updateProxyConfigHandler(w http.ResponseWriter, r *http.Request
 		return
 	}
 
-	// Check if token exists
-	tokensMap, loadErr := store.Load()
-	if loadErr != nil {
-		s.logger.ErrorLog("[updateProxyConfig] Failed to load tokens: %v", loadErr)
-		WriteError(w, http.StatusInternalServerError, "load_failed", loadErr.Error())
-		return
-	}
-
-	token, exists := tokensMap[tokenID]
-	if !exists {
-		s.logger.ErrorLog("[updateProxyConfig] Token not found - provider: %s, tokenID: %s", providerID, tokenID)
-		WriteError(w, http.StatusNotFound, "not_found", "Token not found")
-		return
-	}
-
 	// Log the change for audit trail
-	s.logger.InfoLog("[updateProxyConfig] Updating proxy config for token %s - Type: %s, Host: %s, Port: %d, Enabled: %t",
+	s.logger.InfoLog("[updateProxyConfig] Updating proxy config for token %s - Type: %s, Host: %s, Port: %d",
 		tokenID, proxyConfig.Type, proxyConfig.Host, proxyConfig.Port)
 
-	// Update token with new proxy config
-	tokensMap, loadErr = store.Load()
-	if loadErr != nil {
-		s.logger.ErrorLog("[updateProxyConfig] Failed to load tokens: %v", loadErr)
-		WriteError(w, http.StatusInternalServerError, "load_failed", loadErr.Error())
-		return
-	}
-
-	token, exists = tokensMap[tokenID]
-	if !exists {
-		s.logger.ErrorLog("[updateProxyConfig] Token not found - tokenID: %s", tokenID)
-		WriteError(w, http.StatusNotFound, "not_found", "Token not found")
-		return
-	}
-
-	// Update token with new proxy config
-	token.Proxy = &proxyConfig
-	token.ProxyHealthScore = 1.0 // Reset proxy health score on config change
-	tokensMap[tokenID] = token
-
-	if err := store.Save(tokensMap); err != nil {
+	// Update just this one token using UpdateToken (more efficient than Save)
+	err = store.UpdateToken(tokenID, func(t *tokpkg.ProviderToken) {
+		t.Proxy = &proxyConfig
+		t.ProxyHealthScore = 1.0 // Reset proxy health score on config change
+	})
+	if err != nil {
 		s.logger.ErrorLog("[updateProxyConfig] Failed to update token: %v", err)
 		WriteError(w, http.StatusInternalServerError, "update_failed", err.Error())
 		return
@@ -956,34 +950,25 @@ func (s *Server) deleteProxyConfigHandler(w http.ResponseWriter, r *http.Request
 		return
 	}
 
-	// Load tokens
-	tokensMap, loadErr := store.Load()
-	if loadErr != nil {
-		s.logger.ErrorLog("[deleteProxyConfig] Failed to load tokens: %v", loadErr)
-		WriteError(w, http.StatusInternalServerError, "load_failed", loadErr.Error())
-		return
-	}
-
-	// Check if token exists
-	token, exists := tokensMap[tokenID]
-	if !exists {
+	// Check if proxy was configured
+	token, err := store.GetToken(tokenID)
+	if err != nil {
 		s.logger.ErrorLog("[deleteProxyConfig] Token not found - provider: %s, tokenID: %s", providerID, tokenID)
 		WriteError(w, http.StatusNotFound, "not_found", "Token not found")
 		return
 	}
 
-	// Check if proxy was configured
 	hadProxy := token.Proxy != nil
 
 	// Log the deletion for audit trail
 	s.logger.InfoLog("[deleteProxyConfig] Removing proxy config for token %s (had proxy: %v)", tokenID, hadProxy)
 
-	// Update token to remove proxy config
-	token.Proxy = nil
-	token.ProxyHealthScore = 1.0 // Reset proxy health score
-	tokensMap[tokenID] = token
-
-	if err := store.Save(tokensMap); err != nil {
+	// Update just this one token using UpdateToken (more efficient than Save)
+	err = store.UpdateToken(tokenID, func(t *tokpkg.ProviderToken) {
+		t.Proxy = nil
+		t.ProxyHealthScore = 1.0 // Reset proxy health score
+	})
+	if err != nil {
 		s.logger.ErrorLog("[deleteProxyConfig] Failed to update token: %v", err)
 		WriteError(w, http.StatusInternalServerError, "update_failed", err.Error())
 		return

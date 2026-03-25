@@ -12,9 +12,9 @@ import (
 	"testing"
 
 	"github.com/sunbankio/qwencoder-proxy/internal/converter"
-	"github.com/sunbankio/qwencoder-proxy/internal/token"
 	"github.com/sunbankio/qwencoder-proxy/internal/logging"
 	"github.com/sunbankio/qwencoder-proxy/internal/provider"
+	"github.com/sunbankio/qwencoder-proxy/internal/token"
 )
 
 // mockProvider is a mock implementation of provider.Provider for testing
