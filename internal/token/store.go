@@ -35,18 +35,76 @@ type StoreSettings struct {
 // while providing a cleaner abstraction for storage operations.
 type TokenMetadata = ProviderToken
 
-// TokenStore defines token storage operations following the Dependency Inversion Principle.
-// Enables swapping storage implementations (file, database, cloud, in-memory for tests).
+// TokenStore defines the complete interface for token storage operations.
+// This interface provides all methods needed for token management including
+// CRUD operations, validation, settings management, and health tracking.
 type TokenStore interface {
+	// ========== Basic Operations ==========
+
 	// Load loads all tokens from storage and returns them mapped by their unique ID.
-	Load() (map[string]TokenMetadata, error)
+	Load() (map[string]ProviderToken, error)
 
 	// Save persists all tokens to storage, keyed by their unique ID.
-	Save(tokens map[string]TokenMetadata) error
+	Save(tokens map[string]ProviderToken) error
+
+	// Clear removes all tokens from storage.
+	Clear() error
 
 	// GetCredentialsPath returns the path to the credentials file/directory.
 	GetCredentialsPath() string
 
-	// Clear removes all tokens from storage.
-	Clear() error
+	// ========== CRUD Operations ==========
+
+	// GetToken retrieves a single token by ID.
+	GetToken(id string) (*ProviderToken, error)
+
+	// ListTokens returns all tokens from storage.
+	ListTokens() []ProviderToken
+
+	// AddToken adds a new token to storage.
+	AddToken(token ProviderToken) error
+
+	// UpdateToken updates a token using the provided update function.
+	UpdateToken(id string, update func(*ProviderToken)) error
+
+	// RemoveToken removes a token by ID.
+	RemoveToken(id string) error
+
+	// ========== Validation Operations ==========
+
+	// IsTokenValid checks if a token is valid (not expired and healthy).
+	IsTokenValid(token ProviderToken) bool
+
+	// GetValidTokens returns all valid tokens from storage.
+	GetValidTokens() []ProviderToken
+
+	// ========== Query Operations ==========
+
+	// GetTokenCount returns the total number of tokens in storage.
+	GetTokenCount() int
+
+	// GetValidTokenCount returns the number of valid tokens in storage.
+	GetValidTokenCount() int
+
+	// ========== Settings Operations ==========
+
+	// GetSettings retrieves provider-specific settings from storage.
+	GetSettings() (StoreSettings, error)
+
+	// SaveSettings persists provider-specific settings to storage.
+	SaveSettings(settings StoreSettings) error
+
+	// ========== Health Operations ==========
+
+	// MarkTokenHealthy marks a token as healthy.
+	MarkTokenHealthy(id string) error
+
+	// MarkTokenUnhealthy marks a token as unhealthy.
+	MarkTokenUnhealthy(id string, err error) error
 }
+
+// Ensure SQLiteStore implements TokenStore at compile time.
+var _ TokenStore = (*SQLiteStore)(nil)
+
+// Ensure MockStore implements TokenStore at compile time.
+var _ TokenStore = (*MockStore)(nil)

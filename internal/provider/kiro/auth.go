@@ -14,8 +14,8 @@ import (
 	"time"
 
 	"github.com/google/uuid"
-	tokenpkg "github.com/sunbankio/qwencoder-proxy/internal/token"
 	"github.com/sunbankio/qwencoder-proxy/internal/logging"
+	tokenpkg "github.com/sunbankio/qwencoder-proxy/internal/token"
 	"golang.org/x/oauth2"
 )
 

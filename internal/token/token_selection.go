@@ -134,7 +134,7 @@ func (s *LeastUsedSelectionStrategy) SelectToken(tokens []ProviderToken) (*Provi
 
 // TokenManager manages token selection for a provider
 type TokenManager struct {
-	store              TokenRepository
+	store              TokenStore
 	strategy           SelectionStrategy
 	mu                 sync.RWMutex
 	logger             logging.Logger
@@ -143,7 +143,7 @@ type TokenManager struct {
 }
 
 // NewTokenManager creates a new TokenManager
-func NewTokenManager(store TokenRepository, strategy SelectionStrategy, logger logging.Logger,
+func NewTokenManager(store TokenStore, strategy SelectionStrategy, logger logging.Logger,
 	clientFactory ProxyClientFactory, proxyHealthTracker *ProxyHealthTracker) *TokenManager {
 	return &TokenManager{
 		store:              store,
@@ -251,7 +251,7 @@ func (tm *TokenManager) GetValidTokenCount() int {
 //
 // The method:
 // 1. Calls existing SelectionStrategy.SelectToken() to get ProviderToken
-// 2. Gets ProviderToken from MultiTokenStore with full metadata
+// 2. Gets ProviderToken from store with full metadata
 // 3. Extracts ProxyConfig from token (may be nil)
 // 4. Calls ProxyAwareHTTPClientFactory.GetClient(proxyConfig)
 // 5. Updates proxy health metrics via ProxyHealthTracker
@@ -507,27 +507,6 @@ func (ht *HealthTracker) GetUnhealthyTokens() []ProviderToken {
 	}
 
 	return unhealthy
-}
-
-// CleanupUnhealthyTokens removes tokens that have been unhealthy for too long
-// This is a placeholder for future implementation - actual cleanup requires tracking
-// when a token became unhealthy
-func (ht *HealthTracker) CleanupUnhealthyTokens(maxAge time.Duration) (int, error) {
-	ht.mu.Lock()
-	defer ht.mu.Unlock()
-
-	// This is a placeholder implementation
-	// A full implementation would need to track when each token became unhealthy
-	// and only remove tokens that have been unhealthy for longer than maxAge
-
-	unhealthy := ht.GetUnhealthyTokens()
-	count := len(unhealthy)
-
-	if count > 0 {
-		ht.logger.InfoLog("Found %d unhealthy tokens (cleanup not yet implemented)", count)
-	}
-
-	return count, nil
 }
 
 // StrategyFactory creates selection strategies by name

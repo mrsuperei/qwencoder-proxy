@@ -16,9 +16,9 @@ import (
 	"strings"
 	"time"
 
-	tokenpkg "github.com/sunbankio/qwencoder-proxy/internal/token"
 	"github.com/sunbankio/qwencoder-proxy/internal/logging"
 	"github.com/sunbankio/qwencoder-proxy/internal/provider"
+	tokenpkg "github.com/sunbankio/qwencoder-proxy/internal/token"
 )
 
 const (

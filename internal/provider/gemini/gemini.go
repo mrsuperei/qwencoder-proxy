@@ -13,9 +13,9 @@ import (
 	"strings"
 	"time"
 
-	tokenpkg "github.com/sunbankio/qwencoder-proxy/internal/token"
 	"github.com/sunbankio/qwencoder-proxy/internal/logging"
 	"github.com/sunbankio/qwencoder-proxy/internal/provider"
+	tokenpkg "github.com/sunbankio/qwencoder-proxy/internal/token"
 )
 
 const (
@@ -125,9 +125,6 @@ func (p *Provider) ClearInitializationError() {
 // ListModels returns available models in native Gemini format
 func (p *Provider) ListModels(ctx context.Context) (interface{}, error) {
 	// Note: project initialization is now handled per-token in GenerateContent/GenerateContentStream
-	// Fall back to hardcoded models for model discovery
-	return p.getHardcodedModels(), nil
-
 	// Try to discover actual models from the API
 	if actualModels, err := p.discoverModels(ctx); err == nil {
 		return actualModels, nil

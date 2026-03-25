@@ -8,6 +8,7 @@ import (
 	"sync"
 	"time"
 
+	"github.com/sunbankio/qwencoder-proxy/internal/logging"
 	"github.com/sunbankio/qwencoder-proxy/internal/token"
 )
 
@@ -42,14 +43,19 @@ type StateManager struct {
 	polls          map[string]*DevicePollState
 	processedCodes map[string]time.Time // Tracks processed OAuth codes for idempotency (code -> processedAt)
 	mu             sync.RWMutex
+	logger         logging.Logger
 }
 
 // NewStateManager creates a new state manager
-func NewStateManager() *StateManager {
+func NewStateManager(logger logging.Logger) *StateManager {
+	if logger == nil {
+		logger = logging.NewLogger()
+	}
 	sm := &StateManager{
 		states:         make(map[string]*OAuthState),
 		polls:          make(map[string]*DevicePollState),
 		processedCodes: make(map[string]time.Time),
+		logger:         logger,
 	}
 	// Start cleanup routine
 	go sm.StartCleanupRoutine()
@@ -76,7 +82,7 @@ func (sm *StateManager) CreateState(provider, codeVerifier, redirectURI string, 
 		CreatedAt:    now,
 	}
 
-	fmt.Printf("[StateManager] Created state: %s for provider: %s, redirectURI: %s, expires at: %v\n",
+	sm.logger.DebugLog("[StateManager] Created state: %s for provider: %s, redirectURI: %s, expires at: %v",
 		stateID, provider, redirectURI, now.Add(ttl))
 
 	return stateID, nil
@@ -87,19 +93,19 @@ func (sm *StateManager) ValidateAndConsume(stateID string) (*OAuthState, error) 
 	sm.mu.Lock()
 	defer sm.mu.Unlock()
 
-	fmt.Printf("[StateManager] Validating state: %s, total states: %d\n",
+	sm.logger.DebugLog("[StateManager] Validating state: %s, total states: %d",
 		stateID, len(sm.states))
 
 	state, ok := sm.states[stateID]
 	if !ok {
-		fmt.Printf("[StateManager] State not found: %s. Available states: %v\n",
+		sm.logger.DebugLog("[StateManager] State not found: %s. Available states: %v",
 			stateID, sm.getStateKeys())
 		return nil, fmt.Errorf("invalid state: state not found")
 	}
 
 	if time.Now().After(state.ExpiresAt) {
 		delete(sm.states, stateID)
-		fmt.Printf("[StateManager] State expired: %s (expired at: %v)\n",
+		sm.logger.DebugLog("[StateManager] State expired: %s (expired at: %v)",
 			stateID, state.ExpiresAt)
 		return nil, fmt.Errorf("invalid state: state expired")
 	}
@@ -107,7 +113,7 @@ func (sm *StateManager) ValidateAndConsume(stateID string) (*OAuthState, error) 
 	// Remove state after validation (one-time use)
 	delete(sm.states, stateID)
 
-	fmt.Printf("[StateManager] State validated and consumed: %s for provider: %s\n",
+	sm.logger.DebugLog("[StateManager] State validated and consumed: %s for provider: %s",
 		stateID, state.Provider)
 
 	return state, nil

@@ -541,7 +541,7 @@ func (s *SQLiteStore) bindToken(stmt *sql.Stmt, token TokenMetadata) error {
 }
 
 // Load loads all tokens for the provider from SQLite
-func (s *SQLiteStore) Load() (map[string]TokenMetadata, error) {
+func (s *SQLiteStore) Load() (map[string]ProviderToken, error) {
 	s.mu.RLock()
 	defer s.mu.RUnlock()
 
@@ -551,7 +551,7 @@ func (s *SQLiteStore) Load() (map[string]TokenMetadata, error) {
 	}
 	defer rows.Close()
 
-	tokens := make(map[string]TokenMetadata)
+	tokens := make(map[string]ProviderToken)
 	for rows.Next() {
 		token, err := s.scanToken(rows)
 		if err != nil {
@@ -571,7 +571,7 @@ func (s *SQLiteStore) Load() (map[string]TokenMetadata, error) {
 }
 
 // Save persists all tokens to SQLite using a transaction
-func (s *SQLiteStore) Save(tokens map[string]TokenMetadata) error {
+func (s *SQLiteStore) Save(tokens map[string]ProviderToken) error {
 	s.mu.Lock()
 	defer s.mu.Unlock()
 
@@ -735,7 +735,7 @@ func (s *SQLiteStore) GetToken(tokenID string) (*TokenMetadata, error) {
 }
 
 // UpdateToken updates a token with a function
-func (s *SQLiteStore) UpdateToken(tokenID string, updateFunc func(*TokenMetadata)) error {
+func (s *SQLiteStore) UpdateToken(tokenID string, updateFunc func(*ProviderToken)) error {
 	s.mu.Lock()
 	defer s.mu.Unlock()
 
@@ -751,9 +751,9 @@ func (s *SQLiteStore) updateTokenLocked(tokenID string, updateFunc interface{}) 
 	}
 
 	// Apply update
-	if fn, ok := updateFunc.(func(*TokenMetadata)); ok {
+	if fn, ok := updateFunc.(func(*ProviderToken)); ok {
 		fn(token)
-	} else if tokenData, ok := updateFunc.(TokenMetadata); ok {
+	} else if tokenData, ok := updateFunc.(ProviderToken); ok {
 		*token = tokenData
 	} else {
 		return fmt.Errorf("invalid update function type")

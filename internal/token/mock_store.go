@@ -31,12 +31,12 @@ func NewMockStore(providerID string, logger logging.Logger) *MockStore {
 }
 
 // Load returns all tokens from the mock store.
-func (m *MockStore) Load() (map[string]TokenMetadata, error) {
+func (m *MockStore) Load() (map[string]ProviderToken, error) {
 	m.mu.RLock()
 	defer m.mu.RUnlock()
 
 	// Return a copy of the tokens map
-	result := make(map[string]TokenMetadata, len(m.tokens))
+	result := make(map[string]ProviderToken, len(m.tokens))
 	for k, v := range m.tokens {
 		result[k] = v
 	}
@@ -44,7 +44,7 @@ func (m *MockStore) Load() (map[string]TokenMetadata, error) {
 }
 
 // Save persists all tokens to the mock store.
-func (m *MockStore) Save(tokens map[string]TokenMetadata) error {
+func (m *MockStore) Save(tokens map[string]ProviderToken) error {
 	m.mu.Lock()
 	defer m.mu.Unlock()
 
@@ -106,7 +106,7 @@ func (m *MockStore) ListTokens() []ProviderToken {
 }
 
 // UpdateToken updates a token using the provided update function.
-func (m *MockStore) UpdateToken(id string, update func(*TokenMetadata)) error {
+func (m *MockStore) UpdateToken(id string, update func(*ProviderToken)) error {
 	m.mu.Lock()
 	defer m.mu.Unlock()
 
@@ -119,6 +119,80 @@ func (m *MockStore) UpdateToken(id string, update func(*TokenMetadata)) error {
 	tokenPtr := &token
 	update(tokenPtr)
 	m.tokens[id] = *tokenPtr
+	return nil
+}
+
+// RemoveToken removes a token by ID.
+func (m *MockStore) RemoveToken(id string) error {
+	m.mu.Lock()
+	defer m.mu.Unlock()
+
+	if _, ok := m.tokens[id]; !ok {
+		return ErrTokenNotFound
+	}
+	delete(m.tokens, id)
+	return nil
+}
+
+// GetSettings retrieves provider-specific settings from storage.
+func (m *MockStore) GetSettings() (StoreSettings, error) {
+	m.mu.RLock()
+	defer m.mu.RUnlock()
+
+	// Return default settings for mock store
+	return StoreSettings{
+		SelectionStrategy: "random",
+		RefreshBufferSec:  300,
+		MaxErrorCount:     5,
+		UpdatedAt:         time.Now().UnixMilli(),
+	}, nil
+}
+
+// SaveSettings persists provider-specific settings to storage.
+func (m *MockStore) SaveSettings(settings StoreSettings) error {
+	m.mu.Lock()
+	defer m.mu.Unlock()
+
+	// For mock store, we just log the settings save
+	m.logger.InfoLog("[MockStore] Settings saved: %+v", settings)
+	return nil
+}
+
+// MarkTokenHealthy marks a token as healthy.
+func (m *MockStore) MarkTokenHealthy(id string) error {
+	m.mu.Lock()
+	defer m.mu.Unlock()
+
+	token, ok := m.tokens[id]
+	if !ok {
+		return ErrTokenNotFound
+	}
+
+	token.Healthy = true
+	token.HealthScore = 1.0
+	token.ErrorCount = 0
+	token.LastError = ""
+	m.tokens[id] = token
+	return nil
+}
+
+// MarkTokenUnhealthy marks a token as unhealthy.
+func (m *MockStore) MarkTokenUnhealthy(id string, err error) error {
+	m.mu.Lock()
+	defer m.mu.Unlock()
+
+	token, ok := m.tokens[id]
+	if !ok {
+		return ErrTokenNotFound
+	}
+
+	token.Healthy = false
+	token.HealthScore = 0.0
+	token.ErrorCount++
+	if err != nil {
+		token.LastError = err.Error()
+	}
+	m.tokens[id] = token
 	return nil
 }
 
